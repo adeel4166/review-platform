@@ -36,3 +36,9 @@ See [adr/README.md](./adr/README.md).
 | Doc | Content |
 |---|---|
 | [security/threat-model.md](./security/threat-model.md) | STRIDE threat model of the M1 designs, design gaps, rate-limit baseline, mitigations mapped to M2-M8 |
+
+## Design
+
+| Doc | Content |
+|---|---|
+| [../design/README.md](../design/README.md) | Wireframes for all key flows, design tokens (light/dark, Tailwind preset), WCAG 2.2 AA checklist |
