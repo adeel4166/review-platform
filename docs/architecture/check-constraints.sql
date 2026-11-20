@@ -81,3 +81,26 @@ ALTER TABLE `TrustScoreSnapshot` ADD CONSTRAINT `chk_trust_score_range`
 -- productId FK is declared Restrict/Restrict for this reason (products are never hard-deleted).
 ALTER TABLE `SellerOwnershipClaim` ADD CONSTRAINT `chk_claim_product_scope`
   CHECK ((`scope` = 'PRODUCT') = (`productId` IS NOT NULL));
+
+-- ---------- M1.2: moderation pipeline and media storage (task #19) ----------
+-- None of these columns carry FKs, so ER 3823 does not apply.
+-- NULL lane / NULL score makes the expression UNKNOWN, which a CHECK accepts.
+
+-- A HOLD-lane case must carry its auto-reject deadline (moderation-pipeline.md §4).
+ALTER TABLE `ModerationCase` ADD CONSTRAINT `chk_case_hold_expiry`
+  CHECK (`lane` <> 'HOLD' OR `holdExpiresAt` IS NOT NULL);
+
+-- A POST_REVIEW-lane case must carry its 24 h SLA deadline.
+ALTER TABLE `ModerationCase` ADD CONSTRAINT `chk_case_post_review_due`
+  CHECK (`lane` <> 'POST_REVIEW' OR `postReviewDueAt` IS NOT NULL);
+
+ALTER TABLE `ModerationCase` ADD CONSTRAINT `chk_case_ai_score_range`
+  CHECK (`aiScore` BETWEEN 0 AND 1);
+
+ALTER TABLE `ModerationDecision` ADD CONSTRAINT `chk_decision_confidence_range`
+  CHECK (`confidence` BETWEEN 0 AND 1);
+
+-- Only assets intended to be public may ever sit in the public bucket. Together with
+-- chk_media_sensitive_private this keeps evidence out of public storage (media-pipeline.md §4.4).
+ALTER TABLE `MediaAsset` ADD CONSTRAINT `chk_media_public_bucket`
+  CHECK (`bucket` <> 'PUBLIC' OR `visibility` = 'PUBLIC');

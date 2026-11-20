@@ -34,6 +34,8 @@ and changes course if the answer differs. Each assumption is designed to be chea
 | L-12 | **Third-party legal notices.** How do we handle defamation and IP takedown requests from sellers or third parties, DMCA-style agent designation, and requests from authorities? | Handled as `Report` (reason `INTELLECTUAL_PROPERTY` / `ILLEGAL_CONTENT`) by ADMIN. `MediaAsset.legalHold` for preservation | May need a dedicated `LegalRequest` entity with requester identity |
 | L-13 | **Legal documents.** Who owns the Terms, Privacy Policy, Content Policy and Seller Terms? How are they versioned, and when must users re-consent? | `LegalAcceptance` per document version. Re-consent is prompted at login after a material change | None |
 | L-14 | **Cookies and analytics consent** | Strictly-necessary cookies only (session, CSRF). Analytics are off until a consent solution is chosen | None in the DB |
+| L-16 | **Auto-rejection without human review.** Is rejecting content automatically when the 7-day hold expires (no human looked at it) acceptable, and what must the statement of reasons say? (M1.2) | Acceptable when the notice says "not reviewed in time", the appeal is decided by a human within 72 h, and no strike or trust penalty is applied | Copy and SLA config only |
+| L-17 | **CSAM / terrorist content.** Must we use an industry hash-matching service and report to authorities (e.g. NCMEC / national bodies)? (M1.2) | Zero-tolerance categories suspend the account, escalate to SENIOR_MODERATOR and set `legalHold`. Hash-matching integration recommended before launch | Adds a hash-matching provider to the media VALIDATE step |
 | L-15 | **Public seller trust score.** Is there defamation or unfair-practice risk in publishing it, and must we disclose the methodology? | Public, with a published high-level methodology and an appeal path via `Appeal` | None |
 
 ---
@@ -64,12 +66,15 @@ and changes course if the answer differs. Each assumption is designed to be chea
 | T-1 | Hosting target: containers vs. Vercel (web) + a separate worker host | Containers for both web and worker (ADR-0001). The web app stays Vercel-compatible | DevOps |
 | T-2 | Transactional email provider | Any provider with SPF/DKIM/DMARC support and bounce webhooks. Selected in the scaffold task | DevOps |
 | T-3 | Search: MySQL FULLTEXT vs. an external engine (Meilisearch / OpenSearch) | MySQL FULLTEXT on `Product(name, brandName)` for Phase 1, kept behind a `SearchService` interface | Architect |
-| T-4 | AI moderation provider, policy taxonomy and auto-action thresholds | Defined in M1.2 (moderation pipeline). The model stores provider/model/version/confidence/labels | Architect + T&S |
+| T-4 | AI moderation provider, policy taxonomy and auto-action thresholds | **Pipeline, taxonomy and configurable thresholds defined in M1.2** ([moderation-pipeline.md](./moderation-pipeline.md)). Provider choice and threshold calibration are still open: provider spike behind the `ModerationProvider` interface, then shadow-mode calibration | Architect + T&S |
 | T-5 | OCR/PII-redaction engine for proofs (cloud API vs. self-hosted) | Behind a `ProofRedactor` interface. The choice depends on L-6 | Architect |
 | T-6 | Apple sign-in and passkeys in Phase 1? | Google OAuth at launch. Passkeys are a stretch goal (table already reserved). Apple is deferred | Product |
 | T-7 | Seller-issued review invitations (verified via order-bound links) | Phase 1.x. Would add a `ReviewInvitation` table and a `SELLER_INVITATION` proof method | Product |
 | T-8 | Reviews of sellers/stores in addition to products? | Product reviews only. Seller reputation comes from product reviews + reply behaviour | Product |
 | T-9 | Trust score algorithm (weights, decay, bands) | Separate design doc. The inputs are fixed in data-model.md §6.5 | Architect + Data |
+| T-11 | **Post-review staffing.** 100 % human post-review of CLEAN content within 24 h scales linearly with volume | 100 % at launch; `postReview.sampleRate` per trust band is the lever | Product + T&S |
+| T-12 | Video transcoding: self-run ffmpeg worker vs. managed service (Cloudflare Stream, Mux) | Self-run ffmpeg in a separate `media-video` deployment (ADR-0006), swappable behind the `media.transcode` job | Architect + DevOps |
+| T-13 | HEIC photo support needs libvips built with libheif in the worker image | Supported; fallback is rejecting HEIC and relying on iOS Safari's JPEG conversion | DevOps |
 | T-10 | Managed MySQL flavour (RDS / Aurora / Cloud SQL / PlanetScale) | Any MySQL 8.0.16+ with real FK and CHECK enforcement. Vitess-based offerings must be verified for FK/CHECK support first | DevOps |
 
 ---
