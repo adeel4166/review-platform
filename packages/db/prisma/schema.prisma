@@ -1,0 +1,24 @@
+// Scaffold schema: only what the worker skeleton needs (transactional outbox, ADR-0001 §1).
+// The full domain model lives in docs/architecture/schema.draft.prisma and is adopted
+// table-by-table, with migrations, in the feature tasks. Do not copy it wholesale here.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model OutboxEvent {
+  id          BigInt    @id @default(autoincrement())
+  type        String    @db.VarChar(100)
+  aggregateId String    @db.VarChar(64)
+  payload     Json
+  createdAt   DateTime  @default(now()) @db.DateTime(3)
+  publishedAt DateTime? @db.DateTime(3)
+
+  @@index([publishedAt, id])
+  @@map("outbox_events")
+}

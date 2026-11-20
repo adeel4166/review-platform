@@ -1,0 +1,61 @@
+# Local infra only. App processes run on the host via `pnpm dev`. Credentials are throwaway local values.
+services:
+  mysql:
+    image: mysql:8.0
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_0900_ai_ci"]
+    environment:
+      MYSQL_ROOT_PASSWORD: root_local_pw
+      MYSQL_DATABASE: review_platform
+      MYSQL_USER: app
+      MYSQL_PASSWORD: app_local_pw
+    ports: ["127.0.0.1:3306:3306"]
+    volumes: ["mysql-data:/var/lib/mysql"]
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -proot_local_pw --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    # BullMQ requires noeviction (ADR-0001); AOF for durability.
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    ports: ["127.0.0.1:6379:6379"]
+    volumes: ["redis-data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: minio_local
+      MINIO_ROOT_PASSWORD: minio_local_secret
+    ports: ["127.0.0.1:9000:9000", "127.0.0.1:9001:9001"]
+    volumes: ["minio-data:/data"]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio: { condition: service_healthy }
+    restart: "no"
+    profiles: ["init"]
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 minio_local minio_local_secret &&
+      mc mb -p local/rp-ingest local/rp-private local/rp-public &&
+      mc anonymous set download local/rp-public &&
+      echo buckets ready"
+
+volumes:
+  mysql-data:
+  redis-data:
+  minio-data:
