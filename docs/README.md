@@ -42,3 +42,9 @@ See [adr/README.md](./adr/README.md).
 | Doc | Content |
 |---|---|
 | [../design/README.md](../design/README.md) | Wireframes for all key flows, design tokens (light/dark, Tailwind preset), WCAG 2.2 AA checklist |
+
+## Development
+
+| Doc | Content |
+|---|---|
+| [../README.md](../README.md) | Repo layout, one-command local run, QA gate and CI |

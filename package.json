@@ -1,0 +1,26 @@
+{
+  "name": "review-platform",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start:local": "bash scripts/local-up.sh",
+    "infra:up": "docker compose up -d --wait mysql redis minio && docker compose --profile init run --rm minio-init",
+    "infra:down": "docker compose down",
+    "dev": "pnpm --parallel --filter @rp/web --filter @rp/worker dev",
+    "db:generate": "pnpm --filter @rp/db generate",
+    "db:push": "pnpm --filter @rp/db push",
+    "lint": "eslint .",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "build": "pnpm -r build",
+    "design:check": "node design/gen.cjs && git diff --exit-code design/tokens.css design/tailwind-preset.cjs && node design/check-contrast.cjs",
+    "qa": "pnpm lint && pnpm typecheck && pnpm test && pnpm design:check"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "eslint": "^9.17.0",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.0"
+  }
+}

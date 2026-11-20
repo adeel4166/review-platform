@@ -1,0 +1,38 @@
+name: CI
+on:
+  push:
+    branches: [main, "task/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Throwaway values for build/validate only; no real secrets in CI.
+      DATABASE_URL: mysql://app:app@127.0.0.1:3306/ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:generate
+      - name: QA gate (lint, typecheck, test, design tokens + contrast)
+        run: pnpm qa
+      - name: Build
+        run: pnpm build
+  compose-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cp .env.example .env && docker compose --profile init config -q
