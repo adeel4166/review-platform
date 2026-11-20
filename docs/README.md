@@ -30,3 +30,9 @@ See [adr/README.md](./adr/README.md).
 | [0004](./adr/0004-data-model-conventions.md) | cuid IDs, exclusive arcs with CHECKs, soft delete + retention purge, caches, append-only tables, PII minimization |
 | [0005](./adr/0005-moderation-state-machine.md) | Three AI verdicts (CLEAN→live+post-review, VIOLATION→rejected, UNSURE/failure→hidden 7-day hold), DB-deadline timers, versioned thresholds, DB-view staff queues |
 | [0006](./adr/0006-media-storage-and-processing.md) | Ingest/private/public buckets (amends ADR-0001 upload path), fail-closed scan + sanitise + transcode pipeline, promote/demote with moderation |
+
+## Security
+
+| Doc | Content |
+|---|---|
+| [security/threat-model.md](./security/threat-model.md) | STRIDE threat model of the M1 designs, design gaps, rate-limit baseline, mitigations mapped to M2-M8 |
