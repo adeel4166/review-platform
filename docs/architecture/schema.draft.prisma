@@ -1,0 +1,1370 @@
+// =============================================================================
+// Review Platform: Phase 1 data model (DRAFT)
+// =============================================================================
+// Status   : DRAFT for task #18 (M1.1). NOT yet wired to an app. The scaffold
+//            task copies this file to packages/db/prisma/schema.prisma.
+// Target   : Prisma ORM 6.x schema syntax, MySQL 8.0.16+ (InnoDB, utf8mb4).
+//            If the scaffold pins Prisma 7.x, move `url` to prisma.config.ts.
+// Docs     : docs/architecture/data-model.md  (ERD, lifecycles, rules)
+//            docs/adr/0004-data-model-conventions.md
+//            docs/architecture/check-constraints.sql (exclusive-arc CHECKs)
+//
+// Scope    : Phase 1 only. MESSAGING (DMs, conversations, seller-buyer chat)
+//            IS OUT OF SCOPE. There are deliberately no Conversation/Message
+//            tables and no message-related enum values. See data-model.md §1.
+//
+// Markers  : "OPEN(LEGAL)" and "OPEN(LANG)" mark fields whose final shape
+//            depends on unresolved questions in docs/architecture/open-questions.md.
+//
+// Conventions (summary; full rationale in ADR-0004):
+//  - IDs are cuid strings. AuditLog and OutboxEvent use BIGINT autoincrement.
+//  - All timestamps are UTC DATETIME(3).
+//  - User content is never hard-deleted by the app: status + deletedAt.
+//    Physical purge is done by retention jobs only.
+//  - "Exclusive arc" tables (one row targets exactly one of N parents) use
+//    nullable FKs with onDelete/onUpdate: Restrict, plus a CHECK constraint
+//    added in raw SQL. MySQL forbids CHECKs on columns with CASCADE/SET NULL
+//    actions, which is why the arcs use Restrict.
+//  - Counters (helpfulCount, likeCount...) are denormalized caches maintained
+//    by the worker. The rows are the source of truth.
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// -----------------------------------------------------------------------------
+// Enums
+// -----------------------------------------------------------------------------
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED // projection of an active SUSPENSION EnforcementAction
+  BANNED // projection of an active BAN EnforcementAction
+  DEACTIVATED // user-initiated, reversible
+  DELETED // erasure processed; row kept as anonymized tombstone
+}
+
+/// Global staff roles. "USER" is implicit (any active account) and not stored.
+enum PlatformRole {
+  MODERATOR
+  SENIOR_MODERATOR
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum OAuthProvider {
+  GOOGLE
+  APPLE // OPEN: Apple sign-in not yet confirmed for Phase 1
+}
+
+enum VerificationPurpose {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+  EMAIL_CHANGE
+}
+
+enum LegalDocumentType {
+  TERMS_OF_SERVICE
+  PRIVACY_POLICY
+  CONTENT_POLICY
+  SELLER_TERMS
+}
+
+enum SellerStatus {
+  UNVERIFIED
+  PENDING_VERIFICATION
+  VERIFIED
+  SUSPENDED
+  CLOSED
+}
+
+enum SellerMemberRole {
+  OWNER
+  MANAGER
+  RESPONDER
+}
+
+enum OwnershipClaimScope {
+  SELLER // prove control of the business/brand itself
+  PRODUCT // claim an existing, unclaimed product listing for a verified seller
+}
+
+enum OwnershipProofMethod {
+  DNS_TXT_RECORD
+  WEBSITE_META_TAG
+  BUSINESS_EMAIL_DOMAIN
+  DOCUMENT_UPLOAD
+  MARKETPLACE_STORE_LINK
+}
+
+enum ClaimStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+  EXPIRED
+  REVOKED
+}
+
+enum ProductStatus {
+  PENDING // user-submitted, awaiting moderation
+  ACTIVE
+  MERGED // duplicate; see mergedIntoId
+  ARCHIVED
+  REMOVED
+}
+
+enum AttributeDataType {
+  TEXT
+  NUMBER
+  BOOLEAN
+  ENUM
+}
+
+/// Shared lifecycle for user-generated content (reviews, replies, comments, posts).
+enum ContentStatus {
+  PENDING // awaiting AI and/or human moderation; visible to author only
+  PUBLISHED
+  HIDDEN // restricted by moderation, pending decision/appeal; visible to author + staff
+  REMOVED // moderation removed; visible to author + staff (statement of reasons)
+  DELETED // author deleted (soft); retained for evidence until purge
+}
+
+/// Incentive disclosure on reviews. OPEN(LEGAL): exact policy per jurisdiction.
+enum IncentiveDisclosure {
+  NONE
+  FREE_PRODUCT
+  DISCOUNT
+  PAYMENT
+  OTHER
+}
+
+enum PurchaseProofMethod {
+  RECEIPT_UPLOAD
+  ORDER_CONFIRMATION
+  MARKETPLACE_ORDER_LINK
+}
+
+enum ProofStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+  EXPIRED // never decided within SLA, or retention-expired before decision
+  WITHDRAWN // user withdrew/deleted proof before decision
+}
+
+enum VoteValue {
+  HELPFUL
+  NOT_HELPFUL
+}
+
+enum MediaPurpose {
+  AVATAR
+  SELLER_LOGO
+  PRODUCT_IMAGE
+  REVIEW_MEDIA
+  POST_MEDIA
+  PURCHASE_PROOF
+  OWNERSHIP_EVIDENCE
+  APPEAL_EVIDENCE
+}
+
+enum MediaKind {
+  IMAGE
+  VIDEO
+  DOCUMENT
+}
+
+/// PUBLIC -> public bucket behind CDN. PRIVATE -> private bucket, short-lived signed URLs only.
+enum MediaVisibility {
+  PUBLIC
+  PRIVATE
+}
+
+enum MediaStatus {
+  UPLOADING // presigned URL issued, not yet confirmed
+  PROCESSING // worker: metadata strip, transcode, redaction, AI scan
+  READY
+  REJECTED // failed moderation / validation
+  FAILED // processing error
+  PURGED // object deleted from storage; row kept as tombstone
+}
+
+enum ReportReason {
+  SPAM
+  FAKE_OR_MISLEADING
+  CONFLICT_OF_INTEREST
+  OFF_TOPIC
+  HARASSMENT_OR_HATE
+  SEXUAL_CONTENT
+  VIOLENCE_OR_THREATS
+  PERSONAL_INFORMATION
+  INTELLECTUAL_PROPERTY
+  ILLEGAL_CONTENT
+  IMPERSONATION
+  OTHER
+}
+
+enum ReportStatus {
+  OPEN
+  ACTION_TAKEN
+  NO_ACTION
+  REJECTED // invalid/abusive report (feeds reporter trust signal)
+}
+
+enum ModerationTrigger {
+  SUBMISSION
+  EDIT
+  USER_REPORT
+  AI_RESCAN
+  STAFF_INITIATED
+  APPEAL
+}
+
+enum CaseStatus {
+  OPEN
+  IN_REVIEW
+  ESCALATED
+  RESOLVED
+}
+
+enum DecisionSource {
+  AI
+  HUMAN
+  RULE // deterministic rule (blocklist, velocity limit, duplicate hash)
+}
+
+enum DecisionOutcome {
+  APPROVE
+  RESTRICT // -> ContentStatus.HIDDEN
+  REMOVE // -> ContentStatus.REMOVED
+  ESCALATE // AI/rule not confident -> human queue
+}
+
+enum EnforcementType {
+  WARNING
+  CONTENT_REMOVAL
+  POSTING_RESTRICTION
+  VOTING_RESTRICTION
+  VERIFIED_LABEL_REVOKED
+  SUSPENSION
+  BAN
+  SELLER_REPLY_RESTRICTION
+  SELLER_SUSPENSION
+}
+
+enum EnforcementStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
+  OVERTURNED // via appeal
+}
+
+enum AppealStatus {
+  SUBMITTED
+  IN_REVIEW
+  UPHELD // original decision stands
+  OVERTURNED
+  PARTIALLY_OVERTURNED
+  WITHDRAWN
+}
+
+/// Event-like trust inputs. State-like inputs (account age, 2FA on, seller
+/// verified) are read directly at scoring time and are not stored as signals.
+enum TrustSignalType {
+  VERIFIED_PURCHASE
+  REVIEW_PUBLISHED
+  REVIEW_REMOVED
+  HELPFUL_VOTE_RECEIVED
+  NOT_HELPFUL_VOTE_RECEIVED
+  REPORT_UPHELD // reporter was right
+  REPORT_REJECTED // reporter was wrong/abusive
+  CONTENT_ACTIONED_AGAINST // subject's content removed/restricted
+  ENFORCEMENT_ACTION
+  APPEAL_OVERTURNED
+  SELLER_REPLY_PUBLISHED
+  SELLER_REPLY_REMOVED
+  VELOCITY_ANOMALY
+  DUPLICATE_PROOF_DETECTED
+  LINKED_ACCOUNT_SUSPECTED
+}
+
+enum TrustBand {
+  NEW
+  LOW
+  MEDIUM
+  HIGH
+}
+
+/// No messaging types in Phase 1 (Messaging is out of scope).
+enum NotificationType {
+  REVIEW_PUBLISHED
+  REVIEW_REJECTED
+  REVIEW_HIDDEN
+  REVIEW_VOTED_HELPFUL
+  SELLER_REPLIED
+  REVIEW_COMMENTED
+  POST_COMMENTED
+  COMMENT_REPLIED
+  POST_LIKED
+  COMMENT_LIKED
+  NEW_FOLLOWER
+  FOLLOWED_PRODUCT_REVIEWED
+  FOLLOWED_SELLER_POSTED
+  FOLLOWED_USER_POSTED
+  PROOF_VERIFIED
+  PROOF_REJECTED
+  CLAIM_VERIFIED
+  CLAIM_REJECTED
+  SELLER_MEMBER_INVITED
+  REPORT_RESOLVED
+  ENFORCEMENT_ISSUED // mandatory; cannot be disabled
+  APPEAL_DECIDED // mandatory; cannot be disabled
+  SECURITY_ALERT // mandatory; new login, 2FA/password/email changed
+  SYSTEM_ANNOUNCEMENT
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+}
+
+enum AuditActorType {
+  USER
+  STAFF
+  SYSTEM
+  AI
+}
+
+// -----------------------------------------------------------------------------
+// Identity & access
+// -----------------------------------------------------------------------------
+
+model User {
+  id              String     @id @default(cuid())
+  email           String     @unique // normalized lowercase
+  emailVerifiedAt DateTime?
+  passwordHash    String?    @db.VarChar(255) // Argon2id; null for OAuth-only accounts
+  handle          String     @unique @db.VarChar(32)
+  displayName     String     @db.VarChar(64)
+  bio             String?    @db.Text
+  avatarMediaId   String?    @unique
+  locale          String?    @db.VarChar(16) // OPEN(LANG): BCP 47 tag; default 'en' assumed
+  status          UserStatus @default(ACTIVE)
+  trustScore      Decimal?   @db.Decimal(5, 2) // cache of latest TrustScoreSnapshot (internal only)
+  lastLoginAt     DateTime?
+  deactivatedAt   DateTime?
+  anonymizedAt    DateTime? // OPEN(LEGAL): erasure = anonymize tombstone, see open-questions
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  avatar MediaAsset? @relation("UserAvatar", fields: [avatarMediaId], references: [id], onDelete: SetNull)
+
+  oauthAccounts       OAuthAccount[]
+  sessions            Session[]
+  verificationTokens  VerificationToken[]
+  totp                TwoFactorTotp?
+  recoveryCodes       RecoveryCode[]
+  webAuthnCredentials WebAuthnCredential[]
+  roles               UserRole[]           @relation("UserRoles")
+  rolesGranted        UserRole[]           @relation("RoleGrantedBy")
+  legalAcceptances    LegalAcceptance[]
+
+  uploads MediaAsset[] @relation("MediaOwner")
+
+  sellerMemberships        SellerMember[]         @relation("SellerMembership")
+  sellerInvitesSent        SellerMember[]         @relation("SellerMemberInvitedBy")
+  sellersCreated           Seller[]               @relation("SellerCreatedBy")
+  ownershipClaimsSubmitted SellerOwnershipClaim[] @relation("ClaimSubmittedBy")
+  ownershipClaimsReviewed  SellerOwnershipClaim[] @relation("ClaimReviewedBy")
+  productsCreated          Product[]              @relation("ProductCreatedBy")
+
+  reviews                  Review[]         @relation("ReviewAuthor")
+  reviewRevisionsEdited    ReviewRevision[] @relation("RevisionEditor")
+  purchaseProofsSubmitted  PurchaseProof[]  @relation("ProofSubmittedBy")
+  purchaseProofsReviewed   PurchaseProof[]  @relation("ProofReviewedBy")
+  reviewVotes              ReviewVote[]
+  sellerRepliesAuthored    SellerReply[]    @relation("ReplyAuthor")
+
+  posts         Post[]         @relation("PostAuthor")
+  comments      Comment[]      @relation("CommentAuthor")
+  likes         Like[]
+  following     Follow[]       @relation("FollowFollower")
+  followers     Follow[]       @relation("FollowFollowedUser")
+  blocking      UserBlock[]    @relation("BlockBlocker")
+  blockedBy     UserBlock[]    @relation("BlockBlocked")
+  wishlistItems WishlistItem[]
+  comparisons   Comparison[]
+
+  reportsFiled              Report[]            @relation("ReportReporter")
+  reportsAgainst            Report[]            @relation("ReportReportedUser")
+  moderationCasesAbout      ModerationCase[]    @relation("CaseTargetUser")
+  moderationCasesAssigned   ModerationCase[]    @relation("CaseAssignee")
+  moderationDecisions       ModerationDecision[] @relation("DecisionModerator")
+  enforcementsReceived      EnforcementAction[] @relation("EnforcementSubjectUser")
+  enforcementsIssued        EnforcementAction[] @relation("EnforcementIssuedBy")
+  enforcementsRevoked       EnforcementAction[] @relation("EnforcementRevokedBy")
+  appealsFiled              Appeal[]            @relation("AppealAppellant")
+  appealsReviewed           Appeal[]            @relation("AppealReviewer")
+  trustSignals              TrustSignal[]       @relation("TrustSignalUser")
+  trustScores               TrustScoreSnapshot[] @relation("TrustScoreUser")
+
+  notificationsReceived   Notification[]           @relation("NotificationRecipient")
+  notificationsActed      Notification[]           @relation("NotificationActor")
+  notificationPreferences NotificationPreference[]
+
+  @@index([status])
+}
+
+/// External identity link. We store identity only: no provider access/refresh tokens.
+model OAuthAccount {
+  id                String        @id @default(cuid())
+  userId            String
+  provider          OAuthProvider
+  providerAccountId String        @db.VarChar(191) // OIDC `sub`
+  emailAtLink       String?
+  createdAt         DateTime      @default(now())
+  lastUsedAt        DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+/// Server-side session. Cookie holds a random 256-bit token; DB stores SHA-256(token). See ADR-0002.
+model Session {
+  id                     String    @id @default(cuid())
+  userId                 String
+  tokenHash              String    @unique @db.Char(64)
+  secondFactorPending    Boolean   @default(false) // password OK, TOTP/passkey not yet presented
+  secondFactorVerifiedAt DateTime?
+  reauthenticatedAt      DateTime? // step-up auth for sensitive actions
+  createdAt              DateTime  @default(now())
+  lastActiveAt           DateTime  @default(now())
+  idleExpiresAt          DateTime
+  absoluteExpiresAt      DateTime
+  revokedAt              DateTime?
+  revokeReason           String?   @db.VarChar(64) // logout, password_reset, enforcement, admin, rotation
+  ipHash                 String?   @db.Char(64) // OPEN(LEGAL): keyed hash, never raw IP
+  userAgent              String?   @db.VarChar(512)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([absoluteExpiresAt])
+}
+
+/// Single-use tokens sent by email. Only SHA-256(token) is stored.
+model VerificationToken {
+  id         String              @id @default(cuid())
+  userId     String
+  purpose    VerificationPurpose
+  tokenHash  String              @unique @db.Char(64)
+  newEmail   String? // EMAIL_CHANGE target
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime            @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose])
+}
+
+/// TOTP (RFC 6238). Secret is AES-256-GCM encrypted with an app key (envelope, keyId for rotation).
+model TwoFactorTotp {
+  id               String    @id @default(cuid())
+  userId           String    @unique
+  secretCiphertext Bytes     @db.VarBinary(255)
+  keyId            String    @db.VarChar(64)
+  confirmedAt      DateTime? // null = enrollment started, not yet confirmed
+  lastUsedStep     BigInt? // replay protection: reject codes for steps <= this
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+/// One-time recovery codes (high entropy -> SHA-256 is sufficient).
+model RecoveryCode {
+  id        String    @id @default(cuid())
+  userId    String
+  codeHash  String    @db.Char(64)
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, codeHash])
+}
+
+/// Passkeys. Stretch goal for Phase 1 (recommended for staff); table reserved now.
+model WebAuthnCredential {
+  id           String    @id @default(cuid())
+  userId       String
+  credentialId String    @unique @db.VarChar(512) // base64url
+  publicKey    Bytes     @db.VarBinary(1024)
+  signCount    Int       @default(0)
+  transports   String?   @db.VarChar(128)
+  nickname     String?   @db.VarChar(64)
+  createdAt    DateTime  @default(now())
+  lastUsedAt   DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+/// Active staff role grants. Revocation deletes the row; history lives in AuditLog.
+model UserRole {
+  userId      String
+  role        PlatformRole
+  grantedById String?
+  grantedAt   DateTime     @default(now())
+  reason      String?      @db.VarChar(255)
+
+  user      User  @relation("UserRoles", fields: [userId], references: [id], onDelete: Cascade)
+  grantedBy User? @relation("RoleGrantedBy", fields: [grantedById], references: [id], onDelete: SetNull)
+
+  @@id([userId, role])
+  @@index([role])
+}
+
+/// Which version of which legal text a user accepted. OPEN(LEGAL): document set per jurisdiction.
+model LegalAcceptance {
+  id              String            @id @default(cuid())
+  userId          String
+  documentType    LegalDocumentType
+  documentVersion String            @db.VarChar(32)
+  acceptedAt      DateTime          @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, documentType, documentVersion])
+}
+
+// -----------------------------------------------------------------------------
+// Sellers & ownership proof
+// -----------------------------------------------------------------------------
+
+model Seller {
+  id                  String       @id @default(cuid())
+  slug                String       @unique @db.VarChar(80)
+  name                String       @db.VarChar(120)
+  description         String?      @db.Text
+  websiteUrl          String?      @db.VarChar(2048)
+  businessEmailDomain String?      @db.VarChar(255)
+  countryCode         String?      @db.Char(2) // OPEN(LEGAL): KYB requirements per country
+  logoMediaId         String?      @unique
+  status              SellerStatus @default(UNVERIFIED)
+  verifiedAt          DateTime?
+  trustScore          Decimal?     @db.Decimal(5, 2) // cache; seller score is public
+  replyRate           Decimal?     @db.Decimal(5, 4) // cache: replied / eligible reviews (0..1)
+  createdById         String
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  logo      MediaAsset? @relation("SellerLogo", fields: [logoMediaId], references: [id], onDelete: SetNull)
+  createdBy User        @relation("SellerCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  members            SellerMember[]
+  ownershipClaims    SellerOwnershipClaim[]
+  products           Product[]
+  replies            SellerReply[]
+  posts              Post[]
+  followers          Follow[]
+  reports            Report[]
+  moderationCases    ModerationCase[]
+  enforcementActions EnforcementAction[]
+  trustSignals       TrustSignal[]        @relation("TrustSignalSeller")
+  trustScores        TrustScoreSnapshot[] @relation("TrustScoreSeller")
+
+  @@index([status])
+}
+
+/// Membership of a user in a seller organisation (scoped role, see ADR-0003).
+/// Invitations: row exists with acceptedAt = null until the invitee accepts.
+model SellerMember {
+  sellerId    String
+  userId      String
+  role        SellerMemberRole
+  invitedById String?
+  acceptedAt  DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  seller    Seller @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  user      User   @relation("SellerMembership", fields: [userId], references: [id], onDelete: Cascade)
+  invitedBy User?  @relation("SellerMemberInvitedBy", fields: [invitedById], references: [id], onDelete: SetNull)
+
+  @@id([sellerId, userId])
+  @@index([userId])
+}
+
+/// Proof that a seller controls a business (scope SELLER) or a product listing (scope PRODUCT).
+model SellerOwnershipClaim {
+  id             String               @id @default(cuid())
+  sellerId       String
+  scope          OwnershipClaimScope
+  productId      String? // required iff scope = PRODUCT (CHECK constraint)
+  method         OwnershipProofMethod
+  status         ClaimStatus          @default(PENDING)
+  challengeValue String?              @db.VarChar(128) // DNS TXT / meta-tag token (not a secret)
+  evidenceUrl    String?              @db.VarChar(2048) // marketplace store link etc.
+  submittedById  String
+  reviewedById   String?
+  reviewedAt     DateTime?
+  decisionNote   String?              @db.Text
+  verifiedUntil  DateTime? // periodic re-verification
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+
+  seller      Seller   @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  product     Product? @relation(fields: [productId], references: [id], onDelete: Restrict, onUpdate: Restrict) // CHECK chk_claim_product_scope
+  submittedBy User     @relation("ClaimSubmittedBy", fields: [submittedById], references: [id], onDelete: Restrict)
+  reviewedBy  User?    @relation("ClaimReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  evidence MediaAsset[] // private bucket, purpose OWNERSHIP_EVIDENCE
+  appeals  Appeal[]
+
+  @@index([status, createdAt])
+  @@index([sellerId])
+}
+
+// -----------------------------------------------------------------------------
+// Catalog & comparison
+// -----------------------------------------------------------------------------
+
+model Category {
+  id        String   @id @default(cuid())
+  slug      String   @unique @db.VarChar(80)
+  name      String   @db.VarChar(120) // OPEN(LANG): translations
+  parentId  String?
+  position  Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  parent     Category?           @relation("CategoryTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children   Category[]          @relation("CategoryTree")
+  attributes CategoryAttribute[]
+  products   Product[]
+
+  @@index([parentId, position])
+}
+
+/// Spec schema per category; drives comparison tables and validates Product.specs.
+model CategoryAttribute {
+  id           String            @id @default(cuid())
+  categoryId   String
+  key          String            @db.VarChar(64)
+  label        String            @db.VarChar(120) // OPEN(LANG)
+  dataType     AttributeDataType
+  unit         String?           @db.VarChar(32)
+  options      Json? // allowed values for ENUM
+  isComparable Boolean           @default(true)
+  position     Int               @default(0)
+
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@unique([categoryId, key])
+}
+
+model Product {
+  id            String        @id @default(cuid())
+  slug          String        @unique @db.VarChar(160)
+  name          String        @db.VarChar(200) // OPEN(LANG)
+  brandName     String?       @db.VarChar(120)
+  description   String?       @db.Text
+  categoryId    String
+  sellerId      String? // owning/verified seller allowed to reply; null = unclaimed
+  gtin          String?       @unique @db.VarChar(14)
+  mpn           String?       @db.VarChar(64)
+  specs         Json? // { [CategoryAttribute.key]: value }, validated in app
+  status        ProductStatus @default(PENDING)
+  mergedIntoId  String?
+  createdById   String
+  ratingAverage Decimal?      @db.Decimal(3, 2) // cache
+  ratingCount   Int           @default(0) // cache
+  reviewCount   Int           @default(0) // cache
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  category   Category  @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  seller     Seller?   @relation(fields: [sellerId], references: [id], onDelete: SetNull)
+  mergedInto Product?  @relation("ProductMerge", fields: [mergedIntoId], references: [id], onDelete: SetNull)
+  mergedFrom Product[] @relation("ProductMerge")
+  createdBy  User      @relation("ProductCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  images          MediaAsset[]
+  reviews         Review[]
+  ownershipClaims SellerOwnershipClaim[]
+  posts           Post[]
+  followers       Follow[]
+  wishlistItems   WishlistItem[]
+  comparisonItems ComparisonItem[]
+  reports         Report[]
+  moderationCases ModerationCase[]
+
+  @@index([categoryId, status])
+  @@index([sellerId])
+  @@index([status, createdAt])
+}
+
+model Comparison {
+  id        String   @id @default(cuid())
+  ownerId   String
+  title     String?  @db.VarChar(120)
+  isPublic  Boolean  @default(false)
+  shareSlug String?  @unique @db.VarChar(32)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  items ComparisonItem[]
+
+  @@index([ownerId])
+}
+
+model ComparisonItem {
+  comparisonId String
+  productId    String
+  position     Int    @default(0)
+
+  comparison Comparison @relation(fields: [comparisonId], references: [id], onDelete: Cascade)
+  product    Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([comparisonId, productId])
+}
+
+// -----------------------------------------------------------------------------
+// Reviews, verified-buyer proof, votes, seller replies
+// -----------------------------------------------------------------------------
+
+/// One review per (product, author), ever. Edits create ReviewRevision rows and re-enter moderation.
+model Review {
+  id                 String               @id @default(cuid())
+  productId          String
+  authorId           String
+  rating             Int                  @db.TinyInt // 1..5, CHECK in check-constraints.sql
+  title              String               @db.VarChar(150)
+  body               String               @db.Text
+  incentive          IncentiveDisclosure  @default(NONE) // OPEN(LEGAL)
+  language           String?              @db.VarChar(16) // OPEN(LANG): detected BCP 47 tag
+  status             ContentStatus        @default(PENDING)
+  currentVersion     Int                  @default(1)
+  // Verified-buyer label. Kept independent of PurchaseProof files so the label
+  // survives proof redaction/deletion (see data-model.md §6.2).
+  verifiedPurchaseAt DateTime?
+  verificationMethod PurchaseProofMethod?
+  helpfulCount       Int                  @default(0) // cache
+  notHelpfulCount    Int                  @default(0) // cache
+  commentCount       Int                  @default(0) // cache
+  publishedAt        DateTime?
+  editedAt           DateTime?
+  deletedAt          DateTime?
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  author  User    @relation("ReviewAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+
+  revisions       ReviewRevision[]
+  proofs          PurchaseProof[]
+  votes           ReviewVote[]
+  reply           SellerReply?
+  comments        Comment[]
+  media           MediaAsset[]
+  reports         Report[]
+  moderationCases ModerationCase[]
+
+  @@unique([productId, authorId])
+  @@index([productId, status, publishedAt])
+  @@index([authorId, createdAt])
+  @@index([status, createdAt])
+}
+
+/// Immutable history of review text/rating (evidence for moderation and appeals).
+model ReviewRevision {
+  id        String   @id @default(cuid())
+  reviewId  String
+  version   Int
+  rating    Int      @db.TinyInt
+  title     String   @db.VarChar(150)
+  body      String   @db.Text
+  editorId  String // author, or staff when redacting PII
+  createdAt DateTime @default(now())
+
+  review Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  editor User   @relation("RevisionEditor", fields: [editorId], references: [id], onDelete: Restrict)
+
+  @@unique([reviewId, version])
+}
+
+/// Verified-buyer evidence. Files live in MediaAsset (PRIVATE). The row itself is a
+/// minimal, long-lived provenance record; files are redacted then purged (data-model.md §6.2).
+model PurchaseProof {
+  id                 String              @id @default(cuid())
+  reviewId           String
+  submittedById      String
+  method             PurchaseProofMethod
+  status             ProofStatus         @default(PENDING)
+  merchantName       String?             @db.VarChar(120) // extracted, non-PII
+  purchaseDate       DateTime?           @db.Date
+  orderReferenceHash String?             @db.Char(64) // keyed hash; detects reuse across accounts
+  fileFingerprint    String?             @db.Char(64) // SHA-256 of original; kept after purge
+  aiAssessment       Json? // extraction + match confidence; MUST NOT contain raw PII
+  reviewedById       String?
+  reviewedAt         DateTime?
+  decisionReason     String?             @db.VarChar(500)
+  redactedAt         DateTime? // redacted derivative produced
+  originalPurgedAt   DateTime? // original file deleted from storage
+  filesPurgedAt      DateTime? // all files (incl. redacted copy) deleted
+  retainFilesUntil   DateTime? // OPEN(LEGAL): retention window
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  review      Review @relation(fields: [reviewId], references: [id], onDelete: Restrict)
+  submittedBy User   @relation("ProofSubmittedBy", fields: [submittedById], references: [id], onDelete: Restrict)
+  reviewedBy  User?  @relation("ProofReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  files   MediaAsset[]
+  appeals Appeal[]
+
+  @@index([status, createdAt])
+  @@index([reviewId])
+  @@index([orderReferenceHash])
+  @@index([fileFingerprint])
+  @@index([retainFilesUntil])
+}
+
+model ReviewVote {
+  reviewId  String
+  userId    String
+  value     VoteValue
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  review Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([reviewId, userId])
+  @@index([userId])
+}
+
+/// One public reply per review, on behalf of the product's verified seller.
+model SellerReply {
+  id          String        @id @default(cuid())
+  reviewId    String        @unique
+  sellerId    String
+  authorId    String // the SellerMember who wrote it
+  body        String        @db.Text
+  status      ContentStatus @default(PENDING)
+  publishedAt DateTime?
+  editedAt    DateTime?
+  deletedAt   DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  review Review @relation(fields: [reviewId], references: [id], onDelete: Restrict)
+  seller Seller @relation(fields: [sellerId], references: [id], onDelete: Restrict)
+  author User   @relation("ReplyAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+
+  reports         Report[]
+  moderationCases ModerationCase[]
+
+  @@index([sellerId, createdAt])
+}
+
+// -----------------------------------------------------------------------------
+// Media (S3/R2 objects)
+// -----------------------------------------------------------------------------
+
+/// One row per stored object. Attachment is an exclusive arc (at most one of
+/// reviewId/postId/productId/purchaseProofId/ownershipClaimId/appealId);
+/// avatars and logos are referenced from User/Seller instead.
+model MediaAsset {
+  id               String          @id @default(cuid())
+  ownerId          String
+  purpose          MediaPurpose
+  kind             MediaKind
+  visibility       MediaVisibility
+  status           MediaStatus     @default(UPLOADING)
+  storageKey       String          @unique @db.VarChar(512) // never derived from user input
+  mimeType         String          @db.VarChar(127)
+  sizeBytes        Int?
+  width            Int?
+  height           Int?
+  durationMs       Int?
+  sha256           String?         @db.Char(64)
+  perceptualHash   String?         @db.VarChar(32) // near-duplicate detection (images)
+  variants         Json? // { thumb: key, medium: key, poster: key, ... }
+  altText          String?         @db.VarChar(500)
+  metadataStripped Boolean         @default(false) // EXIF/GPS removed
+  isRedacted       Boolean         @default(false) // redacted derivative of derivedFromId
+  derivedFromId    String?
+  legalHold        Boolean         @default(false) // blocks purge jobs
+  position         Int             @default(0)
+
+  // exclusive arc (at most one non-null), Restrict: see check-constraints.sql
+  reviewId         String?
+  postId           String?
+  productId        String?
+  purchaseProofId  String?
+  ownershipClaimId String?
+  appealId         String?
+
+  processedAt DateTime?
+  purgedAt    DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  owner       User         @relation("MediaOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  derivedFrom MediaAsset?  @relation("MediaDerivation", fields: [derivedFromId], references: [id], onDelete: SetNull)
+  derivatives MediaAsset[] @relation("MediaDerivation")
+
+  review         Review?               @relation(fields: [reviewId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  post           Post?                 @relation(fields: [postId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  product        Product?              @relation(fields: [productId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  purchaseProof  PurchaseProof?        @relation(fields: [purchaseProofId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ownershipClaim SellerOwnershipClaim? @relation(fields: [ownershipClaimId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  appeal         Appeal?               @relation(fields: [appealId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  avatarOf User?   @relation("UserAvatar")
+  logoOf   Seller? @relation("SellerLogo")
+
+  reports         Report[]
+  moderationCases ModerationCase[]
+
+  @@index([ownerId, createdAt])
+  @@index([status, createdAt]) // orphan cleanup: UPLOADING/READY + unattached + old
+  @@index([sha256])
+}
+
+// -----------------------------------------------------------------------------
+// Social: posts, comments, likes, follows, blocks, wishlist
+// -----------------------------------------------------------------------------
+
+model Post {
+  id           String        @id @default(cuid())
+  authorId     String
+  asSellerId   String? // posted on behalf of a seller (requires seller role)
+  productId    String? // optional product tag
+  body         String        @db.Text
+  status       ContentStatus @default(PENDING)
+  likeCount    Int           @default(0) // cache
+  commentCount Int           @default(0) // cache
+  publishedAt  DateTime?
+  editedAt     DateTime?
+  deletedAt    DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  author   User     @relation("PostAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+  asSeller Seller?  @relation(fields: [asSellerId], references: [id], onDelete: Restrict)
+  product  Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  media           MediaAsset[]
+  comments        Comment[]
+  likes           Like[]
+  reports         Report[]
+  moderationCases ModerationCase[]
+
+  @@index([authorId, createdAt])
+  @@index([asSellerId, createdAt])
+  @@index([status, createdAt])
+}
+
+/// Comment on a review OR a post (exclusive arc). One level of threading via parentId.
+model Comment {
+  id          String        @id @default(cuid())
+  authorId    String
+  reviewId    String?
+  postId      String?
+  parentId    String?
+  body        String        @db.Text
+  status      ContentStatus @default(PENDING)
+  likeCount   Int           @default(0) // cache
+  publishedAt DateTime?
+  editedAt    DateTime?
+  deletedAt   DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  author  User      @relation("CommentAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+  review  Review?   @relation(fields: [reviewId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  post    Post?     @relation(fields: [postId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  parent  Comment?  @relation("CommentThread", fields: [parentId], references: [id], onDelete: Restrict)
+  replies Comment[] @relation("CommentThread")
+
+  likes           Like[]
+  reports         Report[]
+  moderationCases ModerationCase[]
+
+  @@index([reviewId, createdAt])
+  @@index([postId, createdAt])
+  @@index([authorId, createdAt])
+}
+
+/// Like on a post OR a comment (exclusive arc). Reviews use ReviewVote instead.
+/// NOTE: LIKE is a MySQL reserved word. Prisma quotes it automatically; raw SQL must use `Like` in backticks.
+model Like {
+  id        String   @id @default(cuid())
+  userId    String
+  postId    String?
+  commentId String?
+  createdAt DateTime @default(now())
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post    Post?    @relation(fields: [postId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  comment Comment? @relation(fields: [commentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  // MySQL unique indexes allow multiple NULLs, so these work with the arc.
+  @@unique([userId, postId])
+  @@unique([userId, commentId])
+}
+
+/// Follow a user, seller OR product (exclusive arc).
+model Follow {
+  id                String   @id @default(cuid())
+  followerId        String
+  followedUserId    String?
+  followedSellerId  String?
+  followedProductId String?
+  createdAt         DateTime @default(now())
+
+  follower        User     @relation("FollowFollower", fields: [followerId], references: [id], onDelete: Cascade)
+  followedUser    User?    @relation("FollowFollowedUser", fields: [followedUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  followedSeller  Seller?  @relation(fields: [followedSellerId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  followedProduct Product? @relation(fields: [followedProductId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([followerId, followedUserId])
+  @@unique([followerId, followedSellerId])
+  @@unique([followerId, followedProductId])
+}
+
+/// User-to-user block. Blocked users cannot follow, comment on, or like the blocker's content.
+/// (Will also gate Phase 2 messaging.)
+model UserBlock {
+  blockerId String
+  blockedId String
+  createdAt DateTime @default(now())
+
+  blocker User @relation("BlockBlocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked User @relation("BlockBlocked", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@id([blockerId, blockedId])
+  @@index([blockedId])
+}
+
+model WishlistItem {
+  id        String   @id @default(cuid())
+  userId    String
+  productId String
+  note      String?  @db.VarChar(500)
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, productId])
+  @@index([productId])
+}
+
+// -----------------------------------------------------------------------------
+// Trust & safety: reports, moderation, enforcement, appeals
+// -----------------------------------------------------------------------------
+
+/// A user's report against exactly one target (exclusive arc). Reports are grouped into a ModerationCase.
+model Report {
+  id         String       @id @default(cuid())
+  reporterId String
+  reason     ReportReason
+  details    String?      @db.Text
+  status     ReportStatus @default(OPEN)
+  caseId     String?
+
+  // exclusive arc (exactly one non-null)
+  reviewId       String?
+  commentId      String?
+  postId         String?
+  sellerReplyId  String?
+  reportedUserId String?
+  sellerId       String?
+  productId      String?
+  mediaAssetId   String?
+
+  createdAt  DateTime  @default(now())
+  resolvedAt DateTime?
+
+  reporter     User            @relation("ReportReporter", fields: [reporterId], references: [id], onDelete: Restrict)
+  moderationCase ModerationCase? @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  review       Review?         @relation(fields: [reviewId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  comment      Comment?        @relation(fields: [commentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  post         Post?           @relation(fields: [postId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  sellerReply  SellerReply?    @relation(fields: [sellerReplyId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  reportedUser User?           @relation("ReportReportedUser", fields: [reportedUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  seller       Seller?         @relation(fields: [sellerId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  product      Product?        @relation(fields: [productId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  mediaAsset   MediaAsset?     @relation(fields: [mediaAssetId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([status, createdAt])
+  @@index([reporterId, createdAt])
+}
+
+/// Unit of moderation work for one target (exclusive arc). AI-first: the AI decision is
+/// recorded first; low confidence -> ESCALATE -> human queue. See ADR-0003 and data-model.md §6.1.
+model ModerationCase {
+  id              String            @id @default(cuid())
+  trigger         ModerationTrigger
+  status          CaseStatus        @default(OPEN)
+  priority        Int               @default(0) // higher = sooner
+  assignedToId    String?
+  slaDueAt        DateTime?
+  outcome         DecisionOutcome? // final outcome once RESOLVED
+  contentSnapshot Json? // evidence: content as it was when the case opened. OPEN(LEGAL): retention
+
+  // exclusive arc (exactly one non-null)
+  reviewId      String?
+  commentId     String?
+  postId        String?
+  sellerReplyId String?
+  targetUserId  String?
+  sellerId      String?
+  productId     String?
+  mediaAssetId  String?
+
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  resolvedAt DateTime?
+
+  assignedTo  User?        @relation("CaseAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  review      Review?      @relation(fields: [reviewId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  comment     Comment?     @relation(fields: [commentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  post        Post?        @relation(fields: [postId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  sellerReply SellerReply? @relation(fields: [sellerReplyId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  targetUser  User?        @relation("CaseTargetUser", fields: [targetUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  seller      Seller?      @relation(fields: [sellerId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  product     Product?     @relation(fields: [productId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  mediaAsset  MediaAsset?  @relation(fields: [mediaAssetId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  reports            Report[]
+  decisions          ModerationDecision[]
+  enforcementActions EnforcementAction[]
+  appeals            Appeal[]
+
+  @@index([status, priority, createdAt])
+  @@index([assignedToId, status])
+}
+
+/// Append-only. Every AI, rule, or human decision on a case, including overrides.
+model ModerationDecision {
+  id            String          @id @default(cuid())
+  caseId        String
+  source        DecisionSource
+  moderatorId   String? // set when source = HUMAN
+  outcome       DecisionOutcome
+  policyVersion String          @db.VarChar(32) // content policy version applied
+  aiProvider    String?         @db.VarChar(64)
+  aiModel       String?         @db.VarChar(128)
+  confidence    Decimal?        @db.Decimal(5, 4) // 0..1
+  labels        Json? // category -> score
+  reasonCode    String?         @db.VarChar(64)
+  rationale     String?         @db.Text // internal
+  createdAt     DateTime        @default(now())
+
+  moderationCase ModerationCase @relation(fields: [caseId], references: [id], onDelete: Restrict)
+  moderator User?          @relation("DecisionModerator", fields: [moderatorId], references: [id], onDelete: SetNull)
+
+  @@index([caseId, createdAt])
+  @@index([moderatorId, createdAt])
+}
+
+/// Sanction against a user OR a seller (exclusive arc). Source of truth for User/Seller status.
+model EnforcementAction {
+  id              String            @id @default(cuid())
+  type            EnforcementType
+  status          EnforcementStatus @default(ACTIVE)
+  subjectUserId   String?
+  subjectSellerId String?
+  caseId          String?
+  reasonCode      String            @db.VarChar(64)
+  publicReason    String            @db.Text // statement of reasons shown to the subject
+  internalNote    String?           @db.Text
+  issuedById      String? // null = automated (RULE/AI within policy limits)
+  startsAt        DateTime          @default(now())
+  endsAt          DateTime? // null = permanent
+  revokedById     String?
+  revokedAt       DateTime?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  subjectUser   User?           @relation("EnforcementSubjectUser", fields: [subjectUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  subjectSeller Seller?         @relation(fields: [subjectSellerId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  moderationCase ModerationCase? @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  issuedBy      User?           @relation("EnforcementIssuedBy", fields: [issuedById], references: [id], onDelete: SetNull)
+  revokedBy     User?           @relation("EnforcementRevokedBy", fields: [revokedById], references: [id], onDelete: SetNull)
+
+  appeals Appeal[]
+
+  @@index([subjectUserId, status])
+  @@index([subjectSellerId, status])
+  @@index([status, endsAt]) // expiry job
+}
+
+/// Appeal against exactly one decision (exclusive arc). Reviewer must differ from the original decider.
+model Appeal {
+  id                  String       @id @default(cuid())
+  appellantId         String
+  enforcementActionId String?
+  caseId              String?
+  purchaseProofId     String?
+  ownershipClaimId    String?
+  statement           String       @db.Text
+  status              AppealStatus @default(SUBMITTED)
+  reviewerId          String?
+  decisionNote        String?      @db.Text // shown to appellant
+  submittedAt         DateTime     @default(now())
+  decidedAt           DateTime?
+  updatedAt           DateTime     @updatedAt
+
+  appellant         User                  @relation("AppealAppellant", fields: [appellantId], references: [id], onDelete: Restrict)
+  reviewer          User?                 @relation("AppealReviewer", fields: [reviewerId], references: [id], onDelete: SetNull)
+  enforcementAction EnforcementAction?    @relation(fields: [enforcementActionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  moderationCase ModerationCase? @relation(fields: [caseId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  purchaseProof     PurchaseProof?        @relation(fields: [purchaseProofId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ownershipClaim    SellerOwnershipClaim? @relation(fields: [ownershipClaimId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  attachments MediaAsset[] // purpose APPEAL_EVIDENCE, private
+
+  // one appeal per appellant per decision
+  @@unique([appellantId, enforcementActionId])
+  @@unique([appellantId, caseId])
+  @@unique([appellantId, purchaseProofId])
+  @@unique([appellantId, ownershipClaimId])
+  @@index([status, submittedAt])
+}
+
+// -----------------------------------------------------------------------------
+// Trust score inputs & snapshots
+// -----------------------------------------------------------------------------
+
+/// Append-only event-like input to trust scoring, for a user OR a seller (exclusive arc).
+model TrustSignal {
+  id              String          @id @default(cuid())
+  subjectUserId   String?
+  subjectSellerId String?
+  type            TrustSignalType
+  value           Decimal         @db.Decimal(10, 4) // signed contribution before weighting
+  sourceRef       String?         @db.VarChar(191) // e.g. "review:<id>", "case:<id>"
+  occurredAt      DateTime        @default(now())
+  expiresAt       DateTime? // decay horizon
+  createdAt       DateTime        @default(now())
+
+  subjectUser   User?   @relation("TrustSignalUser", fields: [subjectUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  subjectSeller Seller? @relation("TrustSignalSeller", fields: [subjectSellerId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([subjectUserId, type, occurredAt])
+  @@index([subjectSellerId, type, occurredAt])
+}
+
+/// Append-only computed score with explainable components. Latest row is cached on User/Seller.
+model TrustScoreSnapshot {
+  id               String    @id @default(cuid())
+  subjectUserId    String?
+  subjectSellerId  String?
+  score            Decimal   @db.Decimal(5, 2) // 0..100
+  band             TrustBand
+  algorithmVersion String    @db.VarChar(32)
+  components       Json // { inputName: { raw, weight, contribution } }
+  computedAt       DateTime  @default(now())
+
+  subjectUser   User?   @relation("TrustScoreUser", fields: [subjectUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  subjectSeller Seller? @relation("TrustScoreSeller", fields: [subjectSellerId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([subjectUserId, computedAt])
+  @@index([subjectSellerId, computedAt])
+}
+
+// -----------------------------------------------------------------------------
+// Notifications
+// -----------------------------------------------------------------------------
+
+model Notification {
+  id          String           @id @default(cuid())
+  recipientId String
+  actorId     String?
+  type        NotificationType
+  entityType  String?          @db.VarChar(50) // loose ref: notifications must survive target deletion
+  entityId    String?          @db.VarChar(191)
+  data        Json? // render params; no secrets, minimal PII
+  groupKey    String?          @db.VarChar(191) // aggregation ("12 people liked your post")
+  readAt      DateTime?
+  emailedAt   DateTime?
+  createdAt   DateTime         @default(now())
+
+  recipient User  @relation("NotificationRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  actor     User? @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([recipientId, createdAt])
+  @@index([recipientId, readAt])
+  @@index([recipientId, groupKey])
+}
+
+model NotificationPreference {
+  userId  String
+  type    NotificationType
+  channel NotificationChannel
+  enabled Boolean             @default(true)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, type, channel])
+}
+
+// -----------------------------------------------------------------------------
+// Audit & infrastructure
+// -----------------------------------------------------------------------------
+
+/// Append-only. No FKs on purpose: entries must outlive the entities they describe.
+/// The app DB user gets INSERT/SELECT only on this table (no UPDATE/DELETE).
+model AuditLog {
+  id         BigInt         @id @default(autoincrement())
+  occurredAt DateTime       @default(now())
+  actorType  AuditActorType
+  actorId    String?        @db.VarChar(191)
+  actorRoles String?        @db.VarChar(255) // snapshot, e.g. "MODERATOR,ADMIN"
+  action     String         @db.VarChar(100) // e.g. "review.remove", "role.grant", "proof.view_original"
+  entityType String         @db.VarChar(50)
+  entityId   String?        @db.VarChar(191)
+  sellerId   String?        @db.VarChar(191) // scope context for seller-scoped actions
+  reason     String?        @db.Text
+  metadata   Json? // before/after diff with PII redacted
+  requestId  String?        @db.VarChar(64)
+  ipHash     String?        @db.Char(64) // OPEN(LEGAL)
+  userAgent  String?        @db.VarChar(512)
+
+  @@index([entityType, entityId, occurredAt])
+  @@index([actorId, occurredAt])
+  @@index([action, occurredAt])
+}
+
+/// Transactional outbox: written in the same DB transaction as the domain change,
+/// relayed to the job queue by the worker (ADR-0001).
+model OutboxEvent {
+  id            BigInt    @id @default(autoincrement())
+  topic         String    @db.VarChar(100) // e.g. "review.submitted", "media.uploaded"
+  aggregateType String    @db.VarChar(50)
+  aggregateId   String    @db.VarChar(191)
+  payload       Json
+  createdAt     DateTime  @default(now())
+  dispatchedAt  DateTime?
+  attempts      Int       @default(0)
+  lastError     String?   @db.Text
+
+  @@index([dispatchedAt, id])
+}
