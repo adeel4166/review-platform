@@ -31,7 +31,7 @@ pnpm qa      # eslint, tsc (all packages), vitest, prisma validate, design token
 pnpm build
 ```
 
-CI (`.github/workflows/ci.yml`) runs the same `pnpm qa` and `pnpm build` on every push to `main`/`task/**` and on PRs, plus `docker compose config` validation. Tests today need no running services; integration tests against the compose MySQL come with the test-strategy task.
+CI (`.github/workflows/ci.yml`) runs the same `pnpm qa` and `pnpm build` on every push to `main`/`task/**` and on PRs, plus `docker compose config` validation. Tests today need no running services. The Phase 1 test strategy and case catalogue are in [`docs/qa/`](docs/qa/test-strategy.md). Integration and E2E harnesses land with M2.
 
 ## Adding a queue/job
 
