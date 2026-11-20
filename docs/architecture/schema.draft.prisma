@@ -130,8 +130,9 @@ enum AttributeDataType {
 enum ContentStatus {
   PENDING // awaiting AI and/or human moderation; visible to author only
   PUBLISHED
-  HIDDEN // restricted by moderation, pending decision/appeal; visible to author + staff
-  REMOVED // moderation removed; visible to author + staff (statement of reasons)
+  HIDDEN // UNSURE verdict / restricted: held for staff decision (7-day hold); author + staff only
+  REJECTED // blocked BEFORE ever being public (VIOLATION or hold expired); appealable. M1.2
+  REMOVED // taken down AFTER being public; visible to author + staff (statement of reasons)
   DELETED // author deleted (soft); retained for evidence until purge
 }
 
@@ -195,6 +196,53 @@ enum MediaStatus {
   PURGED // object deleted from storage; row kept as tombstone
 }
 
+/// Bucket the asset's objects currently live in (media-pipeline.md §5). M1.2
+enum StorageBucket {
+  INGEST // raw, untrusted upload
+  PRIVATE // processed but not public, evidence, quarantine
+  PUBLIC // published via CDN
+}
+
+/// Why an asset is REJECTED or FAILED (media-pipeline.md §4).
+enum MediaFailureReason {
+  TYPE_NOT_ALLOWED
+  TYPE_MISMATCH
+  TOO_LARGE
+  TOO_LONG
+  TOO_MANY_PIXELS
+  UNSUPPORTED_CODEC
+  CORRUPT
+  MALWARE
+  BANNED_HASH
+  POLICY_VIOLATION // standalone media moderated as VIOLATION
+  NOT_CONFIRMED // upload slot never confirmed
+  SCAN_UNAVAILABLE // FAILED: scanner down beyond retry budget (fail closed)
+  PROCESSING_ERROR // FAILED
+}
+
+enum MediaProcessingStep {
+  SLOT_ISSUED
+  UPLOAD_CONFIRMED
+  VALIDATE
+  VIRUS_SCAN
+  SANITIZE // EXIF/GPS/XMP strip + verification
+  TRANSCODE
+  VARIANTS
+  AI_MODERATION
+  PROMOTE
+  DEMOTE
+  QUARANTINE
+  PURGE
+}
+
+enum MediaProcessingOutcome {
+  OK
+  REJECTED
+  INFECTED
+  ERROR
+  SKIPPED
+}
+
 enum ReportReason {
   SPAM
   FAKE_OR_MISLEADING
@@ -246,6 +294,36 @@ enum DecisionOutcome {
   ESCALATE // AI/rule not confident -> human queue
 }
 
+/// AI/rule verdict (moderation-pipeline.md §2). CLEAN -> APPROVE, VIOLATION -> REMOVE, UNSURE -> ESCALATE.
+enum ModerationVerdict {
+  CLEAN
+  VIOLATION
+  UNSURE // includes AI provider failure
+}
+
+/// Staff work-queue lane of a ModerationCase (moderation-pipeline.md §6.1).
+enum ModerationLane {
+  POST_REVIEW // CLEAN and live; human post-review due within 24 h
+  HOLD // UNSURE and hidden; auto-reject at holdExpiresAt (7 days)
+  REPORTED // live content with reports / staff flags
+}
+
+/// Moderation state of one ReviewRevision (edits of live reviews, moderation-pipeline.md §3.3).
+enum RevisionStatus {
+  PENDING
+  HELD
+  APPROVED
+  REJECTED
+  SUPERSEDED
+}
+
+enum ModerationConfigStatus {
+  DRAFT
+  ACTIVE // exactly one (application rule)
+  SHADOW // at most one; evaluated for metrics only
+  RETIRED
+}
+
 enum EnforcementType {
   WARNING
   CONTENT_REMOVAL
@@ -292,6 +370,7 @@ enum TrustSignalType {
   VELOCITY_ANOMALY
   DUPLICATE_PROOF_DETECTED
   LINKED_ACCOUNT_SUSPECTED
+  MALWARE_UPLOAD // M1.2: upload rejected by virus scan
 }
 
 enum TrustBand {
@@ -304,8 +383,14 @@ enum TrustBand {
 /// No messaging types in Phase 1 (Messaging is out of scope).
 enum NotificationType {
   REVIEW_PUBLISHED
-  REVIEW_REJECTED
-  REVIEW_HIDDEN
+  // Moderation outcomes for any content type (M1.2; replaces REVIEW_REJECTED / REVIEW_HIDDEN).
+  // All CONTENT_*, MEDIA_REJECTED and APPEAL_RECEIVED are mandatory (statement of reasons).
+  CONTENT_HELD
+  CONTENT_REJECTED
+  CONTENT_REMOVED
+  CONTENT_RESTORED
+  MEDIA_REJECTED
+  APPEAL_RECEIVED
   REVIEW_VOTED_HELPFUL
   SELLER_REPLIED
   REVIEW_COMMENTED
@@ -384,12 +469,12 @@ model User {
   ownershipClaimsReviewed  SellerOwnershipClaim[] @relation("ClaimReviewedBy")
   productsCreated          Product[]              @relation("ProductCreatedBy")
 
-  reviews                  Review[]         @relation("ReviewAuthor")
-  reviewRevisionsEdited    ReviewRevision[] @relation("RevisionEditor")
-  purchaseProofsSubmitted  PurchaseProof[]  @relation("ProofSubmittedBy")
-  purchaseProofsReviewed   PurchaseProof[]  @relation("ProofReviewedBy")
-  reviewVotes              ReviewVote[]
-  sellerRepliesAuthored    SellerReply[]    @relation("ReplyAuthor")
+  reviews                 Review[]         @relation("ReviewAuthor")
+  reviewRevisionsEdited   ReviewRevision[] @relation("RevisionEditor")
+  purchaseProofsSubmitted PurchaseProof[]  @relation("ProofSubmittedBy")
+  purchaseProofsReviewed  PurchaseProof[]  @relation("ProofReviewedBy")
+  reviewVotes             ReviewVote[]
+  sellerRepliesAuthored   SellerReply[]    @relation("ReplyAuthor")
 
   posts         Post[]         @relation("PostAuthor")
   comments      Comment[]      @relation("CommentAuthor")
@@ -401,18 +486,18 @@ model User {
   wishlistItems WishlistItem[]
   comparisons   Comparison[]
 
-  reportsFiled              Report[]            @relation("ReportReporter")
-  reportsAgainst            Report[]            @relation("ReportReportedUser")
-  moderationCasesAbout      ModerationCase[]    @relation("CaseTargetUser")
-  moderationCasesAssigned   ModerationCase[]    @relation("CaseAssignee")
-  moderationDecisions       ModerationDecision[] @relation("DecisionModerator")
-  enforcementsReceived      EnforcementAction[] @relation("EnforcementSubjectUser")
-  enforcementsIssued        EnforcementAction[] @relation("EnforcementIssuedBy")
-  enforcementsRevoked       EnforcementAction[] @relation("EnforcementRevokedBy")
-  appealsFiled              Appeal[]            @relation("AppealAppellant")
-  appealsReviewed           Appeal[]            @relation("AppealReviewer")
-  trustSignals              TrustSignal[]       @relation("TrustSignalUser")
-  trustScores               TrustScoreSnapshot[] @relation("TrustScoreUser")
+  reportsFiled            Report[]             @relation("ReportReporter")
+  reportsAgainst          Report[]             @relation("ReportReportedUser")
+  moderationCasesAbout    ModerationCase[]     @relation("CaseTargetUser")
+  moderationCasesAssigned ModerationCase[]     @relation("CaseAssignee")
+  moderationDecisions     ModerationDecision[] @relation("DecisionModerator")
+  enforcementsReceived    EnforcementAction[]  @relation("EnforcementSubjectUser")
+  enforcementsIssued      EnforcementAction[]  @relation("EnforcementIssuedBy")
+  enforcementsRevoked     EnforcementAction[]  @relation("EnforcementRevokedBy")
+  appealsFiled            Appeal[]             @relation("AppealAppellant")
+  appealsReviewed         Appeal[]             @relation("AppealReviewer")
+  trustSignals            TrustSignal[]        @relation("TrustSignalUser")
+  trustScores             TrustScoreSnapshot[] @relation("TrustScoreUser")
 
   notificationsReceived   Notification[]           @relation("NotificationRecipient")
   notificationsActed      Notification[]           @relation("NotificationActor")
@@ -581,8 +666,8 @@ model Seller {
   reports            Report[]
   moderationCases    ModerationCase[]
   enforcementActions EnforcementAction[]
-  trustSignals       TrustSignal[]        @relation("TrustSignalSeller")
-  trustScores        TrustScoreSnapshot[] @relation("TrustScoreSeller")
+  trustSignals       TrustSignal[]          @relation("TrustSignalSeller")
+  trustScores        TrustScoreSnapshot[]   @relation("TrustScoreSeller")
 
   @@index([status])
 }
@@ -757,6 +842,7 @@ model Review {
   language           String?              @db.VarChar(16) // OPEN(LANG): detected BCP 47 tag
   status             ContentStatus        @default(PENDING)
   currentVersion     Int                  @default(1)
+  publishedVersion   Int? // revision shown publicly; lags currentVersion while an edit is moderated (M1.2)
   // Verified-buyer label. Kept independent of PurchaseProof files so the label
   // survives proof redaction/deletion (see data-model.md §6.2).
   verifiedPurchaseAt DateTime?
@@ -790,14 +876,15 @@ model Review {
 
 /// Immutable history of review text/rating (evidence for moderation and appeals).
 model ReviewRevision {
-  id        String   @id @default(cuid())
+  id        String         @id @default(cuid())
   reviewId  String
   version   Int
-  rating    Int      @db.TinyInt
-  title     String   @db.VarChar(150)
-  body      String   @db.Text
+  rating    Int            @db.TinyInt
+  title     String         @db.VarChar(150)
+  body      String         @db.Text
   editorId  String // author, or staff when redacting PII
-  createdAt DateTime @default(now())
+  status    RevisionStatus @default(PENDING) // M1.2, moderation-pipeline.md §3.3
+  createdAt DateTime       @default(now())
 
   review Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
   editor User   @relation("RevisionEditor", fields: [editorId], references: [id], onDelete: Restrict)
@@ -888,27 +975,30 @@ model SellerReply {
 /// reviewId/postId/productId/purchaseProofId/ownershipClaimId/appealId);
 /// avatars and logos are referenced from User/Seller instead.
 model MediaAsset {
-  id               String          @id @default(cuid())
+  id               String              @id @default(cuid())
   ownerId          String
   purpose          MediaPurpose
   kind             MediaKind
   visibility       MediaVisibility
-  status           MediaStatus     @default(UPLOADING)
-  storageKey       String          @unique @db.VarChar(512) // never derived from user input
-  mimeType         String          @db.VarChar(127)
+  status           MediaStatus         @default(UPLOADING)
+  bucket           StorageBucket       @default(INGEST) // where the objects currently are (M1.2)
+  storageKey       String              @unique @db.VarChar(512) // primary object key in `bucket`; never derived from user input
+  mimeType         String              @db.VarChar(127) // declared at slot time
+  detectedMimeType String?             @db.VarChar(127) // magic-byte detection (VALIDATE step)
+  failureReason    MediaFailureReason? // set when REJECTED / FAILED
   sizeBytes        Int?
   width            Int?
   height           Int?
   durationMs       Int?
-  sha256           String?         @db.Char(64)
-  perceptualHash   String?         @db.VarChar(32) // near-duplicate detection (images)
+  sha256           String?             @db.Char(64)
+  perceptualHash   String?             @db.VarChar(32) // near-duplicate detection (images)
   variants         Json? // { thumb: key, medium: key, poster: key, ... }
-  altText          String?         @db.VarChar(500)
-  metadataStripped Boolean         @default(false) // EXIF/GPS removed
-  isRedacted       Boolean         @default(false) // redacted derivative of derivedFromId
+  altText          String?             @db.VarChar(500)
+  metadataStripped Boolean             @default(false) // EXIF/GPS removed
+  isRedacted       Boolean             @default(false) // redacted derivative of derivedFromId
   derivedFromId    String?
-  legalHold        Boolean         @default(false) // blocks purge jobs
-  position         Int             @default(0)
+  legalHold        Boolean             @default(false) // blocks purge jobs
+  position         Int                 @default(0)
 
   // exclusive arc (at most one non-null), Restrict: see check-constraints.sql
   reviewId         String?
@@ -918,10 +1008,12 @@ model MediaAsset {
   ownershipClaimId String?
   appealId         String?
 
-  processedAt DateTime?
-  purgedAt    DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  virusScannedAt DateTime?
+  processedAt    DateTime?
+  promotedAt     DateTime? // copied to the PUBLIC bucket (null while private)
+  purgedAt       DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   owner       User         @relation("MediaOwner", fields: [ownerId], references: [id], onDelete: Restrict)
   derivedFrom MediaAsset?  @relation("MediaDerivation", fields: [derivedFromId], references: [id], onDelete: SetNull)
@@ -943,6 +1035,7 @@ model MediaAsset {
   @@index([ownerId, createdAt])
   @@index([status, createdAt]) // orphan cleanup: UPLOADING/READY + unattached + old
   @@index([sha256])
+  @@index([perceptualHash])
 }
 
 // -----------------------------------------------------------------------------
@@ -1101,16 +1194,16 @@ model Report {
   createdAt  DateTime  @default(now())
   resolvedAt DateTime?
 
-  reporter     User            @relation("ReportReporter", fields: [reporterId], references: [id], onDelete: Restrict)
+  reporter       User            @relation("ReportReporter", fields: [reporterId], references: [id], onDelete: Restrict)
   moderationCase ModerationCase? @relation(fields: [caseId], references: [id], onDelete: SetNull)
-  review       Review?         @relation(fields: [reviewId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  comment      Comment?        @relation(fields: [commentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  post         Post?           @relation(fields: [postId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  sellerReply  SellerReply?    @relation(fields: [sellerReplyId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  reportedUser User?           @relation("ReportReportedUser", fields: [reportedUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  seller       Seller?         @relation(fields: [sellerId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  product      Product?        @relation(fields: [productId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  mediaAsset   MediaAsset?     @relation(fields: [mediaAssetId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  review         Review?         @relation(fields: [reviewId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  comment        Comment?        @relation(fields: [commentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  post           Post?           @relation(fields: [postId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  sellerReply    SellerReply?    @relation(fields: [sellerReplyId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  reportedUser   User?           @relation("ReportReportedUser", fields: [reportedUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  seller         Seller?         @relation(fields: [sellerId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  product        Product?        @relation(fields: [productId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  mediaAsset     MediaAsset?     @relation(fields: [mediaAssetId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([status, createdAt])
   @@index([reporterId, createdAt])
@@ -1126,7 +1219,23 @@ model ModerationCase {
   assignedToId    String?
   slaDueAt        DateTime?
   outcome         DecisionOutcome? // final outcome once RESOLVED
+  resolutionCode  String?           @db.VarChar(64) // e.g. HOLD_EXPIRED, POST_REVIEW_LAPSED, SUPERSEDED, WITHDRAWN_BY_AUTHOR
   contentSnapshot Json? // evidence: content as it was when the case opened. OPEN(LEGAL): retention
+  contentVersion  Int? // revision under moderation (Review.currentVersion when opened)
+
+  // M1.2 queue fields (moderation-pipeline.md §6). Denormalised from the latest AI/RULE
+  // decision by ModerationService.transition() only, for queue sorting/filtering.
+  lane            ModerationLane?
+  aiVerdict       ModerationVerdict?
+  aiScore         Decimal?           @db.Decimal(5, 4) // max category score, 0..1
+  aiTopCategory   String?            @db.VarChar(64)
+  aiReason        String?            @db.VarChar(500) // one-line reason shown in the queue
+  configVersion   String?            @db.VarChar(32) // ModerationConfig.version used
+  // Timers: deadlines captured when the timer starts (config changes do not move them).
+  holdExpiresAt   DateTime? // lane HOLD: auto-reject at this time (CHECK chk_case_hold_expiry)
+  postReviewDueAt DateTime? // lane POST_REVIEW: 24 h SLA (CHECK chk_case_post_review_due)
+  appealableUntil DateTime? // set on REJECT/REMOVE decisions
+  leaseExpiresAt  DateTime? // claim lease for assignedToId (15 min)
 
   // exclusive arc (exactly one non-null)
   reviewId      String?
@@ -1159,29 +1268,40 @@ model ModerationCase {
 
   @@index([status, priority, createdAt])
   @@index([assignedToId, status])
+  @@index([lane, status, holdExpiresAt]) // HOLD lane + expiry sweeper
+  @@index([lane, status, postReviewDueAt]) // POST_REVIEW lane + SLA/lapse sweeper
+  @@index([lane, status, aiScore])
 }
 
 /// Append-only. Every AI, rule, or human decision on a case, including overrides.
 model ModerationDecision {
-  id            String          @id @default(cuid())
-  caseId        String
-  source        DecisionSource
-  moderatorId   String? // set when source = HUMAN
-  outcome       DecisionOutcome
-  policyVersion String          @db.VarChar(32) // content policy version applied
-  aiProvider    String?         @db.VarChar(64)
-  aiModel       String?         @db.VarChar(128)
-  confidence    Decimal?        @db.Decimal(5, 4) // 0..1
-  labels        Json? // category -> score
-  reasonCode    String?         @db.VarChar(64)
-  rationale     String?         @db.Text // internal
-  createdAt     DateTime        @default(now())
+  id              String             @id @default(cuid())
+  caseId          String
+  source          DecisionSource
+  moderatorId     String? // set when source = HUMAN
+  outcome         DecisionOutcome
+  policyVersion   String             @db.VarChar(32) // content policy version applied
+  aiProvider      String?            @db.VarChar(64)
+  aiModel         String?            @db.VarChar(128)
+  confidence      Decimal?           @db.Decimal(5, 4) // 0..1
+  labels          Json? // category -> score
+  reasonCode      String?            @db.VarChar(64)
+  rationale       String?            @db.Text // internal
+  // M1.2 (moderation-pipeline.md §2, §6.1)
+  verdict         ModerationVerdict? // AI/RULE assessments
+  configVersion   String?            @db.VarChar(32) // ModerationConfig.version applied
+  failureCode     String?            @db.VarChar(32) // AI failure: timeout|http_5xx|http_429|schema|breaker|unsupported_language|lost_job
+  publicReason    String?            @db.Text // statement of reasons for REJECT/REMOVE without an EnforcementAction
+  bulkOperationId String?            @db.VarChar(32)
+  latencyMs       Int?
+  createdAt       DateTime           @default(now())
 
   moderationCase ModerationCase @relation(fields: [caseId], references: [id], onDelete: Restrict)
-  moderator User?          @relation("DecisionModerator", fields: [moderatorId], references: [id], onDelete: SetNull)
+  moderator      User?          @relation("DecisionModerator", fields: [moderatorId], references: [id], onDelete: SetNull)
 
   @@index([caseId, createdAt])
   @@index([moderatorId, createdAt])
+  @@index([bulkOperationId])
 }
 
 /// Sanction against a user OR a seller (exclusive arc). Source of truth for User/Seller status.
@@ -1203,11 +1323,11 @@ model EnforcementAction {
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
 
-  subjectUser   User?           @relation("EnforcementSubjectUser", fields: [subjectUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  subjectSeller Seller?         @relation(fields: [subjectSellerId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  subjectUser    User?           @relation("EnforcementSubjectUser", fields: [subjectUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  subjectSeller  Seller?         @relation(fields: [subjectSellerId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   moderationCase ModerationCase? @relation(fields: [caseId], references: [id], onDelete: SetNull)
-  issuedBy      User?           @relation("EnforcementIssuedBy", fields: [issuedById], references: [id], onDelete: SetNull)
-  revokedBy     User?           @relation("EnforcementRevokedBy", fields: [revokedById], references: [id], onDelete: SetNull)
+  issuedBy       User?           @relation("EnforcementIssuedBy", fields: [issuedById], references: [id], onDelete: SetNull)
+  revokedBy      User?           @relation("EnforcementRevokedBy", fields: [revokedById], references: [id], onDelete: SetNull)
 
   appeals Appeal[]
 
@@ -1228,6 +1348,8 @@ model Appeal {
   status              AppealStatus @default(SUBMITTED)
   reviewerId          String?
   decisionNote        String?      @db.Text // shown to appellant
+  priority            Int          @default(0) // M1.2: HOLD_EXPIRED appeals first
+  slaDueAt            DateTime? // M1.2: 7 days, 72 h for HOLD_EXPIRED
   submittedAt         DateTime     @default(now())
   decidedAt           DateTime?
   updatedAt           DateTime     @updatedAt
@@ -1235,7 +1357,7 @@ model Appeal {
   appellant         User                  @relation("AppealAppellant", fields: [appellantId], references: [id], onDelete: Restrict)
   reviewer          User?                 @relation("AppealReviewer", fields: [reviewerId], references: [id], onDelete: SetNull)
   enforcementAction EnforcementAction?    @relation(fields: [enforcementActionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  moderationCase ModerationCase? @relation(fields: [caseId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  moderationCase    ModerationCase?       @relation(fields: [caseId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   purchaseProof     PurchaseProof?        @relation(fields: [purchaseProofId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   ownershipClaim    SellerOwnershipClaim? @relation(fields: [ownershipClaimId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
@@ -1247,6 +1369,7 @@ model Appeal {
   @@unique([appellantId, purchaseProofId])
   @@unique([appellantId, ownershipClaimId])
   @@index([status, submittedAt])
+  @@index([status, priority, slaDueAt])
 }
 
 // -----------------------------------------------------------------------------
@@ -1367,4 +1490,51 @@ model OutboxEvent {
   lastError     String?   @db.Text
 
   @@index([dispatchedAt, id])
+}
+
+// -----------------------------------------------------------------------------
+// M1.2: moderation configuration and media processing logs
+// -----------------------------------------------------------------------------
+
+/// Versioned, immutable moderation thresholds/timers (moderation-pipeline.md §5,
+/// example payload: moderation-config.example.json). Exactly one ACTIVE row and at
+/// most one SHADOW row (application rule). Activation needs config.manage + step-up
+/// and is audited. Staff ids are plain strings (no FK) so config history outlives
+/// staff account erasure, like AuditLog.
+model ModerationConfig {
+  id            String                 @id @default(cuid())
+  version       String                 @unique @db.VarChar(32)
+  status        ModerationConfigStatus @default(DRAFT)
+  config        Json // validated by the zod schema in packages/core before save
+  checksum      String                 @db.Char(64) // sha256 of canonical JSON
+  note          String?                @db.Text
+  createdById   String                 @db.VarChar(191)
+  activatedById String?                @db.VarChar(191)
+  activatedAt   DateTime?
+  retiredAt     DateTime?
+  createdAt     DateTime               @default(now())
+
+  @@index([status])
+}
+
+/// Append-only scan/upload log, one row per pipeline step (media-pipeline.md §7).
+/// No FK so rows outlive purged assets. Never contains file names or metadata values.
+model MediaProcessingLog {
+  id               BigInt                 @id @default(autoincrement())
+  mediaAssetId     String                 @db.VarChar(191)
+  step             MediaProcessingStep
+  outcome          MediaProcessingOutcome
+  attempt          Int                    @default(1)
+  engine           String?                @db.VarChar(64) // clamav | sharp | ffmpeg | <ai provider>
+  engineVersion    String?                @db.VarChar(64)
+  signatureVersion String?                @db.VarChar(64) // ClamAV signature DB version
+  detail           Json? // e.g. threat name, ffprobe summary, tag groups removed
+  durationMs       Int?
+  actorId          String?                @db.VarChar(191) // uploader for SLOT_ISSUED / UPLOAD_CONFIRMED
+  ipHash           String?                @db.Char(64) // OPEN(LEGAL): nulled after 90 days
+  jobId            String?                @db.VarChar(128)
+  createdAt        DateTime               @default(now())
+
+  @@index([mediaAssetId, createdAt])
+  @@index([step, outcome, createdAt])
 }

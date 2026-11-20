@@ -1,0 +1,74 @@
+{
+  "$comment": "Example ModerationConfig.config payload (task #19, M1.2). Seeded as version 1. Thresholds are placeholders until the provider spike (T-4) calibrates them. See moderation-pipeline.md §5.",
+  "version": "2026-11-20.1",
+  "policyVersion": "draft-0",
+  "defaults": { "clean": 0.2, "violation": 0.9 },
+  "categories": {
+    "spam": { "clean": 0.25, "violation": 0.92 },
+    "fake_or_misleading": { "clean": 0.2, "violation": null },
+    "conflict_of_interest": { "clean": 0.2, "violation": null },
+    "off_topic": { "clean": 0.3, "violation": 0.95 },
+    "harassment_hate": { "clean": 0.15, "violation": 0.85 },
+    "sexual": { "clean": 0.15, "violation": 0.85 },
+    "sexual_minors": { "clean": 0.01, "violation": 0.3 },
+    "violence_threats": { "clean": 0.1, "violation": 0.85 },
+    "self_harm": { "clean": 0.1, "violation": null },
+    "personal_information": { "clean": 0.2, "violation": 0.9 },
+    "illegal_goods": { "clean": 0.15, "violation": 0.9 },
+    "intellectual_property": { "clean": 0.2, "violation": null },
+    "malicious_link": { "clean": 0.1, "violation": 0.8 }
+  },
+  "contentTypes": {
+    "REVIEW": { "categories": { "off_topic": { "clean": 0.35, "violation": null } } },
+    "SELLER_REPLY": { "categories": {} },
+    "COMMENT": { "categories": {} },
+    "POST": { "categories": {} },
+    "MEDIA": { "categories": { "sexual": { "clean": 0.1, "violation": 0.8 } } }
+  },
+  "forceUnsure": {
+    "unsupportedLanguage": true,
+    "externalLinkIn": ["REVIEW"],
+    "firstReviewsOfNewAccount": 0,
+    "extremeRatingVelocity": { "enabled": true, "reviewsPerHour": 20 }
+  },
+  "trustBands": {
+    "NEW": { "unsureIfAnyAbove": 0.1 },
+    "LOW": { "unsureIfAnyAbove": null },
+    "MEDIUM": { "unsureIfAnyAbove": null },
+    "HIGH": { "unsureIfAnyAbove": null }
+  },
+  "postReview": {
+    "sampleRate": { "NEW": 1.0, "LOW": 1.0, "MEDIUM": 1.0, "HIGH": 1.0 },
+    "lapseAfterHours": 144
+  },
+  "timers": {
+    "postReviewSlaHours": 24,
+    "holdDays": 7,
+    "holdReminderHours": 48,
+    "appealWindowDays": 30,
+    "appealSlaHours": 168,
+    "appealSlaHoursHoldExpired": 72
+  },
+  "ai": {
+    "timeoutMs": 15000,
+    "maxAttempts": 3,
+    "backoffMs": [5000, 20000, 60000],
+    "maxPendingMinutes": 10,
+    "rescanOnRecovery": true,
+    "maxRescans": 3,
+    "circuitBreaker": { "windowSize": 20, "failureRatio": 0.5, "openSeconds": 60 },
+    "rateLimit": { "max": 50, "durationMs": 1000 }
+  },
+  "media": { "maxWaitMinutes": 30, "videoFrameSampleFps": 1, "videoMaxFrames": 30 },
+  "strikes": {
+    "windowDays": 180,
+    "ladder": [
+      { "count": 1, "action": "WARNING" },
+      { "count": 2, "action": "WARNING" },
+      { "count": 3, "action": "POSTING_RESTRICTION", "days": 7 },
+      { "count": 4, "action": "POSTING_RESTRICTION", "days": 30 },
+      { "count": 5, "action": "SUSPENSION", "days": null, "requiresSeniorReview": true }
+    ],
+    "zeroTolerance": ["sexual_minors"]
+  }
+}

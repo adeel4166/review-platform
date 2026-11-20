@@ -45,7 +45,7 @@ Legend: ✔ allowed. ◐ allowed with the condition in the "Guard" column. Blank
 |---|---|---|---|---|---|---|---|---|---|---|
 | `content.read.public` | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | Published content only |
 | `review.create` | | ◐ | | | | | | | | Email verified. Not a member of the product's seller (COI). No `POSTING_RESTRICTION` |
-| `review.update.own` / `review.delete.own` | | ◐ | | | | | | | | Author only. Status ≠ `REMOVED` |
+| `review.update.own` / `review.delete.own` | | ◐ | | | | | | | | Author only. Update: status ∉ {`REMOVED`, `REJECTED`} (use an appeal instead, ADR-0005) |
 | `review.vote` | | ◐ | | | | | | | | Not own review. Not a member of the product's seller. No `VOTING_RESTRICTION` |
 | `proof.submit.own` / `proof.delete.own` | | ◐ | | | | | | | | Review author only |
 | `comment.create`, `post.create`, `like.create` | | ◐ | | | | | | | | No `POSTING_RESTRICTION`. Target author has not blocked the actor |
@@ -65,6 +65,7 @@ Legend: ✔ allowed. ◐ allowed with the condition in the "Guard" column. Blank
 | `seller.claim.review` | | | | | | | | ◐ | | Not a member of the claiming seller |
 | `moderation.queue.read` | | | | | | ✔ | ✔ | ✔ | | |
 | `moderation.decide` | | | | | | ◐ | ◐ | | | Not own content. Not content about a seller the moderator belongs to |
+| `moderation.bulk_decide` (added by ADR-0005) | | | | | | ◐ | ◐ | | | ≤ 100 items, one lane. MODERATOR: bulk approve/confirm only. SENIOR_MOD: also bulk reject/remove. `moderation.decide` guards apply per item |
 | `proof.review` (redacted copy) | | | | | | ◐ | ◐ | | | Same COI guard. Viewing is audited |
 | `proof.view_original` (break-glass) | | | | | | | ◐ | | | Step-up + typed reason. Always audited |
 | `enforcement.issue.minor` (`WARNING`, `CONTENT_REMOVAL`, `POSTING_/VOTING_RESTRICTION` ≤ 7 days) | | | | | | ◐ | ◐ | | | COI guard |

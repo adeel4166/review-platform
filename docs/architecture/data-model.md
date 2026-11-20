@@ -239,7 +239,8 @@ erDiagram
     string productId FK "UK with authorId"
     string authorId FK
     tinyint rating "1..5 CHECK"
-    enum status "PENDING PUBLISHED HIDDEN REMOVED DELETED"
+    enum status "PENDING PUBLISHED HIDDEN REJECTED REMOVED DELETED"
+    int publishedVersion "M1.2"
     enum incentive "OPEN(LEGAL)"
     string language "OPEN(LANG)"
     datetime verifiedPurchaseAt "label, survives proof purge"
@@ -302,6 +303,7 @@ erDiagram
     enum purpose "AVATAR SELLER_LOGO PRODUCT_IMAGE REVIEW_MEDIA POST_MEDIA PURCHASE_PROOF OWNERSHIP_EVIDENCE APPEAL_EVIDENCE"
     enum visibility "PUBLIC PRIVATE"
     enum status "UPLOADING PROCESSING READY REJECTED FAILED PURGED"
+    enum bucket "INGEST PRIVATE PUBLIC (M1.2)"
     string storageKey UK
     char64 sha256
     bool isRedacted
@@ -367,6 +369,9 @@ erDiagram
     string id PK
     enum trigger "SUBMISSION EDIT USER_REPORT AI_RESCAN STAFF_INITIATED APPEAL"
     enum status "OPEN IN_REVIEW ESCALATED RESOLVED"
+    enum lane "POST_REVIEW HOLD REPORTED (M1.2)"
+    datetime holdExpiresAt "M1.2: 7-day hold"
+    datetime postReviewDueAt "M1.2: 24h SLA"
     int priority
     string assignedToId FK
     enum outcome
@@ -473,7 +478,7 @@ rows they describe, and outbox rows are transient infrastructure.
 | `ReviewVote` | One vote per user per review, and users cannot vote on their own review (app rule). Vote weight comes from the voter's trust score at aggregation time, not when the vote is stored. |
 | `SellerReply` | One per review. Allowed only if `Product.sellerId` is set, the seller is `VERIFIED`, and the author is an accepted member with the `seller.reply` permission. |
 | `Comment` / `Like` / `Follow` | Exclusive arcs (CHECK: exactly one target). Users cannot follow themselves or follow/like/comment across a `UserBlock` (app rule). |
-| `MediaAsset` | One row per stored object. Purposes `PURCHASE_PROOF`, `OWNERSHIP_EVIDENCE` and `APPEAL_EVIDENCE` must be `PRIVATE` (CHECK). `storageKey` is generated server-side (`{visibility}/{purpose}/{yyyy}/{mm}/{cuid}`) and never comes from user input. |
+| `MediaAsset` | One row per stored object. Purposes `PURCHASE_PROOF`, `OWNERSHIP_EVIDENCE` and `APPEAL_EVIDENCE` must be `PRIVATE` (CHECK). `storageKey` is generated server-side and never comes from user input. Bucket and key layout are defined in [media-pipeline.md §5](./media-pipeline.md#5-storage-layout) (M1.2). |
 | `Report` | Exactly one target (CHECK). New reports on a target attach to that target's open `ModerationCase` if there is one, otherwise a new case is opened. |
 | `ModerationCase` | At most one case per target is `OPEN`/`IN_REVIEW`/`ESCALATED` at a time (application rule). `contentSnapshot` keeps a copy of the content as evidence. |
 | `ModerationDecision` | Append-only. The current state is the latest decision. Human decisions can override AI and rule decisions, and both are kept. |
@@ -500,27 +505,22 @@ rows they describe, and outbox rows are transient infrastructure.
 
 ### 6.1 Review submission and AI-first moderation
 
-```mermaid
-stateDiagram-v2
-  [*] --> PENDING : submit (OutboxEvent review.submitted)
-  PENDING --> PUBLISHED : AI APPROVE (confidence ≥ auto-threshold, author trust ≥ band)
-  PENDING --> REMOVED : AI/RULE REMOVE (high confidence)
-  PENDING --> PENDING : AI ESCALATE → human queue
-  PENDING --> PUBLISHED : HUMAN APPROVE
-  PENDING --> REMOVED : HUMAN REMOVE
-  PUBLISHED --> PENDING : author edits (new ReviewRevision)
-  PUBLISHED --> HIDDEN : reports threshold / RESTRICT
-  HIDDEN --> PUBLISHED : HUMAN APPROVE / appeal OVERTURNED
-  HIDDEN --> REMOVED : HUMAN REMOVE
-  REMOVED --> PUBLISHED : appeal OVERTURNED
-  PUBLISHED --> DELETED : author deletes
-  DELETED --> PENDING : author rewrites (same row, new revision)
-  REMOVED --> [*]
-```
+> **Superseded by M1.2.** The authoritative state machine, verdicts, timers, thresholds and queues are in
+> [moderation-pipeline.md](./moderation-pipeline.md) and [ADR-0005](../adr/0005-moderation-state-machine.md).
+> Summary:
 
-- Every transition writes one `ModerationDecision` (except author actions) and one `AuditLog` row.
-- Auto-approve and auto-remove thresholds are configuration owned by the moderation pipeline design (M1.2). The data model only records `confidence`, `labels`, `aiModel`, `policyVersion`.
-- **Edits of published reviews:** the previous published revision remains visible while the edit is pending. This is resolved at read time from `ReviewRevision` + `status`. The scaffold/feature task decides whether to add a `publishedVersion` column for performance.
+| AI verdict | Content state | Staff work |
+|---|---|---|
+| `CLEAN` | `PUBLISHED` (live) | `POST_REVIEW` lane, human post-review due in 24 h |
+| `VIOLATION` | `REJECTED` (appealable 30 days) | — |
+| `UNSURE` (incl. AI provider failure) | `HIDDEN` | `HOLD` lane; after 7 days auto-`REJECTED` + notification + appeal window |
+
+- Every transition writes one `ModerationDecision` (except author actions) and one `AuditLog` row, through a single
+  conditional-update transition function.
+- Thresholds are versioned in `ModerationConfig`; each decision records `confidence`, `labels`, `verdict`, `aiModel`,
+  `policyVersion` and `configVersion`.
+- **Edits of published reviews:** the last approved revision stays live (`Review.publishedVersion`) while the edit is
+  moderated (`ReviewRevision.status`).
 - The same lifecycle applies to `SellerReply`, `Comment` and `Post` (shared `ContentStatus`).
 
 ### 6.2 Verified-buyer proof: redaction and deletion
@@ -627,6 +627,10 @@ and case prioritization. The scoring algorithm itself is a separate design doc. 
 | Sessions | 30 days after expiry/revocation | purge job |
 | Verification tokens | 7 days after expiry | purge job |
 | Unattached media (`UPLOADING`/`READY` with no parent) | 24 hours | orphan-cleanup job |
+| Raw uploads in the ingest bucket (M1.2) | deleted after processing; 2-day bucket lifecycle backstop | worker + lifecycle rule |
+| Media of `REJECTED`/`REMOVED` content (M1.2) | appeal window + 60 days | media retention job ([media-pipeline.md §6](./media-pipeline.md#6-retention-rules)) |
+| Quarantined malware uploads (M1.2) | 30 days | sweeper + lifecycle rule |
+| `MediaProcessingLog` (M1.2) | 13 months (`ipHash` nulled after 90 days) | purge job |
 | `AuditLog` | 2 years online, then archive | partition/archive job |
 | `OutboxEvent` | 7 days after dispatch | purge job |
 | `ipHash` values | 90 days | nulled by job |

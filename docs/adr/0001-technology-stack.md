@@ -91,6 +91,10 @@ Every job is **idempotent** and keyed by the domain id plus the version or event
 
 ### 5. Upload path
 
+> **Amended by [ADR-0006](./0006-media-storage-and-processing.md) (task #19):** browsers upload only to a third,
+> private **ingest** bucket. Media reaches the public bucket only after scanning, metadata stripping and moderation.
+> The topology diagram in §3 predates this change.
+
 The browser asks the web app for an upload slot. The web app creates `MediaAsset(UPLOADING)` with a server-generated key and returns a
 presigned PUT restricted by content-type and content-length. The browser uploads directly to R2, then confirms. The web app
 writes `OutboxEvent(media.uploaded)` and the worker processes the file. Application servers never proxy file bytes.
