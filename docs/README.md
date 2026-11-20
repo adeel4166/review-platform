@@ -37,6 +37,13 @@ See [adr/README.md](./adr/README.md).
 |---|---|
 | [security/threat-model.md](./security/threat-model.md) | STRIDE threat model of the M1 designs, design gaps, rate-limit baseline, mitigations mapped to M2-M8 |
 
+## QA
+
+| Doc | Content |
+|---|---|
+| [qa/test-strategy.md](./qa/test-strategy.md) | Test levels, tooling, rules, timer and state-machine test designs, media fixtures, authz matrix tests, QA gate criteria for M2–M8 |
+| [qa/test-case-catalogue.md](./qa/test-case-catalogue.md) | Stable test case IDs linked to M2–M8, with priority, source section and threat coverage |
+
 ## Design
 
 | Doc | Content |
