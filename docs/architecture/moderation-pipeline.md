@@ -113,7 +113,11 @@ components (`VIOLATION > UNSURE > CLEAN`):
    intentional malware upload is a strong abuse signal.
 4. If media is still not ready when the wait expires, the parent's verdict is `UNSURE`
    (`reasonCode MEDIA_TIMEOUT`).
-5. Images are scored directly. Videos are scored on sampled frames (1 fps, at most 30) plus the poster frame. Audio
+5. **Images are in moderation scope (SEC-02).** Media can only be attached (upload slot and confirm) while the review
+   is `PENDING`; other statuses return `409 not_editable`. Public media URLs only expose assets created before the
+   review's `publishedAt`, i.e. assets that were present during moderation, so human admins see every public image.
+   The automated AI image check is a follow-up; until then images are reviewed by admins in the moderation queue.
+6. Images are scored directly. Videos are scored on sampled frames (1 fps, at most 30) plus the poster frame. Audio
    transcription is out of scope for Phase 1 (risk noted in §12).
 
 ---

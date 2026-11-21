@@ -7,12 +7,12 @@ const input = { mimeType: "image/png" as const, sizeBytes: 1000 };
 function setup(over: { count?: number; review?: unknown; asset?: unknown } = {}) {
   const tx = { mediaAsset: { updateMany: vi.fn().mockResolvedValue({ count: 1 }), findUniqueOrThrow: vi.fn().mockResolvedValue({ id: "m1", status: "PROCESSING" }) }, outboxEvent: { create: vi.fn() } };
   const m = {
-    review: { findFirst: vi.fn().mockResolvedValue("review" in over ? over.review : { id: "r1" }) },
+    review: { findFirst: vi.fn().mockResolvedValue("review" in over ? over.review : { id: "r1", status: "PENDING" }) },
     mediaAsset: {
       count: vi.fn().mockResolvedValue(over.count ?? 0),
       create: vi.fn().mockResolvedValue({ id: "m1" }),
       update: vi.fn(),
-      findFirst: vi.fn().mockResolvedValue("asset" in over ? over.asset : { id: "m1", status: "UPLOADING", sizeBytes: 1000, ingestKey: "in/m1" }),
+      findFirst: vi.fn().mockResolvedValue("asset" in over ? over.asset : { id: "m1", status: "UPLOADING", sizeBytes: 1000, ingestKey: "in/m1", review: { status: "PENDING" } }),
       findUniqueOrThrow: vi.fn().mockResolvedValue({ id: "m1", status: "FAILED" }),
       updateMany: vi.fn(),
       findMany: vi.fn(),
@@ -41,6 +41,27 @@ describe("createUploadSlot", () => {
   });
 });
 
+describe("media on non-PENDING reviews (SEC-02)", () => {
+  it.each(["PUBLISHED", "REJECTED", "HIDDEN"])("409s a slot on a %s review", async (status) => {
+    const { db, st, m } = setup({ review: { id: "r1", status } });
+    await expect(createUploadSlot(db, st, "u1", "r1", input)).rejects.toMatchObject({ status: 409 });
+    expect(m.mediaAsset.create).not.toHaveBeenCalled();
+  });
+  it.each(["PUBLISHED", "REJECTED", "HIDDEN"])("409s confirm when the review is %s", async (status) => {
+    const { db, st, tx } = setup({ asset: { id: "m1", status: "UPLOADING", sizeBytes: 1000, ingestKey: "in/m1", review: { status } } });
+    await expect(confirmUpload(db, st, "u1", "m1")).rejects.toMatchObject({ status: 409 });
+    expect(tx.outboxEvent.create).not.toHaveBeenCalled();
+  });
+  it("hides READY assets created after the review was published", async () => {
+    const { db, st, m } = setup();
+    const pub = new Date("2026-01-02");
+    const row = (id: string, createdAt: Date) => ({ id, reviewId: "r1", createdAt, width: 1, height: 1, thumbKey: "t", mediumKey: "md", review: { publishedAt: pub } });
+    m.mediaAsset.findMany.mockResolvedValue([row("old", new Date("2026-01-01")), row("late", new Date("2026-01-03"))]);
+    const out = await readyMediaUrls(db, st, ["r1"]);
+    expect(out.get("r1")?.map((i) => i.id)).toEqual(["old"]);
+  });
+});
+
 describe("confirmUpload", () => {
   it("moves to PROCESSING and enqueues via the outbox when the object matches", async () => {
     const { db, st, store, tx } = setup();
@@ -66,7 +87,7 @@ describe("confirmUpload", () => {
 describe("readyMediaUrls", () => {
   it("queries only READY media of PUBLISHED reviews", async () => {
     const { db, st, m } = setup();
-    m.mediaAsset.findMany.mockResolvedValue([{ id: "m1", reviewId: "r1", width: 10, height: 10, thumbKey: "t", mediumKey: "md" }]);
+    m.mediaAsset.findMany.mockResolvedValue([{ id: "m1", reviewId: "r1", width: 10, height: 10, thumbKey: "t", mediumKey: "md", createdAt: new Date("2026-01-01"), review: { publishedAt: new Date("2026-01-02") } }]);
     const out = await readyMediaUrls(db, st, ["r1"]);
     expect((m.mediaAsset.findMany.mock.calls[0]?.[0] as { where: unknown }).where).toMatchObject({ status: "READY", review: { status: "PUBLISHED" } });
     expect(out.get("r1")?.[0]?.thumbUrl).toContain("private/t");

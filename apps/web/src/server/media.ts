@@ -15,6 +15,11 @@ export interface Storage {
   buckets: { ingest: string; private: string };
 }
 
+/** SEC-02: media may only be attached while the review is under moderation (same rule as editing). */
+function assertPendingForMedia(status: string) {
+  if (status !== "PENDING") throw new HttpError(409, "not_editable", "Media can only be added to pending reviews");
+}
+
 const ownSelect = { id: true, reviewId: true, status: true, failureReason: true, width: true, height: true, createdAt: true } as const;
 
 /**
@@ -23,8 +28,9 @@ const ownSelect = { id: true, reviewId: true, status: true, failureReason: true,
  */
 export async function createUploadSlot(db: Db, st: Storage, userId: string, reviewId: string, input: UploadSlotInput) {
   if (input.sizeBytes > MEDIA_MAX_BYTES) throw new HttpError(413, "too_large", "Image exceeds 10 MB");
-  const review = await db.review.findFirst({ where: { id: reviewId, authorId: userId, status: { not: "DELETED" } }, select: { id: true } });
+  const review = await db.review.findFirst({ where: { id: reviewId, authorId: userId, status: { not: "DELETED" } }, select: { id: true, status: true } });
   if (!review) throw new HttpError(404, "not_found", "Review not found"); // also hides other users' reviews
+  assertPendingForMedia(review.status);
   const used = await db.mediaAsset.count({ where: { reviewId, status: { in: ["UPLOADING", "PROCESSING", "READY"] } } });
   if (used >= MEDIA_MAX_PER_REVIEW) throw new HttpError(409, "media_limit", `At most ${MEDIA_MAX_PER_REVIEW} images per review`);
   const asset = await db.mediaAsset.create({
@@ -44,8 +50,9 @@ export async function createUploadSlot(db: Db, st: Storage, userId: string, revi
 
 /** Confirms the browser upload: object must exist with the declared size; then UPLOADING -> PROCESSING + outbox event. */
 export async function confirmUpload(db: Db, st: Storage, userId: string, assetId: string) {
-  const a = await db.mediaAsset.findFirst({ where: { id: assetId, ownerId: userId }, select: { id: true, status: true, sizeBytes: true, ingestKey: true } });
+  const a = await db.mediaAsset.findFirst({ where: { id: assetId, ownerId: userId }, select: { id: true, status: true, sizeBytes: true, ingestKey: true, review: { select: { status: true } } } });
   if (!a) throw new HttpError(404, "not_found", "Media not found");
+  if (a.status === "UPLOADING") assertPendingForMedia(a.review.status);
   if (a.status !== "UPLOADING") return db.mediaAsset.findUniqueOrThrow({ where: { id: assetId }, select: ownSelect }); // idempotent
   const head = await st.store.head(st.buckets.ingest, a.ingestKey);
   const bad = !head ? "MISSING_OBJECT" : head.size !== a.sizeBytes || head.size > MEDIA_MAX_BYTES ? (head.size > MEDIA_MAX_BYTES ? "TOO_LARGE" : "TYPE_MISMATCH") : null;
@@ -73,10 +80,12 @@ export async function readyMediaUrls(db: Db, st: Storage, reviewIds: string[]) {
   if (!reviewIds.length) return out;
   const rows = await db.mediaAsset.findMany({
     where: { reviewId: { in: reviewIds }, status: "READY", thumbKey: { not: null }, mediumKey: { not: null }, review: { status: "PUBLISHED" } },
-    select: { id: true, reviewId: true, width: true, height: true, thumbKey: true, mediumKey: true },
+    select: { id: true, reviewId: true, createdAt: true, width: true, height: true, thumbKey: true, mediumKey: true, review: { select: { publishedAt: true } } },
     orderBy: { createdAt: "asc" },
   });
   for (const r of rows) {
+    // SEC-02: only assets attached while under moderation (created before publication) were seen by moderators.
+    if (!r.review.publishedAt || r.createdAt > r.review.publishedAt) continue;
     const item = {
       id: r.id, width: r.width, height: r.height,
       thumbUrl: await st.store.presignGet(st.buckets.private, r.thumbKey!, MEDIA_GET_TTL_SECONDS),
