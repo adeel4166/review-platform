@@ -21,7 +21,7 @@ const invalid = () => new HttpError(400, "invalid_or_expired", "This link is inv
  * Consumes an ACCOUNT_EMAIL token (ADR-0016 §3.3). Every failure (unknown, replayed, expired, invalidated, email changed)
  * yields the same 400, so the endpoint is not an oracle. Single use is enforced by an atomic conditional update.
  */
-export async function verifyEmailToken(db: VerifyDb, raw: string, now = new Date()): Promise<void> {
+export async function verifyEmailToken(db: VerifyDb, raw: string, now = new Date(), newPasswordHash?: string): Promise<void> {
   const row = await db.emailVerificationToken.findUnique({ where: { tokenHash: hashEmailToken(raw) } });
   if (!row || row.purpose !== "ACCOUNT_EMAIL" || !row.sentAt || row.consumedAt || row.invalidatedAt || row.expiresAt <= now) throw invalid();
   await db.$transaction(async (tx) => {
@@ -32,7 +32,12 @@ export async function verifyEmailToken(db: VerifyDb, raw: string, now = new Date
       data: { consumedAt: now },
     });
     if (claimed.count !== 1) throw invalid(); // lost a replay race
-    if (!user.emailVerifiedAt) await tx.user.update({ where: { id: user.id }, data: { emailVerifiedAt: now } });
+    if (!user.emailVerifiedAt) {
+      // T-02: whoever registered may not be the mailbox owner, so verification replaces the password. Writing
+      // emailVerifiedAt also bumps the session version (auth.ts), which rejects every earlier session.
+      if (!newPasswordHash) throw new HttpError(400, "password_required", "Choose a new password to confirm your email");
+      await tx.user.update({ where: { id: user.id }, data: { emailVerifiedAt: now, passwordHash: newPasswordHash } });
+    }
     await tx.emailVerificationToken.updateMany({
       where: { userId: user.id, purpose: "ACCOUNT_EMAIL", consumedAt: null, invalidatedAt: null },
       data: { invalidatedAt: now },

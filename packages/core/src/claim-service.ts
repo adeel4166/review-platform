@@ -6,7 +6,7 @@
  */
 import { assertAuditMetadataClean } from "./audit-metadata";
 import {
-  CLAIM_CONFIG, assertClaimTransition, canAutoApprove, evaluateObservedTokens, isAutoMethod, isManualMethod, nextCheckAt, sampleSpotCheck,
+  CLAIM_CONFIG, DAY_MS, assertClaimTransition, canAutoApprove, evaluateObservedTokens, isAutoMethod, isManualMethod, nextCheckAt, sampleSpotCheck,
   type CheckOutcome, type ClaimAction, type ClaimStatus,
 } from "./claims";
 import { SelfDecisionError } from "./moderation-service";
@@ -25,7 +25,7 @@ export class ClaimInputError extends Error { constructor(m: string) { super(m); 
 
 export type ClaimInput =
   | { action: "CHECK_FAILED"; outcome: CheckOutcome }
-  | { action: "CHECK_PASSED"; observed?: string[]; rand?: (max: number) => number }
+  | { action: "CHECK_PASSED"; observed?: string[]; proofHost?: string; rand?: (max: number) => number }
   | { action: "STAFF_APPROVE"; reviewerId: string; note?: string; rand?: (max: number) => number }
   | { action: "STAFF_REJECT"; reviewerId: string; reasonCode: string; note?: string }
   | { action: "REQUEST_INFO"; reviewerId: string; note?: string }
@@ -166,10 +166,11 @@ export async function applyClaimTransition(db: ClaimDb, claimId: string, input: 
         });
         if (!ok) { // C4: stays PENDING, shows in the queue as "evidence passed"
           await tx.sellerOwnershipClaim.update({ where: { id: claimId }, data: { lastCheckOutcome: "PASS", lastCheckAt: now, nextCheckAt: null } });
-          await audit(tx, actor, "claim.check_passed", claimId, { claimId, autoApproved: false });
+          await audit(tx, actor, "claim.check_passed", claimId, { claimId, autoApproved: false, proofHost: input.proofHost ?? null });
           return res("PENDING");
         }
         await tx.sellerOwnershipClaim.update({ where: { id: claimId }, data: { lastCheckOutcome: "PASS", lastCheckAt: now } });
+        if (input.proofHost) await audit(tx, actor, "claim.proof_host", claimId, { claimId, proofHost: input.proofHost });
         claim.lastCheckOutcome = "PASS"; claim.lastCheckAt = now;
         return verify("RULE", null, input.rand);
       }
@@ -178,6 +179,13 @@ export async function applyClaimTransition(db: ClaimDb, claimId: string, input: 
         const members = await tx.sellerMember.findMany({ where: { userId: input.reviewerId, sellerId: { in: [claim.sellerId, ...(conflict ? [conflict.sellerId] : [])] } }, select: { sellerId: true } });
         if (members.length > 0) throw new ClaimConflictOfInterestError();
         if (isAutoMethod(claim.method) && claim.lastCheckOutcome !== "PASS") throw new ClaimInputError("evidence_not_passed");
+        // T-05: re-check the state the auto-approval path checks. Evidence and membership may have changed since submission.
+        const [seller, member] = await Promise.all([
+          tx.seller.findUnique({ where: { id: claim.sellerId }, select: { status: true, closedAt: true } }),
+          tx.sellerMember.findUnique({ where: { sellerId_userId: { sellerId: claim.sellerId, userId: claim.submittedById } }, select: { role: true } }),
+        ]);
+        if (!seller || seller.closedAt != null || seller.status === "SUSPENDED" || seller.status === "CLOSED") throw new ClaimInputError("seller_blocked");
+        if (member?.role !== "OWNER" && member?.role !== "MANAGER") throw new ClaimInputError("claimant_not_owner_or_manager");
         if (claim.status === "PENDING") {
           const incumbent = await findIncumbent();
           if (incumbent) return contest(incumbent); // C5 on first approval of a manual claim: no approval is counted yet
@@ -191,6 +199,8 @@ export async function applyClaimTransition(db: ClaimDb, claimId: string, input: 
           await audit(tx, actor, "claim.approval_recorded", claimId, { claimId, approvals, required: claim.requiredApprovals });
           return res(claim.status);
         }
+        // Final approval only: a PASS older than 24 h (e.g. a CONTESTED claim waiting out the response window) is not trusted.
+        if (isAutoMethod(claim.method) && claim.method !== "BUSINESS_EMAIL_DOMAIN" && (!claim.lastCheckAt || claim.lastCheckAt.getTime() < now.getTime() - DAY_MS)) throw new ClaimInputError("evidence_stale");
         if (claim.status === "CONTESTED" && conflict && conflict.status === "VERIFIED") {
           await tx.sellerOwnershipClaim.update({ where: { id: conflict.id }, data: ENDED("REVOKED", now, "CONTEST_LOST") });
           if (conflict.scope === "PRODUCT" && conflict.productId) await tx.product.update({ where: { id: conflict.productId }, data: { sellerId: null } });

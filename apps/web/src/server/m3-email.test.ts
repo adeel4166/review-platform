@@ -75,11 +75,12 @@ function verifyDb(row: Partial<{ sentAt: Date | null; consumedAt: Date | null; i
   return { db: db as unknown as VerifyDb, raw: db, state };
 }
 const RAW = "raw-token-raw-token-raw-token";
+const NEWPW = "$argon2id$new";
 
 describe("verifyEmailToken", () => {
   it("verifies once; replaying the token fails", async () => {
     const { db, state } = verifyDb({});
-    await verifyEmailToken(db, RAW, NOW);
+    await verifyEmailToken(db, RAW, NOW, NEWPW);
     expect(state.verified).toBe(true);
     await expect(verifyEmailToken(db, RAW, NOW)).rejects.toMatchObject({ status: 400, code: "invalid_or_expired" });
   });

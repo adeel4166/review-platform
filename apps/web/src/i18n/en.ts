@@ -161,6 +161,8 @@ export const en = {
   "register.sent": "Check your inbox. If the address can be registered, we have sent a link to confirm it. Then sign in.",
   "verify.title": "Confirm your email",
   "verify.confirm": "Confirm email",
+  "verify.newPassword": "Choose a new password",
+  "verify.newPasswordHelp": "At least 10 characters. It replaces the password the account was registered with and signs out all earlier sessions.",
   "verify.done": "Your email is confirmed.",
   "verify.invalid": "This link is invalid or has expired. Sign in and request a new one.",
   "register.haveAccount": "Already have an account?",
