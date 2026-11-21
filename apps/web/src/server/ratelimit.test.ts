@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { FakeRateLimitRedis } from "@rp/core";
+import { FakeRateLimitRedis, setRateLimitErrorHook, setRateLimitFallback } from "@rp/core";
 
 vi.mock("@/server/session", () => ({ requireUser: vi.fn(async () => ({ id: "u1", role: "user" })) }));
 vi.mock("@/server/db", () => ({ db: { user: { create: vi.fn(async () => ({ id: "n" })) }, review: { findFirst: vi.fn(async () => null) } } }));
@@ -86,10 +86,43 @@ describe("429 + Retry-After after the configured threshold", () => {
     expect((await register(jsonReq("POST", body))).status).not.toBe(429);
     expect((await register(jsonReq("POST", body))).status).toBe(429);
   });
-  it("fails open when Redis is down", async () => {
+  describe("Redis down (R-1)", () => {
     const dead = { incr: async () => { throw new Error("down"); }, pexpire: async () => 0, pttl: async () => -2 };
-    configureRateLimit(dead, { RATE_LIMIT_ENABLED: true });
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
-    expect((await authPost(loginReq("a@x.io"))).status).toBe(200);
+    beforeEach(() => {
+      setRateLimitFallback(undefined);
+      configureRateLimit(dead, { RATE_LIMIT_ENABLED: true });
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+    });
+    it("login fails CLOSED: 429 after the threshold, not unlimited attempts", async () => {
+      const r = await burst(7, () => authPost(loginReq("a@x.io")));
+      expect(r.slice(0, 5).every((x) => x.status === 200)).toBe(true);
+      expect(r[5]!.status).toBe(429);
+      expect(r[6]!.status).toBe(429);
+      expect(r[5]!.headers.get("Retry-After")).toBeTruthy();
+    });
+    it("register fails CLOSED", async () => {
+      const body = { email: "n@x.io", handle: "nn", displayName: "N", password: "correct horse battery" };
+      const r = await burst(6, () => register(jsonReq("POST", body)));
+      expect(r[5]!.status).toBe(429);
+    });
+    it("review writes and upload slots stay fail-open", async () => {
+      const r = await burst(15, () => PATCH(jsonReq("PATCH", {}), ctx));
+      expect(r.every((x) => x.status !== 429)).toBe(true);
+      const s = await burst(25, () => slot(jsonReq("POST", { mimeType: "image/png", sizeBytes: 100 }), ctx));
+      expect(s.every((x) => x.status === 201)).toBe(true);
+    });
+    it("limiter errors reach the alert/metric hook", async () => {
+      const hook = vi.fn();
+      setRateLimitErrorHook(hook);
+      try {
+        await authPost(loginReq("a@x.io"));
+        expect(hook).toHaveBeenCalled();
+        expect(hook.mock.calls[0]![0]).toMatchObject({ mode: "closed" });
+      } finally { setRateLimitErrorHook(undefined); }
+    });
+    it("a throwing hook cannot break the request", async () => {
+      setRateLimitErrorHook(() => { throw new Error("boom"); });
+      try { expect((await authPost(loginReq("a@x.io"))).status).toBe(200); } finally { setRateLimitErrorHook(undefined); }
+    });
   });
 });

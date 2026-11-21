@@ -14,40 +14,66 @@ export interface RateRule {
 }
 export type RateDecision = { allowed: true; remaining: number } | { allowed: false; retryAfterSeconds: number };
 
+export type RateLimitFailMode = "open" | "closed";
+
+/** Alert/metric hook: called on every limiter backend error. Replace with a real metrics emitter at wiring time. */
+export type RateLimitErrorHook = (e: { key: string; mode: RateLimitFailMode; error: string }) => void;
+const defaultErrorHook: RateLimitErrorHook = (e) =>
+  console.error(JSON.stringify({ msg: "ratelimit.error", metric: "ratelimit_backend_error_total", mode: e.mode, err: e.error }));
+let errorHook: RateLimitErrorHook = defaultErrorHook;
+export function setRateLimitErrorHook(h: RateLimitErrorHook | undefined) { errorHook = h ?? defaultErrorHook; }
+
+/** Fixed-window counter on any RateLimitRedis-shaped store. Throws on store errors. */
+async function count(redis: RateLimitRedis, key: string, rule: RateRule): Promise<RateDecision> {
+  const n = await redis.incr(key);
+  if (n === 1) await redis.pexpire(key, rule.windowSeconds * 1000);
+  if (n <= rule.limit) return { allowed: true, remaining: rule.limit - n };
+  let ttl = await redis.pttl(key);
+  if (ttl < 0) {
+    // Key without expiry (crash between INCR and PEXPIRE): repair it so it cannot lock the caller out forever.
+    await redis.pexpire(key, rule.windowSeconds * 1000);
+    ttl = rule.windowSeconds * 1000;
+  }
+  return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil(ttl / 1000)) };
+}
+
+/** Per-process fallback used when Redis errors on a fail-closed rule. Per-instance (not shared), which is still bounded. */
+let fallback: RateLimitRedis | undefined;
+/** Test seam. */
+export const setRateLimitFallback = (s: RateLimitRedis | undefined) => { fallback = s; };
+
 /**
- * Fixed-window counter: INCR, set expiry on first hit. Fails OPEN on Redis errors (an outage must not take
- * logins and reviews down); the error is logged so the outage is visible.
+ * Fixed-window counter: INCR, set expiry on first hit.
+ * On Redis errors the error is logged + hooked, then:
+ *  - mode "open" (reviews, uploads): the request is allowed (an outage must not take writes down);
+ *  - mode "closed" (login, register): the in-process limiter decides, so attempts stay bounded (SEC R-1).
  */
-export async function consume(redis: RateLimitRedis, key: string, rule: RateRule): Promise<RateDecision> {
+export async function consume(redis: RateLimitRedis, key: string, rule: RateRule, mode: RateLimitFailMode = "open"): Promise<RateDecision> {
   try {
-    const n = await redis.incr(key);
-    if (n === 1) await redis.pexpire(key, rule.windowSeconds * 1000);
-    if (n <= rule.limit) return { allowed: true, remaining: rule.limit - n };
-    let ttl = await redis.pttl(key);
-    if (ttl < 0) {
-      // Key without expiry (crash between INCR and PEXPIRE): repair it so it cannot lock the caller out forever.
-      await redis.pexpire(key, rule.windowSeconds * 1000);
-      ttl = rule.windowSeconds * 1000;
-    }
-    return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil(ttl / 1000)) };
+    return await count(redis, key, rule);
   } catch (e) {
-    console.error(JSON.stringify({ msg: "ratelimit.error", err: e instanceof Error ? e.message : "unknown" }));
-    return { allowed: true, remaining: rule.limit };
+    try { errorHook({ key: key.split(":").slice(0, 2).join(":"), mode, error: e instanceof Error ? e.message : "unknown" }); } catch { /* hook must never break requests */ }
+    if (mode === "open") return { allowed: true, remaining: rule.limit };
+    try {
+      return await count((fallback ??= new MemoryRateLimitStore()), key, rule);
+    } catch {
+      return { allowed: false, retryAfterSeconds: Math.min(rule.windowSeconds, 60) };
+    }
   }
 }
 
 /** Checks every rule; the first exceeded one wins. Rules are all counted (no short-circuit) so windows stay consistent. */
-export async function consumeAll(redis: RateLimitRedis, checks: { key: string; rule: RateRule }[]): Promise<RateDecision> {
+export async function consumeAll(redis: RateLimitRedis, checks: { key: string; rule: RateRule; mode?: RateLimitFailMode }[]): Promise<RateDecision> {
   let denied: RateDecision | undefined;
   for (const c of checks) {
-    const d = await consume(redis, `rl:${c.key}`, c.rule);
+    const d = await consume(redis, `rl:${c.key}`, c.rule, c.mode);
     if (!d.allowed && (!denied || (denied.allowed === false && d.retryAfterSeconds > denied.retryAfterSeconds))) denied = d;
   }
   return denied ?? { allowed: true, remaining: 0 };
 }
 
-/** In-memory RateLimitRedis for tests (no network). Time is injectable. */
-export class FakeRateLimitRedis implements RateLimitRedis {
+/** In-memory store: test double and the fail-closed fallback. Time is injectable. */
+export class MemoryRateLimitStore implements RateLimitRedis {
   private data = new Map<string, { n: number; exp: number | null }>();
   constructor(private now: () => number = Date.now) {}
   private live(key: string) {
@@ -59,6 +85,7 @@ export class FakeRateLimitRedis implements RateLimitRedis {
     const e = this.live(key) ?? { n: 0, exp: null };
     e.n += 1;
     this.data.set(key, e);
+    if (this.data.size > 10_000) for (const k of [...this.data.keys()]) this.live(k); // prune expired entries
     return e.n;
   }
   async pexpire(key: string, ms: number) {
@@ -71,6 +98,8 @@ export class FakeRateLimitRedis implements RateLimitRedis {
     return !e ? -2 : e.exp === null ? -1 : e.exp - this.now();
   }
 }
+
+export { MemoryRateLimitStore as FakeRateLimitRedis };
 
 /** Limits are configuration (env), never literals at call sites. Defaults follow the M2 security review (SEC-03). */
 const int = (d: number) => z.coerce.number().int().positive().default(d);

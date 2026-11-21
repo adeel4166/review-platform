@@ -4,7 +4,7 @@ import { hashPassword, verifyPassword } from "@rp/db";
 import { db } from "./db";
 import { loginInput } from "./validation";
 
-export type AppRole = "user" | "admin";
+export type AppRole = "user" | "admin" | "super_admin";
 
 declare module "next-auth" {
   interface Session {
@@ -12,9 +12,10 @@ declare module "next-auth" {
   }
 }
 
-/** "admin" = holds ADMIN or SUPER_ADMIN. Moderator tiers are wired up with the admin tasks. */
+/** ADR-0003: SUPER_ADMIN > ADMIN > user (no implicit inheritance in the DB; this collapses to the highest admin tier). */
 export function roleFrom(roles: { role: string }[]): AppRole {
-  return roles.some((r) => r.role === "ADMIN" || r.role === "SUPER_ADMIN") ? "admin" : "user";
+  if (roles.some((r) => r.role === "SUPER_ADMIN")) return "super_admin";
+  return roles.some((r) => r.role === "ADMIN") ? "admin" : "user";
 }
 
 let dummyHash: Promise<string> | undefined;

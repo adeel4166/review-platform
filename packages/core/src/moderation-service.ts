@@ -1,4 +1,5 @@
 import { IllegalTransitionError, REVIEW_STATUS_FOR, assertTransition, type ModerationState } from "./moderation-state";
+import { assertAuditMetadataClean } from "./audit-metadata";
 
 /**
  * DB-backed moderation transitions. Written against a structural client type so core stays free of Prisma;
@@ -120,6 +121,8 @@ export async function transitionCase(db: ModerationDb, input: TransitionInput): 
       });
     }
 
+    const metadata = { caseId: c.id, version: c.version, from: c.state, to: input.to, reason: input.reason ?? null, ...input.meta };
+    assertAuditMetadataClean(metadata);
     await tx.auditLog.create({
       data: {
         actorType: input.actor.type,
@@ -127,7 +130,7 @@ export async function transitionCase(db: ModerationDb, input: TransitionInput): 
         action: AUDIT_ACTION[input.to],
         entityType: "Review",
         entityId: c.reviewId,
-        metadata: { caseId: c.id, version: c.version, from: c.state, to: input.to, reason: input.reason ?? null, ...input.meta },
+        metadata,
       },
     });
     return { ...c, state: input.to };

@@ -55,3 +55,7 @@ export const auditQuery = pageQuery.extend({ entityId: id.optional() });
 
 export const approveInput = z.object({ reason: z.string().trim().min(1).max(500).optional() }).strict();
 export const rejectInput = z.object({ reason: z.string().trim().min(3).max(500) }).strict();
+
+export const STAFF_ROLES = ["MODERATOR", "SENIOR_MODERATOR", "ADMIN", "SUPER_ADMIN"] as const;
+export const staffRoleInput = z.object({ role: z.enum(STAFF_ROLES), reason: z.string().trim().min(3).max(255) }).strict();
+export const staffRoleRevokeInput = z.object({ role: z.enum(STAFF_ROLES) }).strict();
