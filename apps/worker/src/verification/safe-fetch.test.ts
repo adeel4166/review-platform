@@ -36,11 +36,21 @@ describe("SEC-007 SSRF corpus: everything internal is blocked before any connect
   const literals = [
     "http://127.0.0.1/", "http://127.1/", "http://2130706433/", "http://0x7f000001/", "http://0177.0.0.1/", "http://[::1]/", "http://[::ffff:127.0.0.1]/", "http://169.254.169.254/latest/meta-data/",
     "http://[fd00:ec2::254]/", "http://10.0.0.5/", "http://172.16.0.1/", "http://192.168.1.1/", "http://100.64.0.1/", "http://0.0.0.0/", "http://localhost/", "http://metadata/", "http://intranet/",
+    // Encoding bypasses (M3-07 corpus): hex/decimal IPv6-mapped forms, zero host, trailing-dot and case variants, ULA, link-local zone.
+    "http://[::ffff:7f00:1]/", "http://[0:0:0:0:0:ffff:127.0.0.1]/", "http://[::ffff:a9fe:a9fe]/", "http://[::127.0.0.1]/", "http://[::]/", "http://0/", "http://0xa9fea9fe/", "http://2852039166/",
+    "http://localhost./", "http://LOCALHOST/", "http://[fc00::1]/", "http://172.31.255.255/", "http://0x7f.1/", "http://127.000.000.001/",
   ];
   it.each(literals)("blocks %s", async (u) => {
     const w = world({}, {});
     const r = await w.f.fetch(u);
     expect(r).toMatchObject({ ok: false, error: "BLOCKED_HOST" });
+    expect(w.connects).toHaveLength(0);
+    expect(w.resolves).toHaveLength(0);
+  });
+  it("blocks an IPv6 zone-id literal (fe80::1%25eth0) before any lookup or connection", async () => {
+    const w = world({}, {});
+    const r = await w.f.fetch("http://[fe80::1%25eth0]/");
+    expect(r).toMatchObject({ ok: false, error: "BLOCKED_URL" });
     expect(w.connects).toHaveLength(0);
     expect(w.resolves).toHaveLength(0);
   });
