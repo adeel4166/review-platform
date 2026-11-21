@@ -24,6 +24,19 @@ This copies `.env.example` to `.env` (if missing), installs deps, starts MySQL 8
 
 `.env` is git-ignored. The values in `.env.example` are throwaway local defaults, never real secrets.
 
+## Preview on :5101
+
+The preview is served from a **dedicated detached worktree of `main`** (default `../review-platform-preview`), never from the agent workspace, so task branches, `next dev` and test runs cannot break it. It is a clean production build (`next build` into a staging dir, then swapped in) served with `next start`.
+
+```bash
+scripts/preview-up.sh                    # run after every merge to main: sync worktree, clean build, restart, smoke check
+node scripts/preview-smoke.mjs [url]     # standalone smoke check (default http://127.0.0.1:5101; paths /, /products, /login)
+```
+
+The smoke check fetches each page, extracts every `/_next/static` CSS/JS URL from the HTML and exits non-zero on any non-200 (or a page with no stylesheet).
+Env vars (names only): `PREVIEW_DIR`, `PREVIEW_PORT` (5101), `PREVIEW_REF` (main), `PREVIEW_ENV_FILE` (optional env file to copy into the preview checkout).
+`pnpm dev` uses `NEXT_DIST_DIR=.next-dev`; the preview uses `.next`. Never run `next dev` with the preview's dist dir.
+
 ## Quality gate
 
 ```bash
