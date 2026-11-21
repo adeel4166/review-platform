@@ -114,3 +114,73 @@ ALTER TABLE `media_assets` ADD CONSTRAINT `chk_media_public_bucket`
 ALTER TABLE `reviews` ADD CONSTRAINT `chk_review_verified_label`
   CHECK ((`verifiedProofId` IS NULL) = (`verifiedPurchaseAt` IS NULL)
      AND (`verifiedProofId` IS NULL) = (`verificationMethod` IS NULL));
+
+-- ---------- M3: sellers, ownership claims, invitations, email tokens (task #44) ----------
+-- Authoritative list and migration placement: docs/architecture/m3-sellers-spec.md §2.4 / §2.6.
+-- The draft chk_claim_product_scope above is kept unchanged (SEL-012). Every FK column used below is
+-- declared onDelete/onUpdate Restrict in the M3 schema plan (ER 3823).
+
+ALTER TABLE `seller_ownership_claims` ADD CONSTRAINT `chk_claim_product_method`
+  CHECK (`scope` <> 'PRODUCT' OR `method` IN ('DOCUMENT', 'MARKETPLACE'));
+ALTER TABLE `seller_ownership_claims` ADD CONSTRAINT `chk_claim_domain_method`
+  CHECK (`method` NOT IN ('DNS_TXT', 'META_TAG', 'BUSINESS_EMAIL_DOMAIN') OR `domain` IS NOT NULL);
+ALTER TABLE `seller_ownership_claims` ADD CONSTRAINT `chk_claim_challenge`
+  CHECK (`method` NOT IN ('DNS_TXT', 'META_TAG', 'MARKETPLACE')
+         OR (`challengeValue` IS NOT NULL AND `challengeExpiresAt` IS NOT NULL));
+ALTER TABLE `seller_ownership_claims` ADD CONSTRAINT `chk_claim_marketplace_url`
+  CHECK (`method` <> 'MARKETPLACE' OR `evidenceUrl` IS NOT NULL);
+ALTER TABLE `seller_ownership_claims` ADD CONSTRAINT `chk_claim_approvals`
+  CHECK (`requiredApprovals` BETWEEN 1 AND 2);
+ALTER TABLE `seller_ownership_claims` ADD CONSTRAINT `chk_claim_verified_fields`
+  CHECK (`status` <> 'VERIFIED'
+         OR (`verifiedAt` IS NOT NULL AND `verifiedUntil` IS NOT NULL AND `verifiedUntil` > `verifiedAt`));
+ALTER TABLE `seller_ownership_claims` ADD CONSTRAINT `chk_claim_ended`
+  CHECK ((`status` IN ('REJECTED', 'EXPIRED', 'REVOKED', 'WITHDRAWN')) = (`endedAt` IS NOT NULL));
+ALTER TABLE `seller_ownership_claims` ADD CONSTRAINT `chk_claim_end_reason`
+  CHECK ((`status` IN ('EXPIRED', 'REVOKED')) = (`endReason` IS NOT NULL));
+ALTER TABLE `seller_ownership_claims` ADD CONSTRAINT `chk_claim_grace`
+  CHECK ((`graceEndsAt` IS NULL) = (`reverifyFailingSince` IS NULL)
+     AND (`graceEndsAt` IS NULL OR `status` = 'VERIFIED'));
+ALTER TABLE `seller_ownership_claims` ADD CONSTRAINT `chk_claim_contested`
+  CHECK (`status` <> 'CONTESTED'
+         OR (`conflictClaimId` IS NOT NULL AND `contestResponseDueAt` IS NOT NULL AND `requiredApprovals` = 2));
+ALTER TABLE `seller_ownership_claims` ADD CONSTRAINT `chk_claim_active_key`
+  CHECK ((`status` IN ('PENDING', 'CONTESTED', 'VERIFIED')) = (`activeKey` IS NOT NULL));
+-- One seller per verified domain (SEL-003): verifiedDomainKey is UNIQUE and only set while VERIFIED.
+ALTER TABLE `seller_ownership_claims` ADD CONSTRAINT `chk_claim_verified_domain_key`
+  CHECK (`verifiedDomainKey` IS NULL OR (`status` = 'VERIFIED' AND `verifiedDomainKey` = `domain`));
+
+ALTER TABLE `seller_claim_decisions` ADD CONSTRAINT `chk_claim_decision_source`
+  CHECK ((`source` = 'RULE') = (`reviewerId` IS NULL));
+
+-- SEL-011: a VERIFIED seller must point at its verified claim (same-seller via composite FK; scope/status by service).
+ALTER TABLE `sellers` ADD CONSTRAINT `chk_seller_verified_claim`
+  CHECK (`status` <> 'VERIFIED' OR (`verifiedClaimId` IS NOT NULL AND `verifiedAt` IS NOT NULL));
+ALTER TABLE `sellers` ADD CONSTRAINT `chk_seller_verified_pair`
+  CHECK ((`verifiedClaimId` IS NULL) = (`verifiedAt` IS NULL)
+     AND (`verifiedDomain` IS NULL OR `verifiedClaimId` IS NOT NULL));
+ALTER TABLE `sellers` ADD CONSTRAINT `chk_seller_closed`
+  CHECK ((`status` = 'CLOSED') = (`closedAt` IS NOT NULL));
+
+ALTER TABLE `seller_invitations` ADD CONSTRAINT `chk_invitation_role`
+  CHECK (`role` IN ('MANAGER', 'RESPONDER'));
+ALTER TABLE `seller_invitations` ADD CONSTRAINT `chk_invitation_accepted`
+  CHECK ((`acceptedAt` IS NULL) = (`acceptedById` IS NULL) AND (`acceptedAt` IS NULL OR `tokenHash` IS NOT NULL));
+ALTER TABLE `seller_invitations` ADD CONSTRAINT `chk_invitation_single_end`
+  CHECK (NOT (`acceptedAt` IS NOT NULL AND `revokedAt` IS NOT NULL));
+ALTER TABLE `seller_invitations` ADD CONSTRAINT `chk_invitation_sent`
+  CHECK (`sentAt` IS NULL OR `tokenHash` IS NOT NULL);
+
+ALTER TABLE `email_verification_tokens` ADD CONSTRAINT `chk_evt_claim_purpose`
+  CHECK ((`purpose` = 'CLAIM_BUSINESS_EMAIL') = (`claimId` IS NOT NULL));
+ALTER TABLE `email_verification_tokens` ADD CONSTRAINT `chk_evt_sent`
+  CHECK ((`sentAt` IS NULL OR `tokenHash` IS NOT NULL) AND (`consumedAt` IS NULL OR `tokenHash` IS NOT NULL));
+ALTER TABLE `email_verification_tokens` ADD CONSTRAINT `chk_evt_single_end`
+  CHECK (NOT (`consumedAt` IS NOT NULL AND `invalidatedAt` IS NOT NULL));
+
+-- Real-schema media arc (M3-07). Replaces chk_media_at_most_one_parent until the other parents exist;
+-- requires media_assets.reviewId FK changed from CASCADE to RESTRICT in the same migration.
+ALTER TABLE `media_assets` ADD CONSTRAINT `chk_media_parent_by_purpose`
+  CHECK (((`purpose` = 'REVIEW_MEDIA') = (`reviewId` IS NOT NULL))
+     AND ((`purpose` = 'OWNERSHIP_EVIDENCE') = (`ownershipClaimId` IS NOT NULL)));
+-- chk_enforcement_one_subject (above) is applied unchanged with the enforcement_actions migration.

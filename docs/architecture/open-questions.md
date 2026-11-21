@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Living document, opened by task #18 (M1.1), updated by #19 and #24 (M1-T1) |
+| **Status** | Living document, opened by task #18 (M1.1), updated by #19, #24 (M1-T1) and #44 (M3-01, §4) |
 | **Owner** | Software Architect, who routes each question to the decision owner listed |
 | **Rule** | A question moves to *Resolved* only with a named decision owner and a date. Resolutions that change the data model need a schema PR and an ADR update. |
 
@@ -46,7 +46,7 @@ These need a CEO decision or a named owner and date. Each has a recommendation, 
 | L-6 | **Purchase-proof processing.** What is our legal basis, do we need a DPIA, which processors may see receipts (OCR/AI provider, storage region), and how are cross-border transfers handled? | Consent at upload, DPIA before launch, EU-region storage for EU users, processors under DPA, no model training on proofs | May force self-hosted OCR/redaction (see T-5) and region-pinned buckets |
 | L-7 | **Verified label after proof deletion.** If a user deletes their proof after it was verified, may the "Verified buyer" label stay, based on our retained attestation record? | Yes: the label stays and the minimal `PurchaseProof` row is the provenance record | If no: the deletion job also clears `Review.verifiedPurchaseAt`. No schema change |
 | L-8 | **Incentivised and insider reviews.** Which incentives are allowed and how must they be labelled? Must seller employees and relatives be banned from reviewing? | Allowed with mandatory disclosure (`Review.incentive`). Seller members are blocked from reviewing their own products. Paid reviews are banned by content policy | Enum values / label copy only |
-| L-9 | **Seller verification (KYB).** Is ownership proof enough, or do we need legal-entity verification (registration number, address, beneficial owner)? | Ownership proof only (DNS/meta/email/doc/marketplace). No KYB provider | Would add `SellerLegalEntity` table + KYB provider integration |
+| L-9 | **Seller verification (KYB).** Is ownership proof enough, or do we need legal-entity verification (registration number, address, beneficial owner)? | Ownership proof only (DNS/meta/email/doc/marketplace). No KYB provider. **Taken as the M3 default in [ADR-0018](../adr/0018-kyb-ownership-proof-only.md)**; still needs Legal confirmation | Would add `SellerLegalEntity` table + KYB provider integration |
 | L-10 | **Minimum age and age assurance** (13 / 16 / 18) | Users declare 16+ at signup via `LegalAcceptance` of terms. No birthdate is stored | Possible `ageConfirmedAt` field or an age-assurance provider |
 | L-11 | **IP address handling.** Is storing keyed-hash IPs for abuse prevention and audit acceptable, and for how long? | Keyed hash (`ipHash`), 90 days. Raw IPs only in short-lived infrastructure logs | None (column already nullable) |
 | L-12 | **Third-party legal notices.** How do we handle defamation and IP takedown requests from sellers or third parties, DMCA-style agent designation, and requests from authorities? | Handled as `Report` (reason `INTELLECTUAL_PROPERTY` / `ILLEGAL_CONTENT`) by ADMIN. `MediaAsset.legalHold` for preservation | May need a dedicated `LegalRequest` entity with requester identity |
@@ -94,6 +94,31 @@ These need a CEO decision or a named owner and date. Each has a recommendation, 
 | T-12 | Video transcoding: self-run ffmpeg worker vs. managed service (Cloudflare Stream, Mux) | Self-run ffmpeg in a separate `media-video` deployment (ADR-0006), swappable behind the `media.transcode` job | Architect + DevOps |
 | T-13 | HEIC photo support needs libvips built with libheif in the worker image | Supported; fallback is rejecting HEIC and relying on iOS Safari's JPEG conversion | DevOps |
 | T-10 | Managed MySQL flavour (RDS / Aurora / Cloud SQL / PlanetScale) | Any MySQL 8.0.16+ with real FK and CHECK enforcement. Vitess-based offerings must be verified for FK/CHECK support first | DevOps |
+
+---
+
+## 4. M3: sellers, claims, email verification (task #44)
+
+Opened by [m3-sellers-spec.md](./m3-sellers-spec.md). Engineering builds to the working assumption.
+
+| ID | Question | Working assumption | Owner | Blocks |
+|---|---|---|---|---|
+| M3-Q1 | **2FA and step-up do not exist yet** (SEC-09(d), target M8), but ADR-0003 guard 3 needs 2FA for seller OWNER/MANAGER and the O-6 transfer mitigation needs it for both parties | M3a interim: password sign-in within 10 min for OWNER/MANAGER actions, behind `authz.sellerTwoFactorGate`. Full 2FA is a **launch blocker**. Recommend bringing TOTP forward to before M3b (needed for SEL-006) | CEO + Security | M3b, launch |
+| M3-Q2 | **The ID `SEC-05` means two things.** In m2-security-review it is "registration enumeration". In m2-hardening-gate-report it is "AuditLog INSERT-only" (threat-model §10 checklist numbering) | This spec uses the m2-security-review meaning. QA to rename one series (e.g. `CHK-05` for checklist items) | QA | None |
+| M3-Q3 | **M3 gate split** (ADR-0017): SEL-006 and the AZ-010 reply clause move to the M3b gate. Single-OWNER sellers until M3b. Recovery when the only OWNER loses access | Accept the split. Recovery = ADMIN procedure with audit and a verified-email check, documented in the M3-07 runbook | CEO + QA | M3a gate |
+| M3-Q4 | DOCUMENT evidence formats | Images only (JPEG/PNG/WebP, re-encoded) in M3a. PDF needs a sandboxed rasteriser: later | Product + Security | None |
+| M3-Q5 | Appeal of a claim rejection | No `Appeal` table until M6. M3a: re-submit with new evidence plus a support contact. `Appeal.ownershipClaimId` in M6 (L-3) | Product + Legal | M6 |
+| M3-Q6 | **Contest policy:** 7-day incumbent response window, two ADMINs, the incumbent stays verified during the contest | As stated. Legal to confirm whether a lost contest needs a statement of reasons (DSA) | T&S + Legal | None |
+| M3-Q7 | Upkeep of the PSL snapshot and the shared-host and free-mail deny-lists | Pinned in the repo, refreshed monthly by Dependabot. Security owns the local additions | Security + DevOps | None |
+| M3-Q8 | Production mail provider (T-2), SPF/DKIM/DMARC, bounce handling | SMTP relay behind `MailProvider` until chosen. Mailpit is dev only | DevOps | Launch |
+| M3-Q9 | **Password reset, email change and the unverified-account purge.** AUT-007 (reset) is not built. The draft `VerificationToken` purposes `PASSWORD_RESET`/`EMAIL_CHANGE` are unassigned. The 7-day purge hard-deletes contentless, never-verified users (an exception to "never hard-delete users") | Purge accepted (no user content exists). Recommend adding password reset to M3-03, or a follow-up task, with its own token purpose | Product + Security | A-2 completeness |
+| M3-Q10 | Spot-check rates (10 % DNS/META, 25 % email) and the high-volume thresholds (50 product reviews, 500 brand reviews) | Config values. Calibrate after 3 months | T&S | None |
+| M3-Q11 | Retention of ownership evidence, `seller_claim_decisions` and claim check fields (L-5) | Evidence: decision + 90 d (data-model §7). Decisions: kept as long as the claim row. Check fields: overwritten | Legal | None |
+| M3-Q12 | Deferred seller fields: logo (`SELLER_LOGO` media), `trustScore`, `replyRate` | Added in M5/M7/M3b. Additive | Architect | None |
+| M3-Q13 | Network policy for the `verification-egress` group depends on the hosting target (C-9/T-1). Optional egress proxy (Smokescreen-style) | In-app pinning is the primary control. DevOps writes the policy with the hosting decision. Proxy is optional in M8 | DevOps | Launch |
+| M3-Q14 | Seller-verification queue: no lease columns, and contested claims are not `ModerationCase` rows | A filtered list at M3 volume. Revisit in M6 when `ModerationCase` gains its arc and leases | Architect | None |
+| M3-Q15 | The composite FK `sellers(verifiedClaimId, id) → claims(id, sellerId)`. **Passed `prisma validate` on 6.19.3** (M3-01, full M3 plan merged into the real schema). Still to confirm: the generated MySQL DDL and the circular insert order in an integration test | If MySQL rejects it: a single-column FK plus service invariant plus consistency sweeper. SEL-011 tests are unchanged | Backend (M3-04) | None |
+| M3-Q16 | Re-verification grace length (14 d) while the badge stays on | 14 d. Staff can revoke at once on a suspected takeover | Product + T&S | None |
 
 ---
 

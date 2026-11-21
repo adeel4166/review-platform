@@ -27,6 +27,11 @@ We record significant architecture decisions as ADRs (lightweight Michael Nygard
 | [0011](./0011-moderation-lifecycle-and-audit.md) | Moderation lifecycle completion and audit contract (amends ADR-0005) | Proposed | 2026-11-21 |
 | [0012](./0012-media-job-decomposition.md) | Media processing as step jobs with a verified staging copy (amends ADR-0006) | Proposed | 2026-11-21 |
 | [0013](./0013-outbox-fan-out-routing.md) | Outbox fan-out routing and domain job keys (refines ADR-0007) | Proposed | 2026-11-21 |
+| [0014](./0014-ownership-claim-verification.md) | Seller ownership claims: methods, auto-approval policy and state machine | Proposed | 2026-11-21 |
+| [0015](./0015-ssrf-safe-fetcher.md) | SSRF-safe website fetcher in an isolated worker group | Proposed | 2026-11-21 |
+| [0016](./0016-email-verification-and-generic-registration.md) | Email verification, mail-provider interface and generic registration response | Proposed | 2026-11-21 |
+| [0017](./0017-defer-ownership-transfer-and-seller-replies.md) | Defer ownership transfer (SEL-006) and seller replies to M3b | Proposed | 2026-11-21 |
+| [0018](./0018-kyb-ownership-proof-only.md) | Seller verification is ownership proof only (no KYB) for Phase 1 | Proposed | 2026-11-21 |
 
 ### Task #24 coverage map (stack, storage, worker, verified buyer, i18n)
 
@@ -47,3 +52,15 @@ We record significant architecture decisions as ADRs (lightweight Michael Nygard
 | Signed upload, scanning, resizing, thumbnails | [media-pipeline.md §2, §4](../architecture/media-pipeline.md), [0012](./0012-media-job-decomposition.md) |
 | Job definitions, payloads, retry policy, failure handling | [job-catalogue.md](../architecture/job-catalogue.md), [0013](./0013-outbox-fan-out-routing.md) |
 | Consistency with the M1-T1 schema | [moderation-lifecycle.md §8](../architecture/moderation-lifecycle.md#8-consistency-with-the-m1-t1-schema), [job-catalogue.md §8](../architecture/job-catalogue.md#8-scaffold-deltas-m2-follow-ups-backend-engineer) |
+
+### Task #44 coverage map (M3: sellers, claims, SSRF fetcher, email verification)
+
+| Required topic | Where |
+|---|---|
+| Final schema plan (Seller, SellerMember, SellerOwnershipClaim, SellerInvitation, EmailVerificationToken), CHECKs, migration order | [m3-sellers-spec.md §2](../architecture/m3-sellers-spec.md#2-final-schema-plan) |
+| Claim state machine, methods, auto vs. human review (O-1) | [0014](./0014-ownership-claim-verification.md), [spec §5](../architecture/m3-sellers-spec.md#5-ownership-claims-m3-06-m3-07) |
+| SSRF-safe fetcher (SEC-007, O-5) | [0015](./0015-ssrf-safe-fetcher.md), [spec §6](../architecture/m3-sellers-spec.md#6-ssrf-safe-fetcher-m3-05-sec-007-o-5) |
+| Email verification, provider interface, Mailpit, generic register (SEC-05) | [0016](./0016-email-verification-and-generic-registration.md), [spec §3](../architecture/m3-sellers-spec.md#3-email-verification-and-generic-registration-m3-03) |
+| Ownership transfer and seller replies deferred to M3b | [0017](./0017-defer-ownership-transfer-and-seller-replies.md) |
+| KYB = ownership proof only (L-9) | [0018](./0018-kyb-ownership-proof-only.md) |
+| Catalogue case → task mapping | [spec §9](../architecture/m3-sellers-spec.md#9-test-case-mapping) |

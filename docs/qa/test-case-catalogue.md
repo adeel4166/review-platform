@@ -284,6 +284,38 @@ Matrix: ADR-0003 §2 (35 permission rows × 9 role columns = 315 cells). Guards:
 | SEL-012 | I | M3 | P0 | Claim with scope `PRODUCT` requires `productId` (CHECK constraint) | data-model §3, check-constraints.sql |
 | SEL-013 | I | M4 | P0 | Member of a seller cannot review that seller's products, including from a second account sharing device or `ipHash` (flagged). A review with incentive other than NONE without disclosure is refused | threat F-3, L-8 (legal working assumption) |
 
+### 11.1 M3 implementation map (task #44, M3-01)
+
+Work packages and design are in [m3-sellers-spec.md §1 and §9](../architecture/m3-sellers-spec.md#9-test-case-mapping).
+WP labels are assigned to task ids by the Project Manager. **SEL-006 and the reply clause of AZ-010 move to the M3b gate**
+([ADR-0017](../adr/0017-defer-ownership-transfer-and-seller-replies.md), pending CEO approval, open item M3-Q3).
+
+| Case | Gate | Implemented by | Spec |
+|---|---|---|---|
+| SEL-001 | M3a | M3-06 claims + automatic checks | §5.3 |
+| SEL-002 | M3a | M3-06 | §5.2 |
+| SEL-003 | M3a | M3-06 (conflict detection), M3-07 (contest decision) | §5.1, §5.7 |
+| SEL-004 | M3a | M3-07 staff queue | §5.4, §5.10 |
+| SEL-005 | M3a | M3-07 (mail from M3-03) | §5.7 |
+| SEL-006 | **M3b** | M3b ownership transfer | §4.6 |
+| SEL-007 | M3a | M3-04 sellers, members, invitations | §4.3 |
+| SEL-008 | M3a (P1) | M3-06 | §5.6 |
+| SEL-009 | M3a | M3-04 (badge render), M3-06 (`verifiedDomain`) | §4.1 |
+| SEL-010 | M3a (P1) | M3-04 | §4.1 |
+| SEL-011 | M3a | M3-04 (CHECK, composite FK), M3-06 (`recomputeSeller`) | §2.4, §2.5 |
+| SEL-012 | M3a | M3-04 (CHECK) | §2.4 |
+| SEL-013 | M4 | M4 (unchanged) | — |
+| AZ-007 | M3a | M3-04 (`authorizeSeller`, `SELLER_SUSPENSION`) | §4.4 |
+| AZ-010 | M3a + **M3b** | M3-04 (scope guard, all M3a seller permissions); M3b (reply clause) | §4.4 |
+| SEC-007 | M3a | M3-05 SSRF-safe fetcher | §6 |
+
+**Proposed new cases (QA to confirm):** AUT-014 (generic register, closes SEC-05), AUT-015 (email token rules),
+AUT-016 (verified-email gate), AUT-017 (no raw tokens at rest or in logs), SEL-014 (claim state machine and negative
+matrix), SEL-015 (auto-approval conditions, PRODUCT method CHECK), SEL-016 (downgrade), SEL-017 (OWNER invariants,
+invitation roles), SEL-018 (second reviewer, COI), SEL-019 (evidence privacy), SEC-015 (META redirect, downgrade and
+domain rules), SEC-016 (egress group has no secrets, P1). Full wording is in spec §9.2. They are not yet counted in
+the totals below.
+
 ## 12. Outbox and queues (`OUT`)
 
 | ID | Lvl | M | Pri | Case → expected | Source |
