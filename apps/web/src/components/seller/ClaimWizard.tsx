@@ -5,7 +5,7 @@ import { t, type MessageKey } from "@/i18n/en";
 import { ApiError, api } from "@/lib/upload";
 import { CopyButton, field, formatDate, primaryBtn, secondaryBtn } from "./ui";
 
-export type ClaimMethod = "DNS_TXT" | "META_TAG" | "DOCUMENT";
+export type ClaimMethod = "DNS_TXT" | "META_TAG" | "BUSINESS_EMAIL_DOMAIN" | "DOCUMENT";
 export interface ClaimView {
   id: string; method: string; status: string; domain: string | null; challengeExpiresAt: string | null; lastCheckOutcome: string | null;
   lastCheckAt: string | null; verifiedUntil: string | null;
@@ -13,7 +13,7 @@ export interface ClaimView {
 interface Submitted extends ClaimView {
   instructions: { type: "TXT"; host: string; value: string } | { type: "META"; tag: string } | { type: "MARKETPLACE"; value: string } | null;
 }
-const METHODS: ClaimMethod[] = ["DNS_TXT", "META_TAG", "DOCUMENT"];
+const METHODS: ClaimMethod[] = ["DNS_TXT", "META_TAG", "BUSINESS_EMAIL_DOMAIN", "DOCUMENT"];
 const OPEN = ["PENDING", "CONTESTED"];
 
 /**
@@ -26,11 +26,13 @@ export function ClaimWizard({ sellerId, initialClaims }: { sellerId: string; ini
   const [method, setMethod] = useState<ClaimMethod>("DNS_TXT");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [emailSentTo, setEmailSentTo] = useState<string | null>(null);
 
   const active = claims.find((c) => OPEN.includes(c.status)) ?? null;
   const latest = active ?? claims[0] ?? null;
   const isDoc = active?.method === "DOCUMENT";
-  const step = !active ? (latest && !OPEN.includes(latest.status) ? 4 : 1) : isDoc ? 4 : instr && !active.lastCheckAt ? 2 : 3;
+  const isEmail = active?.method === "BUSINESS_EMAIL_DOMAIN";
+  const step = !active ? (latest && !OPEN.includes(latest.status) ? 4 : 1) : isDoc ? 4 : isEmail ? 3 : instr && !active.lastCheckAt ? 2 : 3;
   const stepStatus = (n: number) => (n < step ? "done" : n === step ? "current" : "todo");
 
   async function refresh() {
@@ -46,19 +48,25 @@ export function ClaimWizard({ sellerId, initialClaims }: { sellerId: string; ini
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    const domain = String(new FormData(e.currentTarget).get("domain") ?? "").trim();
+    const fd = new FormData(e.currentTarget);
+    const domain = String(fd.get("domain") ?? "").trim();
+    const businessEmail = String(fd.get("businessEmail") ?? "").trim();
     setBusy(true);
     setError(null);
     try {
       const body: Record<string, string> = { scope: "SELLER", method };
-      if (method !== "DOCUMENT") body.domain = domain;
+      if (method === "BUSINESS_EMAIL_DOMAIN") body.businessEmail = businessEmail;
+      else if (method !== "DOCUMENT") body.domain = domain;
       const r = await api<Submitted>(`/api/sellers/${sellerId}/claims`, { method: "POST", body: JSON.stringify(body) });
       setInstr(r.instructions);
+      setEmailSentTo(method === "BUSINESS_EMAIL_DOMAIN" ? businessEmail : null);
       setClaims((cs) => [{ ...r, lastCheckOutcome: null, lastCheckAt: null, verifiedUntil: null }, ...cs]);
     } catch (err) {
       const code = err instanceof ApiError ? err.code : "";
       setError(
         code === "domain_not_allowed" ? t("claim.error.domain")
+        : code === "email_not_allowed" ? t("claim.error.email")
+        : code === "TWO_FACTOR_REQUIRED" ? t("claim.error.2fa")
         : code === "claim_exists" ? t("claim.error.exists")
         : code === "rate_limited" ? t("claim.error.rate")
         : code === "email_unverified" || code === "EMAIL_NOT_VERIFIED" ? t("claim.error.verify")
@@ -108,7 +116,14 @@ export function ClaimWizard({ sellerId, initialClaims }: { sellerId: string; ini
               </div>
             ))}
           </fieldset>
-          {method !== "DOCUMENT" && (
+          {method === "BUSINESS_EMAIL_DOMAIN" && (
+            <div>
+              <label htmlFor="claim-email" className="font-medium">{t("claim.businessEmail")} <span className="text-text-muted">({t("form.required")})</span></label>
+              <p id="claim-email-hint" className="text-sm text-text-muted">{t("claim.businessEmail.hint")}</p>
+              <input id="claim-email" name="businessEmail" type="email" required autoCapitalize="none" spellCheck={false} autoComplete="off" aria-describedby="claim-email-hint" className={field} />
+            </div>
+          )}
+          {method !== "DOCUMENT" && method !== "BUSINESS_EMAIL_DOMAIN" && (
             <div>
               <label htmlFor="claim-domain" className="font-medium">{t("claim.domain")} <span className="text-text-muted">({t("form.required")})</span></label>
               <p id="claim-domain-hint" className="text-sm text-text-muted">{t("claim.domain.hint")}</p>
@@ -119,8 +134,9 @@ export function ClaimWizard({ sellerId, initialClaims }: { sellerId: string; ini
         </form>
       )}
 
-      {active && !isDoc && instr && <Instructions instr={instr} domain={active.domain} expires={active.challengeExpiresAt} />}
-      {active && !isDoc && !instr && <p className="mt-4">{t("claim.instr.gone")}</p>}
+      {isEmail && <p className="mt-4" role="status" data-testid="claim-email-note">{emailSentTo ? t("claim.email.sent", { email: emailSentTo }) : t("claim.email.sent", { email: active?.domain ?? "" })}</p>}
+      {active && !isDoc && !isEmail && instr && <Instructions instr={instr} domain={active.domain} expires={active.challengeExpiresAt} />}
+      {active && !isDoc && !isEmail && !instr && <p className="mt-4">{t("claim.instr.gone")}</p>}
       {isDoc && <p className="mt-4">{t("claim.doc.note")} {t("claim.doc.uploadSoon")}</p>}
 
       {latest && (
@@ -132,7 +148,7 @@ export function ClaimWizard({ sellerId, initialClaims }: { sellerId: string; ini
               : ["PENDING", "REJECTED", "CONTESTED"].includes(latest.status) ? t(`claim.status.note.${latest.status}` as MessageKey)
               : t("claim.status.note.other")}
           </p>
-          {!isDoc && latest.method !== "DOCUMENT" && (
+          {!isDoc && !isEmail && latest.method !== "DOCUMENT" && latest.method !== "BUSINESS_EMAIL_DOMAIN" && (
             <p className="text-sm text-text-muted">{latest.lastCheckOutcome ? t("claim.lastCheck", { outcome: t(`claim.outcome.${latest.lastCheckOutcome}` as MessageKey) }) : t("claim.lastCheck.none")}</p>
           )}
           <p role="status" className="sr-only">{busy ? t("claim.checking") : ""}</p>

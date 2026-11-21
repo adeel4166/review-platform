@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import { expect, type Browser, type BrowserContext, type APIRequestContext, type Page } from "@playwright/test";
 
 /** Seeded admin (packages/db/prisma/seed.ts). The password must match SEED_ADMIN_PASSWORD used when seeding. */
@@ -169,6 +169,8 @@ export async function newVerifiedUser(browser: Browser, baseURL: string | undefi
   const link = await mailLinkFor(context.request, user.email, /\/verify-email$/);
   const page = await context.newPage();
   await page.goto(link);
+  // T-02: confirming the email forces a new password; the account's password becomes USER_PASSWORD.
+  await page.getByLabel("Choose a new password").fill(user.password);
   await page.getByRole("button", { name: "Confirm email" }).click();
   await expect(page.getByText("Your email is confirmed.")).toBeVisible();
   await signInInContext(context, user.email, user.password);
@@ -182,4 +184,69 @@ export async function createSellerViaUi(page: Page, name: string): Promise<strin
   await page.getByRole("button", { name: "Create seller" }).click();
   await page.waitForURL(/\/seller\/[^/]+$/);
   return new URL(page.url()).pathname.split("/").pop()!;
+}
+
+// ---- Two-factor helpers (M3b-07) ----
+
+const B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+function base32Decode(s: string): Buffer {
+  let bits = 0, val = 0;
+  const out: number[] = [];
+  for (const ch of s.replace(/[\s=]/g, "").toUpperCase()) {
+    val = (val << 5) | B32.indexOf(ch);
+    bits += 5;
+    if (bits >= 8) { out.push((val >>> (bits - 8)) & 255); bits -= 8; }
+  }
+  return Buffer.from(out);
+}
+
+/**
+ * RFC 6238 code generator for an enrolled account. The server rejects a replayed step (and accepts +-1 step), so each call
+ * uses a step strictly after the last one used, waiting for the clock when that would be more than one step ahead.
+ */
+export class Totp {
+  private last = 0;
+  constructor(private readonly secret: Buffer) {}
+  static fromKey(key: string) { return new Totp(base32Decode(key)); }
+  async next(): Promise<string> {
+    const step = Math.max(Math.floor(Date.now() / 30_000), this.last + 1);
+    while (step > Math.floor(Date.now() / 30_000) + 1) await new Promise((r) => setTimeout(r, 1_000));
+    this.last = step;
+    const msg = Buffer.alloc(8);
+    msg.writeBigUInt64BE(BigInt(step));
+    const h = createHmac("sha1", this.secret).update(msg).digest();
+    const o = h[h.length - 1]! & 15;
+    const n = ((h[o]! & 0x7f) << 24) | (h[o + 1]! << 16) | (h[o + 2]! << 8) | h[o + 3]!;
+    return String(n % 1_000_000).padStart(6, "0");
+  }
+}
+
+/** Walks the /account/security/2fa/setup wizard for a signed-in page. Returns the authenticator and the recovery codes. */
+export async function enrolTwoFactor(page: Page, password: string): Promise<{ totp: Totp; recoveryCodes: string[] }> {
+  await page.goto("/account/security/2fa/setup");
+  await page.getByLabel("Current password").fill(password);
+  await page.getByRole("button", { name: "Start setup" }).click();
+  const key = (await page.getByTestId("tf-secret").innerText()).replace(/\s/g, "");
+  await expect(page.getByRole("img", { name: /QR code/ })).toBeVisible();
+  const totp = Totp.fromKey(key);
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByLabel("Code").fill(await totp.next());
+  await page.getByRole("button", { name: "Confirm code" }).click();
+  const list = page.getByTestId("recovery-codes");
+  await expect(list).toBeVisible();
+  const recoveryCodes = (await list.getByRole("listitem").allInnerTexts()).map((c) => c.trim());
+  expect(recoveryCodes.length).toBeGreaterThanOrEqual(8);
+  await expect(page.getByRole("button", { name: "Finish" })).toBeDisabled(); // must tick "I saved these" first
+  await page.getByLabel("I saved these recovery codes").check();
+  await page.getByRole("button", { name: "Finish" }).click();
+  await expect(page.getByRole("heading", { name: "Two-step verification is on." })).toBeVisible();
+  return { totp, recoveryCodes };
+}
+
+/** Password sign-in through the real /login form; stops at the second-factor page for enrolled accounts. */
+export async function loginViaForm(page: Page, email: string, password: string): Promise<void> {
+  await page.goto("/login");
+  await page.getByLabel("Email").fill(email);
+  await page.getByLabel("Password", { exact: true }).fill(password);
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
 }
