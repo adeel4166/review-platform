@@ -2,14 +2,15 @@
 
 | | |
 |---|---|
-| **Status** | Draft for review (task #18, milestone M1.1) |
+| **Status** | Draft. Task #18 (M1.1), revised by #19 (M1.2) and #24 (M1-T1: verified-buyer provenance, i18n columns, table naming, outbox alignment) |
 | **Owner** | Software Architect |
 | **Source of truth** | [`schema.draft.prisma`](./schema.draft.prisma) + [`check-constraints.sql`](./check-constraints.sql) |
-| **Decisions** | [ADR-0001 Stack](../adr/0001-technology-stack.md) · [ADR-0002 Auth](../adr/0002-authentication-and-2fa.md) · [ADR-0003 Permissions](../adr/0003-multi-role-permissions.md) · [ADR-0004 Data conventions](../adr/0004-data-model-conventions.md) |
+| **Decisions** | [ADR-0001 Stack](../adr/0001-technology-stack.md) · [ADR-0002 Auth](../adr/0002-authentication-and-2fa.md) · [ADR-0003 Permissions](../adr/0003-multi-role-permissions.md) · [ADR-0004 Data conventions](../adr/0004-data-model-conventions.md) · [ADR-0007 Worker](../adr/0007-queue-based-worker.md) · [ADR-0008 Verified buyer](../adr/0008-verified-buyer-approach.md) · [ADR-0009 i18n](../adr/0009-i18n-readiness.md) · [ADR-0010 Table naming](../adr/0010-database-physical-naming.md) |
 | **Open questions** | [`open-questions.md`](./open-questions.md) (Legal, Language, others) |
 
 The ERDs below show entities, keys and cardinality. To keep them readable they list only the
 important attributes. The Prisma schema is authoritative for every column, type and index.
+Diagrams use **model** names. Physical tables are lowercase snake_case plurals (`MediaAsset` → `media_assets`, ADR-0010).
 
 ---
 
@@ -123,7 +124,8 @@ erDiagram
     string handle UK
     enum status "ACTIVE SUSPENDED BANNED DEACTIVATED DELETED"
     decimal trustScore "cache, internal"
-    string locale "OPEN(LANG)"
+    string locale "BCP 47, null = negotiate (ADR-0009)"
+    string timeZone "IANA, for emails (ADR-0009)"
     datetime anonymizedAt "OPEN(LEGAL)"
   }
   Session {
@@ -226,6 +228,7 @@ erDiagram
   User ||--o{ Review : "writes (1 per product)"
   Review ||--|{ ReviewRevision : "versioned by"
   Review ||--o{ PurchaseProof : "supported by"
+  Review |o--o| PurchaseProof : "label granted by (verifiedProofId)"
   PurchaseProof ||--o{ MediaAsset : "original + redacted copy (private)"
   MediaAsset |o--o{ MediaAsset : "redacted derivative of"
   Review ||--o{ ReviewVote : "voted on"
@@ -245,6 +248,7 @@ erDiagram
     string language "OPEN(LANG)"
     datetime verifiedPurchaseAt "label, survives proof purge"
     enum verificationMethod
+    string verifiedProofId FK,UK "ADR-0008; set/cleared with label (CHECK)"
     int helpfulCount "cache"
   }
   PurchaseProof {
@@ -392,7 +396,8 @@ erDiagram
     string id PK
     enum type
     enum status "ACTIVE EXPIRED REVOKED OVERTURNED"
-    text publicReason "statement of reasons"
+    text publicReason "statement of reasons, as sent"
+    string publicReasonLocale "ADR-0009"
     datetime endsAt "null = permanent"
   }
   Appeal {
@@ -452,9 +457,11 @@ erDiagram
   }
   OutboxEvent {
     bigint id PK
-    string topic
-    json payload
-    datetime dispatchedAt
+    string type "event type, e.g. review.submitted"
+    string aggregateId
+    json payload "ids + versions only"
+    datetime publishedAt "null = pending (ADR-0007)"
+    int attempts "capped, then alert"
   }
 ```
 
@@ -547,7 +554,7 @@ sequenceDiagram
   Q->>Q: duplicate check (fileFingerprint, orderReferenceHash) → TrustSignal if hit
   M->>W: review queue shows REDACTED copy only
   M->>W: decide VERIFIED / REJECTED
-  W->>W: Review.verifiedPurchaseAt/method set (if VERIFIED), AuditLog, Notification
+  W->>W: Review.verifiedPurchaseAt/method/verifiedProofId set (if VERIFIED), AuditLog, Notification
   Q->>S: purge ORIGINAL after decision (+ appeal window)
   Q->>S: purge REDACTED copy at retainFilesUntil
   Q->>W: PurchaseProof.filesPurgedAt set, row kept as provenance
@@ -564,7 +571,7 @@ Rules:
    - Deleting the review purges its proofs' files in the same job.
 5. **Legal hold.** `MediaAsset.legalHold = true` blocks all purge jobs (litigation or authority request). Setting it requires ADMIN and is audited.
 6. **What survives indefinitely:** the `PurchaseProof` row with method, status, dates, reviewer, `fileFingerprint` and `orderReferenceHash` (keyed HMAC, so not reversible without the key), plus `merchantName` and `purchaseDate`. It contains no images, names, addresses or payment data.
-7. **Label revocation:** an `EnforcementAction` of type `VERIFIED_LABEL_REVOKED` (e.g. a fraudulent proof found later) clears `Review.verifiedPurchaseAt` and can be appealed.
+7. **Label revocation:** an `EnforcementAction` of type `VERIFIED_LABEL_REVOKED` (e.g. a fraudulent proof found later) clears all three label fields (`verifiedPurchaseAt`, `verificationMethod`, `verifiedProofId`) together and can be appealed. The full decision is [ADR-0008](../adr/0008-verified-buyer-approach.md).
 
 ### 6.3 Seller ownership proof
 
@@ -646,6 +653,9 @@ and case prioritization. The scoring algorithm itself is a separate design doc. 
 | Moderation queue | `ModerationCase(status, priority, createdAt)`, `(assignedToId, status)` |
 | Proof queue | `PurchaseProof(status, createdAt)` |
 | Duplicate proof detection | `PurchaseProof(fileFingerprint)`, `(orderReferenceHash)`, `MediaAsset(sha256)` |
+| Label provenance (which proof granted the label) | `Review(verifiedProofId)` unique |
+| Outbox relay (`SKIP LOCKED` claim, ADR-0007) | `OutboxEvent(publishedAt, id)` |
+| Retention purge of proof files | `PurchaseProof(retainFilesUntil)` |
 | Notifications bell | `Notification(recipientId, readAt)`, `(recipientId, createdAt)` |
 | Feed (fan-out on read for Phase 1) | `Follow(followerId, …)` uniques + `Post(authorId, createdAt)`, `Post(asSellerId, createdAt)` |
 | Enforcement expiry job | `EnforcementAction(status, endsAt)` |
@@ -673,5 +683,12 @@ Nothing else is pre-built. In particular there are no empty messaging tables (YA
 
 ## 10. How this draft was validated
 
-- Structural check (relations paired, relation names unambiguous, FK fields exist, enum defaults valid) was run as an inline script by the author. The repository has no Prisma toolchain yet.
-- **Required before the scaffold task merges:** `npx prisma@6 validate --schema docs/architecture/schema.draft.prisma` and `npx prisma@6 format --check`, then apply the migration plus `check-constraints.sql` to a disposable MySQL 8.0.16+ container.
+- Task #18: structural check by an inline script (there was no Prisma toolchain then).
+- **Task #24, using the repo's pinned Prisma 6.19.3 (`packages/db`):**
+  - `prisma validate` and `prisma format --check` pass on `schema.draft.prisma`.
+  - `prisma migrate diff --from-empty --to-schema-datamodel … --script` generates MySQL DDL for **42 tables** without a database.
+  - Script checks against that DDL:
+    - every CHECK in `check-constraints.sql` names an existing table and columns
+    - no CHECK column has a `CASCADE`/`SET NULL` FK (MySQL ER 3823)
+    - all 354 generated identifiers are ≤ 64 chars (longest 57)
+- **Still required (M2, needs MySQL):** apply that DDL plus `check-constraints.sql` to a disposable MySQL 8.0.16+ container, which also verifies the InnoDB 3072-byte index key limit.

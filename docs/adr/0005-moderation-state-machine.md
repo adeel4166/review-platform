@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Proposed. Becomes *Accepted* when merged to `main` with CEO approval |
+| **Status** | Accepted (merged to `main` with CEO approval, proposal #9) |
 | **Date** | 2026-11-20 |
 | **Deciders** | Software Architect (author). CEO (approval) |
 | **Task** | #19 (M1.2) |

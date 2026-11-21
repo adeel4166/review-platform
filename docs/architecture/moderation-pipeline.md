@@ -20,7 +20,7 @@ seller verification) and the background jobs that drive all of it.
 `SellerReply`, `Comment`, `Post`. Media attached to them is moderated as part of the parent (§2.4). Avatars,
 seller logos and product images are moderated as standalone `MediaAsset` targets.
 
-**Not covered here:** purchase-proof verification (data-model.md §6.2, its own queue), the trust-score algorithm
+**Not covered here:** purchase-proof verification (data-model.md §6.2; [ADR-0008](../adr/0008-verified-buyer-approach.md) runs it as `verification.assess-proof` on the `verification` queue), the trust-score algorithm
 (T-9), messaging (Phase 2).
 
 | ID | Assumption | Why / how to reverse |
@@ -469,7 +469,7 @@ DB level through conditional transitions, so at-least-once delivery from the out
 | Failure | Effect | Mitigation |
 |---|---|---|
 | AI provider down | All new content → `HIDDEN` | Circuit breaker (no waiting), re-scan on recovery, alert on breaker open > 5 min, HOLD-lane capacity alert |
-| Redis down | Outbox rows accumulate; nothing is lost | Relay resumes from `dispatchedAt IS NULL`; sweepers cover timers; alert on outbox lag > 60 s |
+| Redis down | Outbox rows accumulate; nothing is lost | Relay resumes from `publishedAt IS NULL` (ADR-0007); sweepers cover timers; alert on outbox lag > 60 s |
 | Worker crash mid-job | BullMQ stalled-job recovery re-runs it | Idempotent handlers + conditional transitions |
 | Bad config activated | Mass mis-classification | Shadow mode before activation; one-click rollback to previous version; alert when the verdict mix shifts > 20 pts in 1 h |
 | Staff backlog | Post-review SLA breaches; holds start auto-rejecting | Hold-reminder alert; `postReview.sampleRate` lever; metrics in §11 |

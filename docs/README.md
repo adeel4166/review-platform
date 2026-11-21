@@ -16,7 +16,7 @@ trust scores, comparison and social features.
 | [architecture/moderation-pipeline.md](./architecture/moderation-pipeline.md) | Moderation verdicts, content state machine, timers (24 h post-review, 7-day hold), configurable thresholds, staff queues (moderation, appeal, seller verification), BullMQ job design |
 | [architecture/moderation-config.example.json](./architecture/moderation-config.example.json) | Example versioned moderation config (thresholds, timers, AI failure handling, strikes) |
 | [architecture/media-pipeline.md](./architecture/media-pipeline.md) | Direct upload, virus scan, EXIF/GPS strip, 720p video transcode, bucket/key layout, retention, scan/upload logs |
-| [architecture/open-questions.md](./architecture/open-questions.md) | **Legal: OPEN**, **Language: OPEN**, plus technical/product questions with working assumptions |
+| [architecture/open-questions.md](./architecture/open-questions.md) | **§0 For CEO review (C-1..C-9)**, **Legal: OPEN**, **Language: OPEN**, plus technical/product questions with working assumptions |
 
 ## Decisions (ADRs)
 
@@ -30,6 +30,10 @@ See [adr/README.md](./adr/README.md).
 | [0004](./adr/0004-data-model-conventions.md) | cuid IDs, exclusive arcs with CHECKs, soft delete + retention purge, caches, append-only tables, PII minimization |
 | [0005](./adr/0005-moderation-state-machine.md) | Three AI verdicts (CLEAN→live+post-review, VIOLATION→rejected, UNSURE/failure→hidden 7-day hold), DB-deadline timers, versioned thresholds, DB-view staff queues |
 | [0006](./adr/0006-media-storage-and-processing.md) | Ingest/private/public buckets (amends ADR-0001 upload path), fail-closed scan + sanitise + transcode pipeline, promote/demote with moderation |
+| [0007](./adr/0007-queue-based-worker.md) | Worker/outbox contract: MySQL is truth, only the outbox enqueues, `SKIP LOCKED` relay, id-only payloads, idempotency rules, `core`/`media`/`media-video` deployment groups |
+| [0008](./adr/0008-verified-buyer-approach.md) | Per-review "Verified purchase" label, human-decided with AI assist, independent of publication, provenance via `Review.verifiedProofId`, files purged, label survives |
+| [0009](./adr/0009-i18n-readiness.md) | English default, next-intl + ICU keys (no literals), `as-needed` locale prefix later, store keys not rendered text, legal text stored with its locale |
+| [0010](./adr/0010-database-physical-naming.md) | Lowercase snake_case plural tables via `@@map`, camelCase columns (amends ADR-0004) |
 
 ## Security
 

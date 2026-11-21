@@ -12,17 +12,19 @@
 --
 -- In MySQL a boolean expression evaluates to 0/1, so summing
 -- `(col IS NOT NULL)` counts the non-null arc members.
+--
+-- Table names are the snake_case @@map names (ADR-0010), not Prisma model names.
 -- =============================================================================
 
 -- ---------- exactly one target ----------
 
-ALTER TABLE `Comment` ADD CONSTRAINT `chk_comment_one_target`
+ALTER TABLE `comments` ADD CONSTRAINT `chk_comment_one_target`
   CHECK ((`reviewId` IS NOT NULL) + (`postId` IS NOT NULL) = 1);
 
-ALTER TABLE `Like` ADD CONSTRAINT `chk_like_one_target`
+ALTER TABLE `likes` ADD CONSTRAINT `chk_like_one_target`
   CHECK ((`postId` IS NOT NULL) + (`commentId` IS NOT NULL) = 1);
 
-ALTER TABLE `Follow` ADD CONSTRAINT `chk_follow_one_target`
+ALTER TABLE `follows` ADD CONSTRAINT `chk_follow_one_target`
   CHECK ((`followedUserId` IS NOT NULL) + (`followedSellerId` IS NOT NULL)
        + (`followedProductId` IS NOT NULL) = 1);
 
@@ -30,56 +32,56 @@ ALTER TABLE `Follow` ADD CONSTRAINT `chk_follow_one_target`
 -- NOT here: followerId / blockerId / blockedId carry ON DELETE CASCADE FKs and
 -- MySQL rejects CHECKs on such columns (ER 3823).
 
-ALTER TABLE `Report` ADD CONSTRAINT `chk_report_one_target`
+ALTER TABLE `reports` ADD CONSTRAINT `chk_report_one_target`
   CHECK ((`reviewId` IS NOT NULL) + (`commentId` IS NOT NULL) + (`postId` IS NOT NULL)
        + (`sellerReplyId` IS NOT NULL) + (`reportedUserId` IS NOT NULL)
        + (`sellerId` IS NOT NULL) + (`productId` IS NOT NULL)
        + (`mediaAssetId` IS NOT NULL) = 1);
 
-ALTER TABLE `ModerationCase` ADD CONSTRAINT `chk_case_one_target`
+ALTER TABLE `moderation_cases` ADD CONSTRAINT `chk_case_one_target`
   CHECK ((`reviewId` IS NOT NULL) + (`commentId` IS NOT NULL) + (`postId` IS NOT NULL)
        + (`sellerReplyId` IS NOT NULL) + (`targetUserId` IS NOT NULL)
        + (`sellerId` IS NOT NULL) + (`productId` IS NOT NULL)
        + (`mediaAssetId` IS NOT NULL) = 1);
 
-ALTER TABLE `Appeal` ADD CONSTRAINT `chk_appeal_one_target`
+ALTER TABLE `appeals` ADD CONSTRAINT `chk_appeal_one_target`
   CHECK ((`enforcementActionId` IS NOT NULL) + (`caseId` IS NOT NULL)
        + (`purchaseProofId` IS NOT NULL) + (`ownershipClaimId` IS NOT NULL) = 1);
 
-ALTER TABLE `EnforcementAction` ADD CONSTRAINT `chk_enforcement_one_subject`
+ALTER TABLE `enforcement_actions` ADD CONSTRAINT `chk_enforcement_one_subject`
   CHECK ((`subjectUserId` IS NOT NULL) + (`subjectSellerId` IS NOT NULL) = 1);
 
-ALTER TABLE `TrustSignal` ADD CONSTRAINT `chk_trust_signal_one_subject`
+ALTER TABLE `trust_signals` ADD CONSTRAINT `chk_trust_signal_one_subject`
   CHECK ((`subjectUserId` IS NOT NULL) + (`subjectSellerId` IS NOT NULL) = 1);
 
-ALTER TABLE `TrustScoreSnapshot` ADD CONSTRAINT `chk_trust_score_one_subject`
+ALTER TABLE `trust_score_snapshots` ADD CONSTRAINT `chk_trust_score_one_subject`
   CHECK ((`subjectUserId` IS NOT NULL) + (`subjectSellerId` IS NOT NULL) = 1);
 
 -- ---------- at most one attachment (unattached = upload in progress / avatar / logo) ----------
 
-ALTER TABLE `MediaAsset` ADD CONSTRAINT `chk_media_at_most_one_parent`
+ALTER TABLE `media_assets` ADD CONSTRAINT `chk_media_at_most_one_parent`
   CHECK ((`reviewId` IS NOT NULL) + (`postId` IS NOT NULL) + (`productId` IS NOT NULL)
        + (`purchaseProofId` IS NOT NULL) + (`ownershipClaimId` IS NOT NULL)
        + (`appealId` IS NOT NULL) <= 1);
 
 -- Sensitive purposes must live in the private bucket.
-ALTER TABLE `MediaAsset` ADD CONSTRAINT `chk_media_sensitive_private`
+ALTER TABLE `media_assets` ADD CONSTRAINT `chk_media_sensitive_private`
   CHECK (`purpose` NOT IN ('PURCHASE_PROOF', 'OWNERSHIP_EVIDENCE', 'APPEAL_EVIDENCE')
          OR `visibility` = 'PRIVATE');
 
 -- ---------- value ranges ----------
 
-ALTER TABLE `Review` ADD CONSTRAINT `chk_review_rating`
+ALTER TABLE `reviews` ADD CONSTRAINT `chk_review_rating`
   CHECK (`rating` BETWEEN 1 AND 5);
 
-ALTER TABLE `ReviewRevision` ADD CONSTRAINT `chk_review_revision_rating`
+ALTER TABLE `review_revisions` ADD CONSTRAINT `chk_review_revision_rating`
   CHECK (`rating` BETWEEN 1 AND 5);
 
-ALTER TABLE `TrustScoreSnapshot` ADD CONSTRAINT `chk_trust_score_range`
+ALTER TABLE `trust_score_snapshots` ADD CONSTRAINT `chk_trust_score_range`
   CHECK (`score` BETWEEN 0 AND 100);
 
 -- productId FK is declared Restrict/Restrict for this reason (products are never hard-deleted).
-ALTER TABLE `SellerOwnershipClaim` ADD CONSTRAINT `chk_claim_product_scope`
+ALTER TABLE `seller_ownership_claims` ADD CONSTRAINT `chk_claim_product_scope`
   CHECK ((`scope` = 'PRODUCT') = (`productId` IS NOT NULL));
 
 -- ---------- M1.2: moderation pipeline and media storage (task #19) ----------
@@ -87,20 +89,28 @@ ALTER TABLE `SellerOwnershipClaim` ADD CONSTRAINT `chk_claim_product_scope`
 -- NULL lane / NULL score makes the expression UNKNOWN, which a CHECK accepts.
 
 -- A HOLD-lane case must carry its auto-reject deadline (moderation-pipeline.md §4).
-ALTER TABLE `ModerationCase` ADD CONSTRAINT `chk_case_hold_expiry`
+ALTER TABLE `moderation_cases` ADD CONSTRAINT `chk_case_hold_expiry`
   CHECK (`lane` <> 'HOLD' OR `holdExpiresAt` IS NOT NULL);
 
 -- A POST_REVIEW-lane case must carry its 24 h SLA deadline.
-ALTER TABLE `ModerationCase` ADD CONSTRAINT `chk_case_post_review_due`
+ALTER TABLE `moderation_cases` ADD CONSTRAINT `chk_case_post_review_due`
   CHECK (`lane` <> 'POST_REVIEW' OR `postReviewDueAt` IS NOT NULL);
 
-ALTER TABLE `ModerationCase` ADD CONSTRAINT `chk_case_ai_score_range`
+ALTER TABLE `moderation_cases` ADD CONSTRAINT `chk_case_ai_score_range`
   CHECK (`aiScore` BETWEEN 0 AND 1);
 
-ALTER TABLE `ModerationDecision` ADD CONSTRAINT `chk_decision_confidence_range`
+ALTER TABLE `moderation_decisions` ADD CONSTRAINT `chk_decision_confidence_range`
   CHECK (`confidence` BETWEEN 0 AND 1);
 
 -- Only assets intended to be public may ever sit in the public bucket. Together with
 -- chk_media_sensitive_private this keeps evidence out of public storage (media-pipeline.md §4.4).
-ALTER TABLE `MediaAsset` ADD CONSTRAINT `chk_media_public_bucket`
+ALTER TABLE `media_assets` ADD CONSTRAINT `chk_media_public_bucket`
   CHECK (`bucket` <> 'PUBLIC' OR `visibility` = 'PUBLIC');
+
+-- ---------- verified-buyer label consistency (ADR-0008, task #24) ----------
+-- The label fields are set and cleared together: granted by exactly one VERIFIED
+-- PurchaseProof, and cleared together on revocation (VERIFIED_LABEL_REVOKED).
+-- Allowed because reviews.verifiedProofId uses ON DELETE/UPDATE RESTRICT.
+ALTER TABLE `reviews` ADD CONSTRAINT `chk_review_verified_label`
+  CHECK ((`verifiedProofId` IS NULL) = (`verifiedPurchaseAt` IS NULL)
+     AND (`verifiedProofId` IS NULL) = (`verificationMethod` IS NULL));

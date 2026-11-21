@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Living document, opened by task #18 (M1.1) |
+| **Status** | Living document, opened by task #18 (M1.1), updated by #19 and #24 (M1-T1) |
 | **Owner** | Software Architect, who routes each question to the decision owner listed |
 | **Rule** | A question moves to *Resolved* only with a named decision owner and a date. Resolutions that change the data model need a schema PR and an ADR update. |
 
@@ -10,6 +10,24 @@ Markers in [`schema.draft.prisma`](./schema.draft.prisma): `OPEN(LEGAL)` → §1
 
 Every question below has a **working assumption**. Engineering builds to that assumption so it is not blocked,
 and changes course if the answer differs. Each assumption is designed to be cheap to reverse.
+
+---
+
+## 0. For CEO review (task #24, M1-T1)
+
+These need a CEO decision or a named owner and date. Each has a recommendation, and engineering proceeds on it until told otherwise.
+
+| ID | Decision needed | Recommendation | Blocks |
+|---|---|---|---|
+| C-1 | **Approve ADR-0007 to ADR-0010.** These are the worker/outbox contract, verified-buyer approach, i18n readiness and table naming. Also confirm that ADR-0001 to ADR-0006 are recorded as *Accepted* (they were merged with approval of proposals #8 and #9) | Approve | M2 adoption of the schema into `packages/db` |
+| C-2 | **Engage legal counsel.** All of §1 (L-1 to L-17) has been OPEN since task #18. Needs an owner and a date | Before M4 starts. L-5/L-6/L-7 (proof retention, legal basis, label after deletion) and L-2 (label wording) gate M4 | M4 proof, launch |
+| C-3 | **Proof decisions: human-only vs. AI auto-verify** (ADR-0008 §4). Human-only means a staff decision for every proof | Human-only at launch, with `proof.autoVerify` reserved and off. Revisit after about 1,000 shadow-mode decisions show ≥ 99 % precision | Staffing plan, M4 |
+| C-4 | **When to delete proof originals.** After the 30-day appeal window (data-model §6.2) or as soon as the redacted copy and the decision exist (threat model G-10)? | As soon as both exist (minimisation). Appeals use the redacted copy. Needs Legal confirmation (L-5) | M4 retention jobs |
+| C-5 | **Launch languages and catalog translation** (G-1, G-5) | Confirm English-only and single-language catalog for Phase 1. ADR-0009 keeps adding a language cheap | None (confirmation) |
+| C-6 | **Rating averages.** Plain average, or weighted by verification or trust (T-9)? | Plain average plus "verified share" and a "Verified only" filter in Phase 1. Weighting waits for the trust-score design | M4 product page |
+| C-7 | **Staff capacity and SLAs.** Proof decisions in 3 days (ADR-0008), 100 % post-review in 24 h (T-11), appeals in 7 days / 72 h | Accept the targets for launch and size the moderation team against them. Set config levers before launch | Launch readiness |
+| C-8 | **Owner and date for the trust-score algorithm** (T-9). Inputs and storage are fixed. The algorithm is unassigned, and seller scores are public (L-15) | Architect + Data, design doc before M7 | M7 trust |
+| C-9 | **Hosting target** (T-1). Needed for the worker deployment groups (ADR-0007 §6) | Containers for web and worker (ADR-0001). DevOps to confirm in M2 | M2 deploy |
 
 ---
 
@@ -48,13 +66,13 @@ and changes course if the answer differs. Each assumption is designed to be chea
 | ID | Question | Working assumption | Model impact if answer differs |
 |---|---|---|---|
 | G-1 | **Launch languages and default locale** | English only at launch. All strings are externalised from day 1 so more languages can be added later | None |
-| G-2 | **UI i18n mechanism and URL strategy** (`/[locale]/...` prefix vs. cookie/header) | Use `next-intl`. Use a locale prefix only once a second language ships | None (routing concern) |
+| G-2 | **UI i18n mechanism and URL strategy** (`/[locale]/...` prefix vs. cookie/header) | **Proposed in ADR-0009:** `next-intl`, no prefix while English-only, then `localePrefix: "as-needed"` so English URLs never change | None (routing concern) |
 | G-3 | **User-content language.** Do we detect and store the language of reviews, and let users filter by it? | Detect during AI moderation and store in `Review.language` (BCP 47). Filtering is off at launch | Add `language` to `Post`/`Comment` if needed (additive) |
 | G-4 | **Machine translation** of reviews ("Translate" button)? | Not in Phase 1 | Would add a `ReviewTranslation` cache table |
 | G-5 | **Catalog translations.** Do product names, descriptions, categories and attribute labels need per-locale values? | No: single language | Would add `ProductTranslation`, `CategoryTranslation`, `CategoryAttributeTranslation` tables (base columns become the default locale) |
 | G-6 | **Moderation quality per language.** What happens when AI moderation cannot reliably assess a language? | Content in a language the AI does not support always goes to `ESCALATE` → human | None (pipeline config) |
 | G-7 | **Right-to-left (RTL) support** | Not at launch. Use Tailwind logical properties (`ms-`/`me-`) from day 1 so RTL is cheap later | None |
-| G-8 | **Localised emails, notifications and legal texts** | English only. Templates keyed by `User.locale` | `LegalAcceptance` may need a `language` column |
+| G-8 | **Localised emails, notifications and legal texts** | English only. Templates rendered per `User.locale` / `User.timeZone` (ADR-0009) | Done in #24: `LegalAcceptance.documentLocale` and `EnforcementAction.publicReasonLocale` added |
 | G-9 | **Units and number formats in comparisons** (metric/imperial, decimal separators) | Store canonical SI values in `Product.specs`. Format at render time using the locale | None |
 
 ---
