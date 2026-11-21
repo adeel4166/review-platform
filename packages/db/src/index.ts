@@ -7,3 +7,4 @@ export const prisma: PrismaClient = g.prisma ?? new PrismaClient();
 if (process.env.NODE_ENV !== "production") g.prisma = prisma;
 
 export * from "@prisma/client";
+export * from "./password";
