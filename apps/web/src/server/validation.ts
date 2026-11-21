@@ -48,7 +48,10 @@ export const moderationQueueQuery = pageQuery.extend({
   productId: id.optional(),
   minScore: z.coerce.number().min(0).max(1).optional(),
   maxScore: z.coerce.number().min(0).max(1).optional(),
+  hasMedia: z.enum(["true", "false"]).transform((v) => v === "true").optional(),
 });
+
+export const auditQuery = pageQuery.extend({ entityId: id.optional() });
 
 export const approveInput = z.object({ reason: z.string().trim().min(1).max(500).optional() }).strict();
 export const rejectInput = z.object({ reason: z.string().trim().min(3).max(500) }).strict();

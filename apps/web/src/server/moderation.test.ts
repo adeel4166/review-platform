@@ -98,3 +98,15 @@ describe("queue listing", () => {
     expect(findMany.mock.calls.at(-1)![0].where.state).toBe("NEEDS_HUMAN");
   });
 });
+
+describe("admin audit and detail routes require admin", () => {
+  it("rejects non-admins", async () => {
+    const { GET: auditRoute } = await import("../app/api/admin/audit/route");
+    const { GET: detailRoute } = await import("../app/api/admin/moderation/[id]/route");
+    sessionState.role = "user";
+    expect((await auditRoute(new Request("http://t/x"))).status).toBe(403);
+    expect((await detailRoute(new Request("http://t/x"), ctx("c1"))).status).toBe(403);
+    sessionState.role = null;
+    expect((await auditRoute(new Request("http://t/x"))).status).toBe(401);
+  });
+});
