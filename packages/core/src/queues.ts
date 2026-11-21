@@ -27,6 +27,7 @@ export type ModerationJob = z.infer<typeof moderationJobSchema>;
 export const mediaJobSchema = z.object({
   assetId: z.string().min(1),
   step: z.enum(["VALIDATE", "VIRUS_SCAN", "SANITISE", "VARIANTS"]).default("VALIDATE"),
+  // MVP processes all steps in one job; the `media.uploaded` outbox payload is just {assetId}.
 });
 export type MediaJob = z.infer<typeof mediaJobSchema>;
 

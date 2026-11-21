@@ -1,6 +1,6 @@
 import type { Job } from "bullmq";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { QUEUES } from "@rp/core";
+import { QUEUES, mediaJobSchema } from "@rp/core";
 import { processors } from "./processors";
 
 vi.mock("@rp/db", () => ({ prisma: {} }));
@@ -33,9 +33,8 @@ describe("worker processors (smoke, SMK-003)", () => {
     ).rejects.toThrow();
   });
 
-  it("accepts a valid media payload and defaults the step to VALIDATE", async () => {
-    await processors[QUEUES.media]!(job({ assetId: "a1" }));
-    expect(console.log).toHaveBeenCalledWith(expect.stringContaining('"step":"VALIDATE"'));
+  it("accepts a valid media payload and defaults the step to VALIDATE (processing: media.test.ts)", () => {
+    expect(mediaJobSchema.parse({ assetId: "a1" }).step).toBe("VALIDATE");
   });
 
   it("rejects a media payload with an unknown step", async () => {

@@ -70,6 +70,13 @@ enum ModerationState {
   REJECTED
 }
 
+enum MediaStatus {
+  UPLOADING
+  PROCESSING
+  READY
+  FAILED
+}
+
 enum AuditActorType {
   USER
   STAFF
@@ -97,6 +104,7 @@ model User {
   productsCreated Product[]        @relation("ProductCreatedBy")
   reviews         Review[]         @relation("ReviewAuthor")
   revisionsEdited ReviewRevision[] @relation("RevisionEditor")
+  mediaAssets     MediaAsset[]     @relation("MediaOwner")
   casesDecided    ModerationCase[] @relation("CaseDecidedBy")
   auditLogs       AuditLog[]       @relation("AuditActor")
 
@@ -197,6 +205,7 @@ model Review {
 
   revisions ReviewRevision[]
   cases     ModerationCase[]
+  media     MediaAsset[]
 
   @@unique([productId, authorId])
   @@index([productId, status, publishedAt])
@@ -275,4 +284,34 @@ model AuditLog {
   @@index([entityType, entityId, id])
   @@index([actorId, createdAt])
   @@map("audit_logs")
+}
+
+/// Review image (MVP: jpeg/png/webp). Bytes land in the ingest bucket via a presigned PUT; the worker validates by
+/// content, strips metadata, writes thumb/medium variants to the private bucket and sets READY or FAILED.
+/// Public visibility = status READY AND the parent review PUBLISHED (enforced in the read queries).
+model MediaAsset {
+  id            String      @id @default(cuid())
+  ownerId       String
+  reviewId      String
+  status        MediaStatus @default(UPLOADING)
+  declaredMime  String      @db.VarChar(64)
+  sizeBytes     Int
+  detectedMime  String?     @db.VarChar(64)
+  width         Int?
+  height        Int?
+  ingestKey     String      @db.VarChar(255)
+  thumbKey      String?     @db.VarChar(255)
+  mediumKey     String?     @db.VarChar(255)
+  failureReason String?     @db.VarChar(64)
+  processedAt   DateTime?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  owner  User   @relation("MediaOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  review Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  @@index([reviewId, status])
+  @@index([ownerId, createdAt])
+  @@index([status, createdAt])
+  @@map("media_assets")
 }
