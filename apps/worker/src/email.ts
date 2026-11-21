@@ -12,7 +12,14 @@ export interface EmailDb {
     updateMany(args: unknown): Promise<{ count: number }>;
   };
 }
-export interface EmailDeps { db: EmailDb; mail: MailProvider; baseUrl?: string; now?: () => Date }
+export interface InvitationRow { id: string; email: string; sentAt: Date | null; acceptedAt: Date | null; revokedAt: Date | null; expiresAt: Date }
+export interface EmailDbInvitations {
+  sellerInvitation: {
+    findUnique(args: unknown): Promise<InvitationRow | null>;
+    updateMany(args: unknown): Promise<{ count: number }>;
+  };
+}
+export interface EmailDeps { db: EmailDb & Partial<EmailDbInvitations>; mail: MailProvider; baseUrl?: string; now?: () => Date }
 
 export type EmailOutcome = "SENT" | "SKIPPED";
 
@@ -46,5 +53,27 @@ export async function sendAccountExistsEmail(d: EmailDeps, userId: string, jobKe
   });
   if (claimed.count !== 1) return "SKIPPED";
   await d.mail.send(renderMail("account_exists", user.email, { url: `${d.baseUrl ?? appUrl()}/login` }), { idempotencyKey: jobKey });
+  return "SENT";
+}
+
+/**
+ * notifications `seller.invitation_created` {invitationId} (M3 spec §3.4 / §4.3). Same pattern as the account token: the raw
+ * token exists only here and in the mail; only its SHA-256 is stored. The expiry set at creation (7 days, SEL-007) is
+ * never extended by a retry, and a retry rotates the hash so the last mailed link wins.
+ */
+export async function sendSellerInvitationEmail(d: EmailDeps, invitationId: string, jobKey: string): Promise<EmailOutcome> {
+  const now = (d.now ?? (() => new Date()))();
+  const inv = d.db.sellerInvitation;
+  if (!inv) throw new Error("sellerInvitation delegate missing");
+  const row = await inv.findUnique({ where: { id: invitationId } });
+  if (!row || row.acceptedAt || row.revokedAt || row.expiresAt <= now) return "SKIPPED";
+  const raw = generateEmailToken();
+  const claimed = await inv.updateMany({
+    where: { id: row.id, acceptedAt: null, revokedAt: null, expiresAt: { gt: now } },
+    data: { tokenHash: hashEmailToken(raw) },
+  });
+  if (claimed.count !== 1) return "SKIPPED";
+  await d.mail.send(renderMail("seller_invitation", row.email, { url: `${d.baseUrl ?? appUrl()}/invitations/accept?token=${raw}` }), { idempotencyKey: jobKey });
+  await inv.updateMany({ where: { id: row.id }, data: { sentAt: now } });
   return "SENT";
 }

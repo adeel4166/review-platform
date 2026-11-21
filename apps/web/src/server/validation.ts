@@ -60,3 +60,28 @@ export const STAFF_ROLES = ["MODERATOR", "SENIOR_MODERATOR", "ADMIN", "SUPER_ADM
 export const staffRoleInput = z.object({ role: z.enum(STAFF_ROLES), reason: z.string().trim().min(3).max(255) }).strict();
 export const staffRoleRevokeInput = z.object({ role: z.enum(STAFF_ROLES) }).strict();
 export type RegisterInput = z.infer<typeof registerInput>;
+
+// M3-04. `.strict()` rejects any client-supplied sellerId / role escalation fields (AZ-010, P-2).
+export const sellerCreateInput = z
+  .object({
+    name: z.string().trim().min(2).max(120),
+    slug: z.string().regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, "lowercase letters, digits and dashes").min(2).max(80).optional(),
+    description: z.string().trim().max(5000).optional(),
+    websiteUrl: z.string().trim().url().max(2048).regex(/^https?:\/\//i, "http(s) only").optional(),
+    countryCode: z.string().regex(/^[A-Za-z]{2}$/).transform((v) => v.toUpperCase()).optional(),
+  })
+  .strict();
+
+export const invitationInput = z
+  .object({ email: z.string().trim().toLowerCase().email().max(254), role: z.enum(["MANAGER", "RESPONDER"]) })
+  .strict();
+
+export const invitationAcceptInput = z.object({ token: z.string().min(20).max(128) }).strict();
+
+export const sellerSuspendInput = z
+  .object({
+    reasonCode: z.string().regex(/^[A-Z0-9_]{3,64}$/),
+    publicReason: z.string().trim().min(3).max(2000),
+    endsAt: z.coerce.date().optional(),
+  })
+  .strict();

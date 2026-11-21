@@ -85,31 +85,42 @@ enum AuditActorType {
 }
 
 model User {
-  id              String     @id @default(cuid())
-  email           String     @unique
-  emailVerifiedAt DateTime?
-  passwordHash    String?    @db.VarChar(255)
-  handle          String     @unique @db.VarChar(32)
-  displayName     String     @db.VarChar(64)
-  bio             String?    @db.Text
-  locale          String?    @db.VarChar(16)
-  timeZone        String?    @db.VarChar(64)
-  status          UserStatus @default(ACTIVE)
-  lastLoginAt     DateTime?
+  id                    String     @id @default(cuid())
+  email                 String     @unique
+  emailVerifiedAt       DateTime?
+  passwordHash          String?    @db.VarChar(255)
+  handle                String     @unique @db.VarChar(32)
+  displayName           String     @db.VarChar(64)
+  bio                   String?    @db.Text
+  locale                String?    @db.VarChar(16)
+  timeZone              String?    @db.VarChar(64)
+  status                UserStatus @default(ACTIVE)
+  lastLoginAt           DateTime?
   /// Throttle for the "someone tried to register" mail (ADR-0016): at most one per hour.
   accountExistsNoticeAt DateTime?
-  createdAt       DateTime   @default(now())
-  updatedAt       DateTime   @updatedAt
+  createdAt             DateTime   @default(now())
+  updatedAt             DateTime   @updatedAt
 
-  roles           UserRole[]       @relation("UserRoles")
-  rolesGranted    UserRole[]       @relation("RoleGrantedBy")
-  productsCreated Product[]        @relation("ProductCreatedBy")
-  reviews         Review[]         @relation("ReviewAuthor")
-  revisionsEdited ReviewRevision[] @relation("RevisionEditor")
-  mediaAssets     MediaAsset[]     @relation("MediaOwner")
-  casesDecided    ModerationCase[] @relation("CaseDecidedBy")
-  auditLogs       AuditLog[]       @relation("AuditActor")
+  roles           UserRole[]               @relation("UserRoles")
+  rolesGranted    UserRole[]               @relation("RoleGrantedBy")
+  productsCreated Product[]                @relation("ProductCreatedBy")
+  reviews         Review[]                 @relation("ReviewAuthor")
+  revisionsEdited ReviewRevision[]         @relation("RevisionEditor")
+  mediaAssets     MediaAsset[]             @relation("MediaOwner")
+  casesDecided    ModerationCase[]         @relation("CaseDecidedBy")
+  auditLogs       AuditLog[]               @relation("AuditActor")
   emailTokens     EmailVerificationToken[]
+
+  sellerMemberships    SellerMember[]         @relation("SellerMembership")
+  sellersCreated       Seller[]               @relation("SellerCreatedBy")
+  invitationsSent      SellerInvitation[]     @relation("InvitationSentBy")
+  invitationsAccepted  SellerInvitation[]     @relation("InvitationAcceptedBy")
+  invitationsRevoked   SellerInvitation[]     @relation("InvitationRevokedBy")
+  ownershipClaims      SellerOwnershipClaim[] @relation("ClaimSubmittedBy")
+  claimDecisions       SellerClaimDecision[]  @relation("ClaimDecisionReviewer")
+  enforcementsReceived EnforcementAction[]    @relation("EnforcementSubjectUser")
+  enforcementsIssued   EnforcementAction[]    @relation("EnforcementIssuedBy")
+  enforcementsRevoked  EnforcementAction[]    @relation("EnforcementRevokedBy")
 
   @@index([status])
   @@map("users")
@@ -160,6 +171,8 @@ model Product {
   status        ProductStatus @default(PENDING)
   mergedIntoId  String?
   createdById   String
+  /// Owning seller, set by a VERIFIED PRODUCT claim (M3-06); null = unclaimed. Never taken from client input (P-2).
+  sellerId      String?
   ratingAverage Decimal?      @db.Decimal(3, 2) // cache, maintained by the worker
   ratingCount   Int           @default(0)
   reviewCount   Int           @default(0)
@@ -170,9 +183,12 @@ model Product {
   mergedInto Product?  @relation("ProductMerge", fields: [mergedIntoId], references: [id], onDelete: SetNull)
   mergedFrom Product[] @relation("ProductMerge")
   createdBy  User      @relation("ProductCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  seller     Seller?   @relation(fields: [sellerId], references: [id], onDelete: SetNull)
 
-  reviews Review[]
+  reviews         Review[]
+  ownershipClaims SellerOwnershipClaim[]
 
+  @@index([sellerId])
   @@index([categoryId, status])
   @@index([status, createdAt])
   @@map("products")
@@ -263,8 +279,9 @@ model ModerationCase {
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
 
-  review    Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
-  decidedBy User?  @relation("CaseDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+  review             Review              @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  decidedBy          User?               @relation("CaseDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+  enforcementActions EnforcementAction[]
 
   @@unique([reviewId, version])
   @@index([state, createdAt])
@@ -320,7 +337,7 @@ model MediaAsset {
 }
 
 enum EmailTokenPurpose {
-  ACCOUNT_EMAIL        // prove control of User.email
+  ACCOUNT_EMAIL // prove control of User.email
   CLAIM_BUSINESS_EMAIL // reserved for M3-06 claim checks
 }
 
@@ -342,4 +359,285 @@ model EmailVerificationToken {
 
   @@index([userId, purpose, createdAt])
   @@map("email_verification_tokens")
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// M3-04: sellers, memberships, invitations, enforcement, ownership claims (docs/architecture/m3-sellers-spec.md §2).
+// FKs on CHECK-carrying columns are Restrict/Restrict (MySQL ER 3823).
+// ---------------------------------------------------------------------------------------------------------------
+
+enum SellerStatus {
+  UNVERIFIED
+  PENDING_VERIFICATION
+  VERIFIED
+  SUSPENDED
+  CLOSED
+}
+
+enum SellerMemberRole {
+  OWNER
+  MANAGER
+  RESPONDER
+}
+
+enum OwnershipClaimScope {
+  SELLER
+  PRODUCT
+}
+
+enum OwnershipProofMethod {
+  DNS_TXT
+  META_TAG
+  BUSINESS_EMAIL_DOMAIN
+  DOCUMENT
+  MARKETPLACE
+}
+
+enum ClaimStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+  CONTESTED
+  EXPIRED
+  REVOKED
+  WITHDRAWN
+}
+
+enum ClaimEndReason {
+  CHALLENGE_TIMEOUT
+  INFO_TIMEOUT
+  VALIDITY_ENDED
+  REVERIFY_FAILED
+  CONTEST_LOST
+  SPOT_CHECK_FAILED
+  STAFF_REVOKED
+}
+
+enum ClaimCheckOutcome {
+  PASS
+  NOT_FOUND
+  MISMATCH
+  FETCH_BLOCKED
+  FETCH_ERROR
+  DNS_ERROR
+}
+
+enum ClaimDecisionSource {
+  RULE
+  STAFF
+}
+
+enum ClaimDecisionOutcome {
+  APPROVE
+  REJECT
+  REQUEST_INFO
+  RENEW
+  SPOT_CHECK_PASS
+  SPOT_CHECK_FAIL
+  REVOKE
+}
+
+enum EnforcementType {
+  WARNING
+  CONTENT_REMOVAL
+  POSTING_RESTRICTION
+  VOTING_RESTRICTION
+  VERIFIED_LABEL_REVOKED
+  SUSPENSION
+  BAN
+  SELLER_REPLY_RESTRICTION
+  SELLER_SUSPENSION
+}
+
+enum EnforcementStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
+  OVERTURNED
+}
+
+model Seller {
+  id              String       @id @default(cuid())
+  slug            String       @unique @db.VarChar(80)
+  name            String       @db.VarChar(120)
+  nameSkeleton    String       @db.VarChar(120)
+  description     String?      @db.Text
+  websiteUrl      String?      @db.VarChar(2048)
+  countryCode     String?      @db.Char(2)
+  status          SellerStatus @default(UNVERIFIED)
+  verifiedClaimId String?
+  verifiedDomain  String?      @db.VarChar(253)
+  verifiedAt      DateTime?    @db.DateTime(3)
+  nameReviewFlag  Boolean      @default(false)
+  closedAt        DateTime?    @db.DateTime(3)
+  createdById     String
+  createdAt       DateTime     @default(now()) @db.DateTime(3)
+  updatedAt       DateTime     @updatedAt @db.DateTime(3)
+
+  createdBy     User                  @relation("SellerCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  /// The verified claim must belong to this seller (composite FK, SEL-011).
+  verifiedClaim SellerOwnershipClaim? @relation("SellerVerifiedClaim", fields: [verifiedClaimId, id], references: [id, sellerId], onDelete: Restrict, onUpdate: Restrict)
+
+  members            SellerMember[]
+  invitations        SellerInvitation[]
+  ownershipClaims    SellerOwnershipClaim[] @relation("ClaimSeller")
+  products           Product[]
+  enforcementActions EnforcementAction[]
+
+  @@unique([verifiedClaimId, id])
+  @@index([status])
+  @@index([nameSkeleton])
+  @@map("sellers")
+}
+
+/// Accepted membership only. Pending invitations live in SellerInvitation. At least one OWNER per seller (service).
+model SellerMember {
+  sellerId     String
+  userId       String
+  role         SellerMemberRole
+  invitationId String?          @unique
+  createdAt    DateTime         @default(now()) @db.DateTime(3)
+  updatedAt    DateTime         @updatedAt @db.DateTime(3)
+
+  seller     Seller            @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  user       User              @relation("SellerMembership", fields: [userId], references: [id], onDelete: Cascade)
+  invitation SellerInvitation? @relation(fields: [invitationId], references: [id], onDelete: Restrict)
+
+  @@id([sellerId, userId])
+  @@index([userId])
+  @@index([sellerId, role])
+  @@map("seller_members")
+}
+
+/// SEL-007: 7-day, single-use, bound to the invitee's verified email. M3a roles: MANAGER, RESPONDER only.
+model SellerInvitation {
+  id           String           @id @default(cuid())
+  sellerId     String
+  email        String           @db.VarChar(254)
+  role         SellerMemberRole
+  tokenHash    String?          @unique @db.Char(64)
+  invitedById  String
+  expiresAt    DateTime         @db.DateTime(3)
+  sentAt       DateTime?        @db.DateTime(3)
+  acceptedAt   DateTime?        @db.DateTime(3)
+  acceptedById String?
+  revokedAt    DateTime?        @db.DateTime(3)
+  revokedById  String?
+  createdAt    DateTime         @default(now()) @db.DateTime(3)
+
+  seller     Seller        @relation(fields: [sellerId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  invitedBy  User          @relation("InvitationSentBy", fields: [invitedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  acceptedBy User?         @relation("InvitationAcceptedBy", fields: [acceptedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  revokedBy  User?         @relation("InvitationRevokedBy", fields: [revokedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  member     SellerMember?
+
+  @@index([sellerId, email])
+  @@index([expiresAt])
+  @@map("seller_invitations")
+}
+
+model SellerOwnershipClaim {
+  id                   String               @id @default(cuid())
+  sellerId             String
+  scope                OwnershipClaimScope
+  productId            String?
+  method               OwnershipProofMethod
+  status               ClaimStatus          @default(PENDING)
+  domain               String?              @db.VarChar(253)
+  challengeValue       String?              @unique @db.VarChar(64)
+  challengeExpiresAt   DateTime?            @db.DateTime(3)
+  evidenceUrl          String?              @db.VarChar(2048)
+  requiresHumanReview  Boolean              @default(false)
+  humanReviewReason    String?              @db.VarChar(32)
+  requiredApprovals    Int                  @default(1)
+  conflictClaimId      String?
+  contestResponseDueAt DateTime?            @db.DateTime(3)
+  infoRequestedAt      DateTime?            @db.DateTime(3)
+  checkAttempts        Int                  @default(0)
+  lastCheckAt          DateTime?            @db.DateTime(3)
+  lastCheckOutcome     ClaimCheckOutcome?
+  nextCheckAt          DateTime?            @db.DateTime(3)
+  spotCheckRequired    Boolean              @default(false)
+  spotCheckedAt        DateTime?            @db.DateTime(3)
+  verifiedAt           DateTime?            @db.DateTime(3)
+  verifiedUntil        DateTime?            @db.DateTime(3)
+  renewalRequestedAt   DateTime?            @db.DateTime(3)
+  reverifyFailingSince DateTime?            @db.DateTime(3)
+  graceEndsAt          DateTime?            @db.DateTime(3)
+  endedAt              DateTime?            @db.DateTime(3)
+  endReason            ClaimEndReason?
+  activeKey            String?              @unique @db.VarChar(320)
+  verifiedDomainKey    String?              @unique @db.VarChar(253)
+  submittedById        String
+  createdAt            DateTime             @default(now()) @db.DateTime(3)
+  updatedAt            DateTime             @updatedAt @db.DateTime(3)
+
+  seller        Seller                 @relation("ClaimSeller", fields: [sellerId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  product       Product?               @relation(fields: [productId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  submittedBy   User                   @relation("ClaimSubmittedBy", fields: [submittedById], references: [id], onDelete: Restrict)
+  conflictClaim SellerOwnershipClaim?  @relation("ClaimConflict", fields: [conflictClaimId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  conflictedBy  SellerOwnershipClaim[] @relation("ClaimConflict")
+  verifiedFor   Seller?                @relation("SellerVerifiedClaim")
+
+  decisions SellerClaimDecision[]
+
+  @@unique([id, sellerId])
+  @@index([status, createdAt])
+  @@index([sellerId, status])
+  @@index([status, nextCheckAt])
+  @@index([status, graceEndsAt])
+  @@index([status, verifiedUntil])
+  @@index([domain])
+  @@index([productId])
+  @@map("seller_ownership_claims")
+}
+
+/// Append-only decision log for a claim.
+model SellerClaimDecision {
+  id         String               @id @default(cuid())
+  claimId    String
+  source     ClaimDecisionSource
+  reviewerId String?
+  outcome    ClaimDecisionOutcome
+  reasonCode String?              @db.VarChar(64)
+  note       String?              @db.Text
+  createdAt  DateTime             @default(now()) @db.DateTime(3)
+
+  claim    SellerOwnershipClaim @relation(fields: [claimId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  reviewer User?                @relation("ClaimDecisionReviewer", fields: [reviewerId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([claimId, createdAt])
+  @@index([reviewerId, createdAt])
+  @@map("seller_claim_decisions")
+}
+
+model EnforcementAction {
+  id                 String            @id @default(cuid())
+  type               EnforcementType
+  status             EnforcementStatus @default(ACTIVE)
+  subjectUserId      String?
+  subjectSellerId    String?
+  caseId             String?
+  reasonCode         String            @db.VarChar(64)
+  publicReason       String            @db.Text
+  publicReasonLocale String            @default("en") @db.VarChar(16)
+  internalNote       String?           @db.Text
+  issuedById         String?
+  startsAt           DateTime          @default(now()) @db.DateTime(3)
+  endsAt             DateTime?         @db.DateTime(3)
+  revokedById        String?
+  revokedAt          DateTime?         @db.DateTime(3)
+  createdAt          DateTime          @default(now()) @db.DateTime(3)
+  updatedAt          DateTime          @updatedAt @db.DateTime(3)
+
+  subjectUser    User?           @relation("EnforcementSubjectUser", fields: [subjectUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  subjectSeller  Seller?         @relation(fields: [subjectSellerId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  moderationCase ModerationCase? @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  issuedBy       User?           @relation("EnforcementIssuedBy", fields: [issuedById], references: [id], onDelete: SetNull)
+  revokedBy      User?           @relation("EnforcementRevokedBy", fields: [revokedById], references: [id], onDelete: SetNull)
+
+  @@index([subjectUserId, status])
+  @@index([subjectSellerId, status])
+  @@index([status, endsAt])
+  @@map("enforcement_actions")
 }

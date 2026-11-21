@@ -1,7 +1,7 @@
 import nodemailer from "nodemailer";
 
 /** Mail provider interface (ADR-0016 §3.5). Only the worker sends mail; the web app never holds SMTP credentials. */
-export type MailTemplateId = "verify_account" | "account_exists";
+export type MailTemplateId = "verify_account" | "account_exists" | "seller_invitation";
 
 export interface RenderedMail { to: string; subject: string; text: string; html: string }
 
@@ -31,6 +31,13 @@ export function renderMail(template: MailTemplateId, to: string, vars: Record<st
         subject: "Someone tried to register with your email",
         text: `Someone tried to create an account with this email address, but an account already exists.\n\nSign in here: ${url}\n\nIf this was you, just sign in. If not, you can ignore this message.`,
         html: `<p>Someone tried to create an account with this email address, but an account already exists.</p><p><a href="${esc(url)}">Sign in</a></p><p>If this was not you, you can ignore this message.</p>`,
+      };
+    case "seller_invitation":
+      return {
+        to,
+        subject: "You have been invited to join a seller account",
+        text: `You have been invited to join a seller account (link valid for 7 days). Sign in with this email address, then open:\n\n${url}\n\nIf you did not expect this, ignore this message.`,
+        html: `<p>You have been invited to join a seller account (link valid for 7 days). Sign in with this email address, then open:</p><p><a href="${esc(url)}">Accept invitation</a></p><p>If you did not expect this, ignore this message.</p>`,
       };
   }
 }
