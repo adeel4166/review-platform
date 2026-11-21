@@ -76,6 +76,8 @@ export const SELLER_PERMISSIONS = [
   "seller.claim.submit",
   "seller.claim.review",
   "product.update",
+  "seller.reply",
+  "seller.reply.manage",
 ] as const;
 export type SellerPermission = (typeof SELLER_PERMISSIONS)[number];
 
@@ -87,9 +89,11 @@ const ROLE_GRANTS: Record<SellerPermission, readonly SellerMemberRole[]> = {
   "seller.claim.submit": ["OWNER", "MANAGER"],
   "seller.claim.review": [],
   "product.update": ["OWNER", "MANAGER"],
+  "seller.reply": ["OWNER", "MANAGER", "RESPONDER"],
+  "seller.reply.manage": ["OWNER", "MANAGER", "RESPONDER"],
 };
 
-export type DenyCode = "ACCOUNT_INACTIVE" | "SELLER_SUSPENDED" | "NOT_IN_SCOPE" | "FORBIDDEN_ROLE" | "CONFLICT_OF_INTEREST" | "TWO_FACTOR_REQUIRED";
+export type DenyCode = "ACCOUNT_INACTIVE" | "SELLER_SUSPENDED" | "NOT_IN_SCOPE" | "FORBIDDEN_ROLE" | "CONFLICT_OF_INTEREST" | "TWO_FACTOR_REQUIRED" | "SELLER_NOT_VERIFIED" | "REPLY_RESTRICTED";
 export type AuthzResult = { allowed: true } | { allowed: false; code: DenyCode };
 
 export interface SellerAuthzContext {
@@ -104,6 +108,10 @@ export interface SellerAuthzContext {
   memberOfConflictingSeller?: boolean;
   /** 2FA facts (m3b-spec 2.9). Required: a caller that cannot supply them is denied for OWNER/MANAGER permissions (fail closed). */
   twoFactor: { enrolled: boolean; sessionVerified: boolean };
+  /** Reply permissions only (m3b-spec 5.4 steps 8-9). Absent = fail closed (denied). Callers pass `true`/`false` to waive for delete. */
+  sellerVerified?: boolean;
+  /** An active SELLER_REPLY_RESTRICTION targets this seller or this actor. Absent = restricted (fail closed). */
+  replyRestricted?: boolean;
 }
 
 /**
@@ -124,6 +132,10 @@ export function authorizeSeller(ctx: SellerAuthzContext, perm: SellerPermission)
   // 2FA gate (AZ-008): OWNER/MANAGER permissions need an enrolled account AND a second-factor-verified session. RESPONDER is exempt.
   if ((ctx.memberRole === "OWNER" || ctx.memberRole === "MANAGER") && !(ctx.twoFactor.enrolled && ctx.twoFactor.sessionVerified)) {
     return { allowed: false, code: "TWO_FACTOR_REQUIRED" };
+  }
+  if (perm === "seller.reply" || perm === "seller.reply.manage") {
+    if (ctx.sellerVerified !== true) return { allowed: false, code: "SELLER_NOT_VERIFIED" };
+    if (ctx.replyRestricted !== false) return { allowed: false, code: "REPLY_RESTRICTED" };
   }
   return { allowed: true };
 }

@@ -10,6 +10,8 @@ export interface OutboxRow {
 /** Maps outbox event types to a target queue. Extend as features add events. */
 export const routes: Record<string, QueueName> = {
   "review.submitted": QUEUES.moderation,
+  "seller_reply.submitted": QUEUES.moderation,
+  "seller_reply.edited": QUEUES.moderation,
   "media.uploaded": QUEUES.media,
   "user.email_verification_requested": QUEUES.notifications,
   "user.registration_conflict": QUEUES.notifications,

@@ -76,3 +76,14 @@ export const limit2fa = (req: Request, kind: "attempt" | "enrol" | "regenerate" 
 
 /** Unauthenticated one-click links (ownership-change cancel, claim-mail deny): 10 / min per IP, fail closed (m3b-spec 3.4, 4.4). */
 export const limitTokenLink = (req: Request) => enforce([closed({ key: `tokenlink:m:${ipOf(req)}`, rule: rule(10, MIN) })]);
+
+/** Seller reply create (m3b-spec 5.6): 20/h and 100/day per user, 300/day per seller. Fail open like review writes. */
+export const limitReplyCreate = (userId: string, sellerId: string) =>
+  enforce([
+    { key: `reply:u:h:${userId}`, rule: rule(20, HOUR) },
+    { key: `reply:u:d:${userId}`, rule: rule(100, DAY) },
+    { key: `reply:s:d:${sellerId}`, rule: rule(300, DAY) },
+  ]);
+
+/** Reply edits: 5/day per reply. */
+export const limitReplyEdit = (replyId: string) => enforce([{ key: `reply:edit:d:${replyId}`, rule: rule(5, DAY) }]);

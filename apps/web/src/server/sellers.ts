@@ -22,7 +22,7 @@ import type { z } from "zod";
 import type { invitationInput, sellerCreateInput, sellerSuspendInput } from "./validation";
 
 type Tx = Prisma.TransactionClient;
-type Reader = Pick<Db, "user" | "sellerMember" | "enforcementAction">;
+type Reader = Pick<Db, "user" | "sellerMember" | "enforcementAction"> & Partial<Pick<Db, "seller">>;
 
 const DAY_MS = 86_400_000;
 const invalidInvitation = () => new HttpError(400, "invalid_or_expired", "This invitation is invalid or has expired");
@@ -43,16 +43,33 @@ const activeSuspensionWhere = (sellerId: string, now: Date) => ({
   OR: [{ endsAt: null }, { endsAt: { gt: now } }],
 });
 
+/** An active SELLER_REPLY_RESTRICTION against the seller (every member) or against one user (across sellers). */
+const activeReplyRestrictionWhere = (subject: { subjectSellerId: string } | { subjectUserId: string }, now: Date) => ({
+  ...subject,
+  type: "SELLER_REPLY_RESTRICTION" as const,
+  status: "ACTIVE" as const,
+  startsAt: { lte: now },
+  OR: [{ endsAt: null }, { endsAt: { gt: now } }],
+});
+
 /**
  * Seller-scope guard (AZ-007, AZ-010). `sellerId` MUST come from a server-loaded resource (the path resource, the claim,
  * the invitation or the product), never from the request body. Membership and suspension are read from the database on
  * every call. Non-members get 404 (no seller enumeration); everyone else gets 403 with a stable code.
  */
-export async function requireSellerPermission(db: Reader, actor: Actor, perm: SellerPermission, sellerId: string, now = new Date()) {
-  const [user, member, suspension] = await Promise.all([
+export async function requireSellerPermission(
+  db: Reader, actor: Actor, perm: SellerPermission, sellerId: string, now = new Date(),
+  /** Reply permissions only: delete waives the VERIFIED and restriction gates (m3b-spec 5.7: delete stays allowed). */
+  opts: { waiveReplyGates?: boolean } = {},
+) {
+  const isReply = perm === "seller.reply" || perm === "seller.reply.manage";
+  const [user, member, suspension, sellerRow, sellerRestriction, userRestriction] = await Promise.all([
     db.user.findUnique({ where: { id: actor.id }, select: { status: true } }),
     db.sellerMember.findUnique({ where: { sellerId_userId: { sellerId, userId: actor.id } }, select: { role: true } }),
     db.enforcementAction.findFirst({ where: activeSuspensionWhere(sellerId, now), select: { id: true } }),
+    isReply && db.seller ? db.seller.findUnique({ where: { id: sellerId }, select: { status: true } }) : null,
+    isReply ? db.enforcementAction.findFirst({ where: activeReplyRestrictionWhere({ subjectSellerId: sellerId }, now), select: { id: true } }) : null,
+    isReply ? db.enforcementAction.findFirst({ where: activeReplyRestrictionWhere({ subjectUserId: actor.id }, now), select: { id: true } }) : null,
   ]);
   const res = authorizeSeller(
     {
@@ -61,6 +78,9 @@ export async function requireSellerPermission(db: Reader, actor: Actor, perm: Se
       memberRole: (member?.role as SellerMemberRole | undefined) ?? null,
       sellerSuspended: !!suspension,
       twoFactor: { enrolled: actor.twoFactor?.enrolled === true, sessionVerified: actor.twoFactor?.verified === true },
+      ...(isReply
+        ? { sellerVerified: opts.waiveReplyGates ? true : sellerRow?.status === "VERIFIED", replyRestricted: opts.waiveReplyGates ? false : !!(sellerRestriction || userRestriction) }
+        : {}),
     },
     perm,
   );

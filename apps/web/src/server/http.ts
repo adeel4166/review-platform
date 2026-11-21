@@ -8,6 +8,7 @@ export class HttpError extends Error {
     public code: string,
     message?: string,
     public headers?: Record<string, string>,
+    public details?: Record<string, unknown>,
   ) {
     super(message ?? code);
   }
@@ -32,7 +33,7 @@ export async function handle(fn: () => Promise<Response>): Promise<Response> {
   try {
     return await fn();
   } catch (e) {
-    if (e instanceof HttpError) return json({ error: { code: e.code, message: e.message } }, e.status, e.headers);
+    if (e instanceof HttpError) return json({ error: { code: e.code, message: e.message, ...(e.details ?? {}) } }, e.status, e.headers);
     if (e instanceof ZodError) {
       return json(
         { error: { code: "validation_error", message: "Invalid input", issues: e.issues.map((i) => ({ path: i.path.join("."), message: i.message })) } },

@@ -62,6 +62,11 @@ enum RevisionStatus {
   SUPERSEDED
 }
 
+enum ModerationSubjectType {
+  REVIEW
+  SELLER_REPLY
+}
+
 enum ModerationState {
   PENDING
   AI_REVIEW
@@ -85,21 +90,23 @@ enum AuditActorType {
 }
 
 model User {
-  id                    String     @id @default(cuid())
-  email                 String     @unique
+  id                    String        @id @default(cuid())
+  sellerReplies         SellerReply[] @relation("ReplyAuthor")
+  repliesDeleted        SellerReply[] @relation("ReplyDeletedBy")
+  email                 String        @unique
   emailVerifiedAt       DateTime?
-  passwordHash          String?    @db.VarChar(255)
-  handle                String     @unique @db.VarChar(32)
-  displayName           String     @db.VarChar(64)
-  bio                   String?    @db.Text
-  locale                String?    @db.VarChar(16)
-  timeZone              String?    @db.VarChar(64)
-  status                UserStatus @default(ACTIVE)
+  passwordHash          String?       @db.VarChar(255)
+  handle                String        @unique @db.VarChar(32)
+  displayName           String        @db.VarChar(64)
+  bio                   String?       @db.Text
+  locale                String?       @db.VarChar(16)
+  timeZone              String?       @db.VarChar(64)
+  status                UserStatus    @default(ACTIVE)
   lastLoginAt           DateTime?
   /// Throttle for the "someone tried to register" mail (ADR-0016): at most one per hour.
   accountExistsNoticeAt DateTime?
-  createdAt             DateTime   @default(now())
-  updatedAt             DateTime   @updatedAt
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
 
   roles           UserRole[]               @relation("UserRoles")
   rolesGranted    UserRole[]               @relation("RoleGrantedBy")
@@ -114,20 +121,20 @@ model User {
   twoFactorTotp   TwoFactorTotp?
   recoveryCodes   RecoveryCode[]
 
-  sellerMemberships    SellerMember[]         @relation("SellerMembership")
-  sellersCreated       Seller[]               @relation("SellerCreatedBy")
-  invitationsSent      SellerInvitation[]     @relation("InvitationSentBy")
-  invitationsAccepted  SellerInvitation[]     @relation("InvitationAcceptedBy")
-  invitationsRevoked   SellerInvitation[]     @relation("InvitationRevokedBy")
+  sellerMemberships    SellerMember[]              @relation("SellerMembership")
+  sellersCreated       Seller[]                    @relation("SellerCreatedBy")
+  invitationsSent      SellerInvitation[]          @relation("InvitationSentBy")
+  invitationsAccepted  SellerInvitation[]          @relation("InvitationAcceptedBy")
+  invitationsRevoked   SellerInvitation[]          @relation("InvitationRevokedBy")
   transfersInitiated   SellerOwnershipTransfer[]   @relation("TransferInitiator")
   transfersTargeted    SellerOwnershipTransfer[]   @relation("TransferTarget")
   transfersEnded       SellerOwnershipTransfer[]   @relation("TransferEndedBy")
   transferCancelTokens SellerTransferCancelToken[] @relation("TransferCancelRecipient")
-  ownershipClaims      SellerOwnershipClaim[] @relation("ClaimSubmittedBy")
-  claimDecisions       SellerClaimDecision[]  @relation("ClaimDecisionReviewer")
-  enforcementsReceived EnforcementAction[]    @relation("EnforcementSubjectUser")
-  enforcementsIssued   EnforcementAction[]    @relation("EnforcementIssuedBy")
-  enforcementsRevoked  EnforcementAction[]    @relation("EnforcementRevokedBy")
+  ownershipClaims      SellerOwnershipClaim[]      @relation("ClaimSubmittedBy")
+  claimDecisions       SellerClaimDecision[]       @relation("ClaimDecisionReviewer")
+  enforcementsReceived EnforcementAction[]         @relation("EnforcementSubjectUser")
+  enforcementsIssued   EnforcementAction[]         @relation("EnforcementIssuedBy")
+  enforcementsRevoked  EnforcementAction[]         @relation("EnforcementRevokedBy")
 
   @@index([status])
   @@map("users")
@@ -229,9 +236,10 @@ model Review {
   product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
   author  User    @relation("ReviewAuthor", fields: [authorId], references: [id], onDelete: Restrict)
 
-  revisions ReviewRevision[]
-  cases     ModerationCase[]
-  media     MediaAsset[]
+  revisions     ReviewRevision[]
+  cases         ModerationCase[]
+  media         MediaAsset[]
+  sellerReplies SellerReply[]
 
   @@unique([productId, authorId])
   @@index([productId, status, publishedAt])
@@ -272,25 +280,29 @@ model OutboxEvent {
 
 /// One case per (review, version). `state` is the moderation workflow; Review.status mirrors it (ADR-0005).
 model ModerationCase {
-  id             String          @id @default(cuid())
-  reviewId       String
+  id             String                @id @default(cuid())
+  subjectType    ModerationSubjectType @default(REVIEW)
+  reviewId       String?
+  sellerReplyId  String?
   version        Int
-  state          ModerationState @default(PENDING)
-  aiScore        Decimal?        @db.Decimal(4, 3)
-  aiConfidence   Decimal?        @db.Decimal(4, 3)
+  state          ModerationState       @default(PENDING)
+  aiScore        Decimal?              @db.Decimal(4, 3)
+  aiConfidence   Decimal?              @db.Decimal(4, 3)
   aiReasons      Json?
-  aiProvider     String?         @db.VarChar(64)
-  decisionReason String?         @db.VarChar(500)
+  aiProvider     String?               @db.VarChar(64)
+  decisionReason String?               @db.VarChar(500)
   decidedById    String?
   decidedAt      DateTime?
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
 
-  review             Review              @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  review             Review?             @relation(fields: [reviewId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  sellerReply        SellerReply?        @relation(fields: [sellerReplyId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   decidedBy          User?               @relation("CaseDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
   enforcementActions EnforcementAction[]
 
   @@unique([reviewId, version])
+  @@unique([sellerReplyId, version])
   @@index([state, createdAt])
   @@map("moderation_cases")
 }
@@ -491,7 +503,8 @@ model Seller {
   members            SellerMember[]
   invitations        SellerInvitation[]
   ownershipTransfers SellerOwnershipTransfer[]
-  ownershipClaims    SellerOwnershipClaim[] @relation("ClaimSeller")
+  replies            SellerReply[]
+  ownershipClaims    SellerOwnershipClaim[]    @relation("ClaimSeller")
   products           Product[]
   enforcementActions EnforcementAction[]
 
@@ -591,8 +604,8 @@ model SellerOwnershipClaim {
   conflictedBy  SellerOwnershipClaim[] @relation("ClaimConflict")
   verifiedFor   Seller?                @relation("SellerVerifiedClaim")
 
-  decisions    SellerClaimDecision[]
-  emailTokens  EmailVerificationToken[]
+  decisions   SellerClaimDecision[]
+  emailTokens EmailVerificationToken[]
 
   @@unique([id, sellerId])
   @@index([status, createdAt])
@@ -807,4 +820,31 @@ model SellerTransferCancelToken {
 
   @@unique([transferId, recipientId])
   @@map("seller_transfer_cancel_tokens")
+}
+
+model SellerReply {
+  id          String        @id @default(cuid())
+  reviewId    String
+  sellerId    String // = product.sellerId at creation; scope source for authz (P-2)
+  authorId    String
+  body        String        @db.Text // plain text, <= 1500 chars (chk_reply_body_len)
+  version     Int           @default(1) // bumped on edit; ModerationCase(sellerReplyId, version)
+  status      ContentStatus @default(PENDING)
+  publishedAt DateTime?     @db.DateTime(3)
+  editedAt    DateTime?     @db.DateTime(3)
+  deletedAt   DateTime?     @db.DateTime(3)
+  deletedById String?
+  createdAt   DateTime      @default(now()) @db.DateTime(3)
+  updatedAt   DateTime      @updatedAt @db.DateTime(3)
+
+  review    Review           @relation(fields: [reviewId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  seller    Seller           @relation(fields: [sellerId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  author    User             @relation("ReplyAuthor", fields: [authorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  deletedBy User?            @relation("ReplyDeletedBy", fields: [deletedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  cases     ModerationCase[]
+
+  @@unique([reviewId, sellerId])
+  @@index([sellerId, createdAt])
+  @@index([status, createdAt])
+  @@map("seller_replies")
 }

@@ -46,6 +46,7 @@ export type ReviewInput = z.infer<typeof reviewInput>;
 export const moderationQueueQuery = pageQuery.extend({
   state: z.enum(["PENDING", "AI_REVIEW", "NEEDS_HUMAN", "APPROVED", "REJECTED"]).default("NEEDS_HUMAN"),
   productId: id.optional(),
+  subjectType: z.enum(["REVIEW", "SELLER_REPLY"]).default("REVIEW"),
   minScore: z.coerce.number().min(0).max(1).optional(),
   maxScore: z.coerce.number().min(0).max(1).optional(),
   hasMedia: z.enum(["true", "false"]).transform((v) => v === "true").optional(),
@@ -126,3 +127,20 @@ export const transferCreateInput = z
 export const transferTokenInput = z.object({ token: z.string().min(20).max(128) }).strict();
 export const transferStaffCancelInput = z.object({ reasonCode: z.string().regex(/^[A-Z0-9_]{2,40}$/) }).strict();
 export const claimEmailTokenInput = z.object({ token: z.string().min(20).max(128) }).strict();
+
+/** Reply body only: the seller, product and review come from the path and the server (P-2). Length is policed by checkReplyPolicy. */
+export const replyInput = z.object({ body: z.string().max(6000) }).strict();
+
+export const replyListQuery = pageQuery.extend({
+  status: z.enum(["PENDING", "PUBLISHED", "HIDDEN", "REJECTED", "REMOVED", "DELETED"]).optional(),
+});
+
+export const replyRemoveInput = z.object({ reasonCode: z.string().regex(/^[A-Z0-9_]{3,64}$/) }).strict();
+
+export const replyRestrictionInput = z
+  .object({
+    reasonCode: z.string().regex(/^[A-Z0-9_]{3,64}$/),
+    publicReason: z.string().trim().min(3).max(2000),
+    endsAt: z.coerce.date().optional(),
+  })
+  .strict();

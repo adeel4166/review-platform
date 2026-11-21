@@ -4,7 +4,7 @@ import {
   sellerNameSkeleton, slugify, withinEditDistanceOne, type SellerAuthzContext, type SellerMemberRole, type SellerPermission,
 } from "./sellers";
 
-const base: SellerAuthzContext = { accountActive: true, staffTier: "none", memberRole: null, sellerSuspended: false, twoFactor: { enrolled: true, sessionVerified: true } };
+const base: SellerAuthzContext = { accountActive: true, staffTier: "none", memberRole: null, sellerSuspended: false, twoFactor: { enrolled: true, sessionVerified: true }, sellerVerified: true, replyRestricted: false };
 
 describe("authorizeSeller (AZ-007, AZ-010): every permission x every role", () => {
   const ROLES: SellerMemberRole[] = ["OWNER", "MANAGER", "RESPONDER"];
@@ -15,6 +15,8 @@ describe("authorizeSeller (AZ-007, AZ-010): every permission x every role", () =
     "seller.claim.submit": ["OWNER", "MANAGER"],
     "seller.claim.review": [],
     "product.update": ["OWNER", "MANAGER"],
+    "seller.reply": ["OWNER", "MANAGER", "RESPONDER"],
+    "seller.reply.manage": ["OWNER", "MANAGER", "RESPONDER"],
   };
   it("covers every permission in the table", () => expect(Object.keys(expected).sort()).toEqual([...SELLER_PERMISSIONS].sort()));
 
@@ -45,6 +47,26 @@ describe("authorizeSeller (AZ-007, AZ-010): every permission x every role", () =
     expect(authorizeSeller({ ...base, staffTier: "admin", memberOfConflictingSeller: true }, "seller.claim.review")).toEqual({ allowed: false, code: "CONFLICT_OF_INTEREST" });
     expect(authorizeSeller({ ...base, staffTier: "moderator" }, "seller.claim.review").allowed).toBe(false);
   });
+});
+
+describe("authorizeSeller: reply gates (m3b-spec 5.4 steps 7-9)", () => {
+  for (const perm of ["seller.reply", "seller.reply.manage"] as const) {
+    it(`${perm}: RESPONDER needs no 2FA, OWNER/MANAGER do`, () => {
+      const no2fa = { ...base, twoFactor: { enrolled: false, sessionVerified: false } };
+      expect(authorizeSeller({ ...no2fa, memberRole: "RESPONDER" }, perm).allowed).toBe(true);
+      for (const r of ["OWNER", "MANAGER"] as const) expect(authorizeSeller({ ...no2fa, memberRole: r }, perm)).toEqual({ allowed: false, code: "TWO_FACTOR_REQUIRED" });
+    });
+    it(`${perm}: unverified seller is SELLER_NOT_VERIFIED, restriction is REPLY_RESTRICTED, missing facts fail closed`, () => {
+      expect(authorizeSeller({ ...base, memberRole: "RESPONDER", sellerVerified: false }, perm)).toEqual({ allowed: false, code: "SELLER_NOT_VERIFIED" });
+      expect(authorizeSeller({ ...base, memberRole: "RESPONDER", replyRestricted: true }, perm)).toEqual({ allowed: false, code: "REPLY_RESTRICTED" });
+      expect(authorizeSeller({ ...base, memberRole: "RESPONDER", sellerVerified: undefined }, perm).allowed).toBe(false);
+      expect(authorizeSeller({ ...base, memberRole: "RESPONDER", replyRestricted: undefined }, perm).allowed).toBe(false);
+    });
+    it(`${perm}: suspension wins over the reply gates; non-members stay NOT_IN_SCOPE`, () => {
+      expect(authorizeSeller({ ...base, memberRole: "OWNER", sellerSuspended: true, sellerVerified: false }, perm)).toEqual({ allowed: false, code: "SELLER_SUSPENDED" });
+      expect(authorizeSeller({ ...base, memberRole: null, sellerVerified: false }, perm)).toEqual({ allowed: false, code: "NOT_IN_SCOPE" });
+    });
+  }
 });
 
 describe("canInviteRole", () => {
