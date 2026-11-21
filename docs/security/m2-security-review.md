@@ -175,3 +175,79 @@ fixed (or formally risk-accepted by the CEO) before launch. Recommendation: do n
 | SEC-07(1) MinIO runtime check | **Not run.** The QA sandbox has no Docker and nothing listens on `127.0.0.1:9000`. Procedure: `pnpm infra:up`, presign a PUT with `contentLength: N`, then PUT N+1 bytes with curl; the expected result is 403 `SignatureDoesNotMatch`. Repeat against R2 before launch. | n/a | **Pending** (needs Docker or an R2 test bucket). |
 | SEC-08(c): no test proves GPS/EXIF is gone from worker output | Covered. A GPS-tagged JPEG fixture produces variants with no EXIF segment, no WebP EXIF chunk, no XMP/IPTC and no camera or owner strings. | `apps/worker/src/media-exif.test.ts` (MED-039) | Closed. |
 | SEC-09(a): no admin route matrix | Covered. The unit matrix auto-discovers every `route.ts` under `/api/admin` and checks 401 (anonymous), 403 (non-admin) and a pass-through control (admin). The e2e matrix repeats the check over HTTP. | `apps/web/src/server/admin-authz.test.ts` (AZ-025), `apps/web/e2e/admin-authz.spec.ts` (E2E-012) | Closed at unit level. E2E runs in CI only. |
+
+## Re-review and M2 sign-off (M2-14, task #43)
+
+- Date: 2026-11-21. Reviewer: Security Engineer (AI). Method: static code review of the fixes on `task/43`
+  (`apps/web/src/{middleware.ts,server/*,app/api/*}`, `packages/core/src/{rate-limit,moderation-service}.ts`,
+  `apps/worker/src/main.ts`), re-run of `pnpm audit --prod`, grep-based secret and XSS-sink scans, and the unit suites
+  (`apps/web` 128 tests, `apps/worker` 25, `packages/core` 49: all pass). No running instance, no dynamic testing.
+  `packages/db` `prisma validate` needs `DATABASE_URL` and was not run.
+
+### Re-run scans
+
+| Scan | Result |
+|---|---|
+| `pnpm audit --prod` | **No known vulnerabilities** (was 14: 3 critical, 7 high, 4 moderate). CI gate `pnpm audit --prod --audit-level=high` is present in `.github/workflows/ci.yml`. |
+| XSS sinks (`dangerouslySetInnerHTML`, `innerHTML`, `eval(`, `new Function`) in `apps`, `packages` | None found. |
+| Secrets (tracked `.env`/key files; AWS, private-key, `sk-`, `ghp_`, Slack token patterns) | None found. CI values are explicit throwaway ones. No `gitleaks` step in CI yet (see SEC-12 below). `.env` contents were not read. |
+
+### Status per finding
+
+| ID | Finding | Status | Evidence in code |
+|---|---|---|---|
+| SEC-01 | Vulnerable deps | **Fixed** | `next-auth` pinned `5.0.0-beta.32`, `zod ^4.6.7`, `next ^15.5.29`; audit clean; CI gate added. |
+| SEC-02 | Media on non-PENDING reviews | **Fixed** | `assertPendingForMedia` in `server/media.ts` guards `createUploadSlot` and `confirmUpload`; `readyMediaUrls` only serves PUBLISHED. Covered by `media.test.ts`. |
+| SEC-03 | No rate limiting | **Fixed, with one caveat** | Redis limiter (`server/ratelimit.ts`) wired into credentials login (`api/auth/[...nextauth]`), register, review create/edit and upload slots; 429 + `Retry-After`; trusted-proxy hop count for client IP (spoof-resistant, 0 hops = ignore headers). FAILED/expired slots now count toward a rolling 24 h quota; worker upload sweeper started in `apps/worker/src/main.ts`. **Caveat:** `consumeAll` fails open if Redis errors (`rate-limit.ts` ~L33-35). This is a deliberate availability choice but means a Redis outage removes throttling, including login. See R-1. |
+| SEC-04 | Security headers / CSP | **Fixed** | `middleware.ts` + `security-headers.ts`: per-request nonce CSP (`script-src 'self' 'nonce-…' 'strict-dynamic'`, `object-src 'none'`, `frame-ancestors 'none'`, `base-uri`, `form-action`), nosniff, X-Frame-Options, Referrer-Policy (`no-referrer` on media paths), Permissions-Policy. `style-src 'unsafe-inline'` remains (accepted; scripts are the XSS-critical part). HSTS is left to the edge. |
+| SEC-05 | Registration enumeration | **Risk-accepted at M2 (not CEO-gated, Medium)** | Registration is throttled per IP (limiter runs before the argon2 hash and the 409). The 409 "Email or handle already in use" oracle remains. Proper fix needs email verification: **M3**. |
+| SEC-06 | CSRF / Origin | **Fixed** | `isCrossOrigin` (Sec-Fetch-Site / Origin vs host) rejects cross-site mutating requests in middleware, including Auth.js routes; `readJson` requires `application/json` (415). Non-browser clients without these headers pass by design. Note `x-forwarded-host` is trusted for the comparison, so the edge must overwrite it (see R-2). |
+| SEC-07 | Presigned PUT / ingest | **Partly open (Medium)** | `content-length` is signed (test in `media-presign.test.ts`). Still open: MinIO/R2 runtime check not run; `content-type` not signed (worker sniffs and re-encodes); PUT URL stays valid after confirm (TOCTOU, bounded); ingest bucket CORS/lifecycle config. Target **M3** (infra/runtime check) and before launch for R2. |
+| SEC-08 | File-type / EXIF | **Fixed** | `media-exif.test.ts` proves GPS/EXIF is stripped. Residual worker memory/CPU limits are a deployment item (M8). |
+| SEC-09(a) | Admin authz matrix test | **Fixed** | `admin-authz.test.ts` auto-discovers admin routes (401/403/pass-through). |
+| SEC-09(b) | Admin self-approval | **Fixed** | `SelfDecisionError` in `moderation-service.ts` (checked inside the decision transaction) mapped to 403 `self_moderation_forbidden` in `server/moderation.ts`. |
+| SEC-09(c) | PII in audit metadata | **Open (Low)** | Convention only; no automated check. Target M3 when new audit events are added. |
+| SEC-09(d) | Admin session lifetime / 2FA | **Open (Low/Medium)** | `maxAge` is still 30 days for all users (`server/auth.ts` L42); no 2FA. Required by ADR-0002 before launch: **M8**. |
+| SEC-09(e) | Moderator tiers (ADR-0003) | **Open (Low)** | `SUPER_ADMIN` and `ADMIN` still map to one `admin`. Target **M3**. |
+| SEC-13 | Login/register pages, callback URL | **Fixed** | `/login`, `/register` exist; `callbackUrl` limited to same-origin relative paths (`lib/callback-url.ts`, with tests). Prompt-injection note for the future real LLM moderator remains: **M3**. |
+| SEC-10 / 11 / 12 | IDOR, XSS, secrets | **No issue (re-confirmed)** | Scans above. Add `gitleaks` to CI: **M3** (Low). |
+
+### New observations from the re-review
+
+- **R-1 [Low/Medium] Rate limiter fails open on Redis failure.** An attacker who can degrade Redis, or a plain outage, disables
+  login throttling. Impact is bounded (argon2 cost, no lockout bypass of the password itself). Recommend: keep fail-open for
+  review/upload, but fail **closed** (or a small in-process fallback limiter) for login and register, plus an alert on limiter errors. **M3**.
+- **R-2 [Low] Proxy header trust.** Both the client-IP limiter (`RATE_*` trusted hop count) and the Origin check (`x-forwarded-host`)
+  depend on the edge proxy overwriting forwarded headers. Put this in the deploy runbook and set the hop count explicitly per environment. **M8**.
+- **R-3 [Info] Dev CSP** allows `'unsafe-eval'` and `ws:` only when `NODE_ENV !== "production"`; confirm production builds set `NODE_ENV=production` (Next does by default).
+
+### Remaining Medium/Low items and target milestones
+
+| Item | Severity | Target |
+|---|---|---|
+| SEC-05 enumeration oracle (needs email verification) | Medium | M3 |
+| SEC-07 MinIO/R2 runtime check; sign `content-type`; short PUT TTL/quarantine; ingest bucket CORS + 24 h lifecycle | Medium | M3 (runtime check), M8 (bucket config) |
+| SEC-09(d) shorter admin session + 2FA/step-up | Medium before launch | M8 |
+| SEC-09(e) moderator tiers | Low | M3 |
+| SEC-09(c) PII-free audit metadata check | Low | M3 |
+| R-1 login limiter fail-closed / alerting | Low-Medium | M3 |
+| R-2 proxy header trust in runbook | Low | M8 |
+| SEC-08(b,d) worker memory/CPU limits, keep sharp patched | Low | M8 |
+| `gitleaks` CI step; real-LLM prompt-injection review | Low | M3 |
+
+### M2 sign-off decision
+
+**Security sign-off for M2: GRANTED (conditional on the items below), no CEO risk-acceptance request required.**
+
+Reasons:
+- All three High findings (SEC-01, SEC-02, SEC-03) are fixed in code and covered by tests; the Critical-rated dependency
+  advisories are gone (`pnpm audit --prod` clean, CI gate in place).
+- All Medium findings in scope (SEC-04, SEC-06) are fixed; SEC-05 and SEC-07 are reduced and tracked with milestones.
+- There are **no open High or Critical findings**. Nothing is escalated to the CEO for risk acceptance. SEC-05 is a
+  Medium risk accepted for M2 by Security under the throttle mitigation and can be vetoed by the CEO if public exposure is planned before M3.
+
+Conditions / limits of this sign-off:
+- It is a static review. Items needing a runtime check (SEC-07 signed-header check against MinIO/R2, CSP behaviour in a
+  browser, e2e authz matrix, Redis limiter under real load) were not executed here and rely on CI/QA.
+- It covers staging/internal M2 use. **Public launch** additionally requires SEC-09(d) (admin 2FA/short session), the R2 runtime check
+  and the deployment items for M8.
