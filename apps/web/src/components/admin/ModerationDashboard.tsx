@@ -56,6 +56,12 @@ export function ModerationDashboard() {
         <>
           <form className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-4" onSubmit={(e) => e.preventDefault()}>
             <div>
+              <label htmlFor="f-subject" className="text-sm font-medium">{t("mod.subject.label")}</label>
+              <select id="f-subject" className={input} value={filters.subjectType} onChange={(e) => set({ subjectType: e.target.value as Filters["subjectType"], hasMedia: "any" })}>
+                {(["REVIEW", "SELLER_REPLY"] as const).map((v) => <option key={v} value={v}>{t(`mod.subject.${v}`)}</option>)}
+              </select>
+            </div>
+            <div>
               <label htmlFor="f-state" className="text-sm font-medium">{t("mod.filter.state")}</label>
               <select id="f-state" className={input} value={filters.state} onChange={(e) => set({ state: e.target.value as CaseState })}>
                 {CASE_STATES.map((s) => <option key={s} value={s}>{t(`mod.state.${s}`)}</option>)}

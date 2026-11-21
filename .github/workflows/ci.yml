@@ -91,6 +91,10 @@ jobs:
       MODERATION_PROVIDER: mock
       AUTH_SECRET: ci-only-auth-secret-not-for-production
       AUTH_TRUST_HOST: "true"
+      TOTP_ENC_KEYS: '{"ci1":"Y2ktdG90cC1lbmMta2V5LTAxMjM0NTY3ODlhYmNkZWYhIQ=="}'
+      TOTP_ENC_ACTIVE_KEY_ID: ci1
+      RECOVERY_CODE_PEPPERS: '{"ci1":"Y2ktcmVjb3ZlcnktcGVwcGVyLTAxMjM0NTY3ODlhYmNkIQ=="}'
+      RECOVERY_CODE_ACTIVE_KEY_ID: ci1
       SEED_ADMIN_PASSWORD: ci-admin-password
       SEED_USER_PASSWORD: ci-user-password
       E2E_ADMIN_PASSWORD: ci-admin-password

@@ -5,6 +5,7 @@ import { db } from "@/server/db";
 import { getSellerDashboard } from "@/server/seller-views";
 import { DashboardNav } from "@/components/seller/DashboardNav";
 import { SellerVerifiedBadge } from "@/components/seller/SellerVerifiedBadge";
+import { OwnershipPanel } from "@/components/seller/OwnershipPanel";
 import { TeamPanel } from "@/components/seller/TeamPanel";
 import { formatDate } from "@/components/seller/ui";
 import { t } from "@/i18n/en";
@@ -47,6 +48,7 @@ export default async function SellerDashboardPage({ params }: { params: Promise<
 
       <TeamPanel sellerId={seller.id} selfId={d.selfId} canInvite={d.canManage} canRemove={d.canRemove} members={d.members}
         invitations={d.invitations.map((i) => ({ id: i.id, email: i.email, role: i.role, expiresAt: i.expiresAt.toISOString() }))} />
+      {d.canRemove && <OwnershipPanel sellerId={seller.id} selfId={d.selfId} members={d.members} />}
     </main>
   );
 }

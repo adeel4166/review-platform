@@ -61,3 +61,11 @@ Needs Mailpit (`pnpm infra:up` starts it; the worker must send through it, `SMTP
 `E2E_MAILPIT_URL` (default `http://localhost:8025`). The tests read the confirmation and invitation links from Mailpit.
 The DNS verifier is mocked at the browser boundary (the wizard's status poll); the worker's SSRF-guarded egress is not
 touched. The admin approval test uses the seeded admin.
+
+## M3b-07 journeys
+
+`two-factor.spec.ts` (enrol, authenticator and recovery-code login, pending-session gate, axe in light and dark),
+`ownership-transfer.spec.ts` (request, countdown, cancel) and `seller-reply.spec.ts` (composer, pending state, admin queue,
+public display). They need `TOTP_ENC_KEYS`, `TOTP_ENC_ACTIVE_KEY_ID`, `RECOVERY_CODE_PEPPERS` and
+`RECOVERY_CODE_ACTIVE_KEY_ID` in the web environment (throwaway values are set in the CI `e2e` job). The reply spec claims the
+seeded product for a new seller, so run it against a fresh database.

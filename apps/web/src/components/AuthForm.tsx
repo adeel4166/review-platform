@@ -48,7 +48,7 @@ function TextField({ id, name, label, type = "text", autoComplete, error, hint }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-async function signInWithCredentials(email: string, password: string): Promise<"ok" | "invalid" | "throttled" | "error"> {
+async function signInWithCredentials(email: string, password: string): Promise<"ok" | "pending" | "invalid" | "throttled" | "error"> {
   const csrf = await fetch("/api/auth/csrf");
   if (!csrf.ok) return "error";
   const { csrfToken } = (await csrf.json()) as { csrfToken: string };
@@ -59,7 +59,8 @@ async function signInWithCredentials(email: string, password: string): Promise<"
   });
   if (res.status === 429) return "throttled";
   if (res.status >= 500) return "error";
-  const session = (await (await fetch("/api/auth/session")).json().catch(() => null)) as { user?: { id?: string } } | null;
+  const session = (await (await fetch("/api/auth/session")).json().catch(() => null)) as { user?: { id?: string }; pending?: boolean } | null;
+  if (session?.pending) return "pending"; // password accepted, second factor still required
   return session?.user?.id ? "ok" : "invalid";
 }
 
@@ -111,6 +112,7 @@ export function LoginForm({ callbackUrl }: { callbackUrl: string }) {
     try {
       const r = await signInWithCredentials(email, password);
       if (r === "ok") { window.location.assign(callbackUrl); return; } // full load so the new session cookie is used
+      if (r === "pending") { window.location.assign(callbackUrl === "/" ? "/login/2fa" : `/login/2fa?callbackUrl=${encodeURIComponent(callbackUrl)}`); return; }
       s.setFormError(r === "invalid" ? t("login.error.invalid") : r === "throttled" ? t("login.error.throttledNoTime") : t("login.error.generic"));
     } catch {
       s.setFormError(t("login.error.generic"));

@@ -12,18 +12,23 @@ export interface QueueItem {
   aiProvider: string | null;
   decisionReason: string | null;
   createdAt: string;
-  review: { id: string; rating: number; title: string; body: string; verifiedBuyer: boolean; author: { handle: string }; _count?: { media: number } };
+  subjectType?: "REVIEW" | "SELLER_REPLY";
+  /** Null for SELLER_REPLY cases (ADR-0021): the text to moderate is in `sellerReply`. */
+  review: { id: string; rating: number; title: string; body: string; verifiedBuyer: boolean; author: { handle: string }; _count?: { media: number } } | null;
+  sellerReply?: { id: string; sellerId: string; reviewId: string; body: string; version: number } | null;
 }
 export interface QueuePage { items: QueueItem[]; page: number; pageSize: number; total: number }
 export interface CaseMedia { id: string; status: string; width: number | null; height: number | null; failureReason: string | null; thumbUrl: string | null; mediumUrl: string | null }
-export interface CaseDetail extends Omit<QueueItem, "review"> { review: Omit<QueueItem["review"], "_count"> & { media: CaseMedia[] } }
+type ReviewPart = NonNullable<QueueItem["review"]>;
+export interface CaseDetail extends Omit<QueueItem, "review"> { review: (Omit<ReviewPart, "_count"> & { media: CaseMedia[] }) | null }
 export interface AuditItem { id: string; actorType: string; actorId: string | null; action: string; entityType: string; entityId: string; metadata: unknown; createdAt: string }
 
-export interface Filters { state: CaseState; minScore: string; maxScore: string; hasMedia: "any" | "true" | "false"; page: number }
-export const defaultFilters: Filters = { state: "NEEDS_HUMAN", minScore: "", maxScore: "", hasMedia: "any", page: 1 };
+export interface Filters { subjectType: "REVIEW" | "SELLER_REPLY"; state: CaseState; minScore: string; maxScore: string; hasMedia: "any" | "true" | "false"; page: number }
+export const defaultFilters: Filters = { subjectType: "REVIEW", state: "NEEDS_HUMAN", minScore: "", maxScore: "", hasMedia: "any", page: 1 };
 
 export function queueQueryString(f: Filters): string {
   const p = new URLSearchParams({ state: f.state, page: String(f.page), pageSize: "20" });
+  if (f.subjectType !== "REVIEW") p.set("subjectType", f.subjectType); // server default is REVIEW
   const num = (v: string) => v.trim() !== "" && Number.isFinite(Number(v)) && Number(v) >= 0 && Number(v) <= 1;
   if (num(f.minScore)) p.set("minScore", f.minScore.trim());
   if (num(f.maxScore)) p.set("maxScore", f.maxScore.trim());

@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { t } from "@/i18n/en";
 import { Stars } from "./Stars";
 import { VerifiedBadge } from "./VerifiedBadge";
@@ -11,10 +12,12 @@ export interface PublicReview {
   verifiedBuyer?: boolean;
   publishedAt: string | Date | null;
   author: { handle: string; displayName: string };
+  /** Published reply of the product's verified seller (server decides; never carries author identity). */
+  reply?: { body: string; seller: { name: string; slug: string }; publishedAt: string | Date | null; editedAt: string | Date | null } | null;
   media: { id: string; width: number | null; height: number | null; thumbUrl: string; mediumUrl: string }[];
 }
 
-export function ReviewCard({ review: r }: { review: PublicReview }) {
+export function ReviewCard({ review: r, replyBox }: { review: PublicReview; replyBox?: ReactNode }) {
   const date = r.publishedAt ? new Date(r.publishedAt).toISOString().slice(0, 10) : null;
   return (
     <article className="rounded-lg border border-border bg-surface p-4" aria-labelledby={`rv-${r.id}`}>
@@ -39,6 +42,13 @@ export function ReviewCard({ review: r }: { review: PublicReview }) {
           ))}
         </ul>
       )}
+      {r.reply && (
+        <section aria-label={t("reply.by", { seller: r.reply.seller.name })} className="mt-4 rounded-md border-l-4 border-primary bg-bg-subtle p-3" data-testid="public-reply">
+          <p className="text-sm font-medium">{t("reply.by", { seller: r.reply.seller.name })}{r.reply.editedAt ? <span className="text-text-muted"> · {t("reply.edited")}</span> : null}</p>
+          <p className="mt-1 whitespace-pre-line break-words">{r.reply.body}</p>
+        </section>
+      )}
+      {replyBox}
     </article>
   );
 }
