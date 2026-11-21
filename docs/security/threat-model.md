@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft for review (task #20, milestone M1.3) |
+| **Status** | Draft for review (task #20, milestone M1.3); extended by task #26 (M1-T3): see §9 (appeals, secrets, tokens) and §10 (M2 checklist) |
 | **Author** | Security Engineer |
 | **Method** | STRIDE per asset/trust boundary, ranked by likelihood x impact |
 | **Inputs** | ADR-0002 (auth/2FA), ADR-0003 (permissions), ADR-0005 (moderation), ADR-0006 + [media-pipeline.md](../architecture/media-pipeline.md), [data-model.md](../architecture/data-model.md) §6, [moderation-pipeline.md](../architecture/moderation-pipeline.md) |
@@ -225,3 +225,169 @@ Single registry in `packages/core/ratelimit`: `{ key, subject(user|ip|both), win
 
 Each Critical/High threat above gets at least one automated test or CI check named in the owning milestone task. Suggested harness:
 authz matrix (ADR-0003 §5), route-registry coverage test, rate-limit registry coverage test, malicious-file corpus (bombs, polyglots, EXIF/GPS, malformed HEIC/MP4), SSRF corpus (private IPs, DNS rebinding, redirects), PII canary test, XSS payload corpus across all rendered user fields, injection canary set for the moderation classifier.
+
+---
+
+## 9. Addendum (task #26, M1-T3): appeals, moderation tooling, secrets and credentials
+
+This addendum closes gaps left in the first draft. It adds the threats raised by the approved lifecycle design
+([moderation-lifecycle.md](../architecture/moderation-lifecycle.md), ADR-0011, ADR-0013, [job-catalogue.md](../architecture/job-catalogue.md)),
+and gives secrets and least-privilege guidance. Risk scale and milestone mapping are as in §0 and §2.
+Same caveat as before: design-level review, nothing tested against a running system.
+
+### 9.1 Appeals and enforcement (moderation-lifecycle §5)
+
+| ID | STRIDE | Threat | L | I | Risk | Design status | Mitigation / required control | Milestone |
+|---|---|---|---|---|---|---|---|---|
+| AP-1 | E | Appeal reviewer decides their own case or a colluding party's (reviewer = original decider, appellant, or COI seller) | 2 | 3 | High | Covered (A2 guard) | Enforce guard in `transition()` not UI; test reviewer ∈ deciders, reviewer = appellant, seller-member COI. Overturn of a `BAN`/`SELLER_SUSPENSION` appeal needs a second reviewer (four-eyes) | M6 |
+| AP-2 | T | Appeal used to relaunder content: overturn (T12/R8) re-publishes content with a *different* body than the one rejected (TOCTOU on `contentVersion`) | 2 | 3 | High | Partial | A1 binds appeal to `contentVersion`; A4 must re-check the version equals the deciding case's version inside the same transaction, else fail. Test edit-during-appeal | M6 |
+| AP-3 | D | Appeal flooding (many appeals or repeated appeals to exhaust reviewers, delay strikes) | 3 | 2 | High | Partial (unique per case) | Limiter entry `appeal.create` (3/day/user); one open appeal per case; reporter appeals (T18) restricted to non-`NEW` accounts; SLA breach is a metric, never an auto-outcome (A7, already in design) | M6 |
+| AP-4 | I | Appeal text or evidence leaks personal data of other users (reporter identity, moderator identity, other reviewer notes) | 2 | 2 | Medium | Partial | Appeal DTOs per audience: appellant sees `publicReason` only, never reporter id, staff ids, AI scores or internal notes. Statement-of-reasons export built from an allow-list | M6 |
+| AP-5 | T/R | Reviewer lease abuse: claim and sit on cases to starve queues, or steal a lease mid-decision to alter an outcome | 2 | 2 | Medium | Covered (15 min lease) | Decision requires lease held at commit time (`leaseHeld` in audit). Alert on claim-without-decision rate per reviewer | M6 |
+| AP-6 | R | Appeal outcomes not attributable (decision note editable, audit absent) | 1 | 2 | Low | Covered (one `AuditLog` row per transition, same tx) | `decisionNote` immutable after commit; audit action `appeal.*` exists for every A-row; test no-op writes no row | M6 |
+| AP-7 | S | Account owner appeals on behalf of someone else (IDOR on `appealId`/`caseId`) | 2 | 3 | High | Partial | Appellant derived from session only. Authorisation test: user B cannot read, file or withdraw user A's appeal. Applies equally to seller-scoped appeals (resource-derived scope, P-2) | M6 |
+
+### 9.2 Moderation tooling and worker pipeline
+
+| ID | STRIDE | Threat | L | I | Risk | Design status | Mitigation / required control | Milestone |
+|---|---|---|---|---|---|---|---|---|
+| MT-1 | T | Forged or replayed outbox event / job triggers a state transition (e.g. `moderation.hold-expire` run early) | 1 | 3 | Medium | Covered (ADR-0007/0013: only the outbox enqueues, id-only payloads, job re-reads DB, no-op if deadline changed) | Redis is **not** trusted. Treat any job as a hint: handler must re-validate state and deadline from MySQL. Redis requires auth + TLS, network-isolated, not reachable from the browser tier except via the web app | M2 (infra) / M6 |
+| MT-2 | E | Worker holds credentials broader than needed (DB write on all tables, both buckets, AI key) so one RCE (U-1) owns everything | 2 | 3 | High | Partial | Split worker deployment groups (`core`, `media`, `media-video`) each with its own DB user and bucket token. The `media` group must have **no** AI key and no network egress except storage (U-1) | M5 |
+| MT-3 | T | Bulk moderation action used for mass takedown or mass approval | 2 | 3 | High | Partial | Cap bulk size; second approval above a threshold; per-staff anomaly alert (P-4); `moderation.bulk` audit row (already specified) | M6 |
+| MT-4 | I | Staff queue views expose more than needed (email, ipHash, trust score, proof originals) | 2 | 2 | Medium | Partial | DB views for queues return a column allow-list; staff DTO mapper; originals only via break-glass (R-9) | M6 |
+| MT-5 | T | Moderation config activation races with in-flight cases (versioned config replaced mid-decision) | 1 | 2 | Low | Covered (versioned config, `configVersion` in audit) | Test: decision records the config version it used | M6 |
+| MT-6 | D | Sweepers or poison jobs retried forever, exhausting DB/AI budget | 2 | 2 | Medium | Covered (bounded attempts, DLQ) | DLQ alert, per-queue concurrency, AI spend cap (D-5) | M6 |
+
+### 9.3 Secrets handling
+
+**Principles.** No secret is ever committed, printed, logged, put in a job payload or sent to the browser. Each environment (dev, staging, prod) has its **own** value of every secret. Secrets live in a managed secret store (or the host's secret facility), injected as environment variables at runtime. `.env` stays git-ignored and `.env.example` holds placeholders only (verified: `.gitignore` ignores `.env` and `.env.*` except `.env.example`).
+
+| Secret | Used by | Rules |
+|---|---|---|
+| `DATABASE_URL` (web, worker-core, worker-media: separate users) | web, workers | Distinct DB users per component. Web: no DDL. Migrations run by a separate migrator user used only in the deploy step. `AuditLog`: INSERT/SELECT only (P-6) |
+| Session/CSRF signing, ipHash HMAC key | web | Random 256-bit; rotation plan keeps the previous key valid for verification only |
+| TOTP encryption key (AES-256-GCM, `keyId`) | web | Stored **apart from DB backups** (A-14); rotation job; key-loss runbook |
+| `orderReferenceHash` HMAC key | web/worker-core | Separate key from the others (R-6); never reused |
+| R2 / S3 credentials | web, workers | See §9.5. One token per component and per bucket |
+| AI provider key | worker-core only | Not available to the web app or `media` group; spend cap; zero-retention flag (R-3) |
+| SMTP / email API key | web or worker-core | Send-only scope; separate per environment |
+| Google OAuth client secret | web | Exact-match redirect URIs (A-13) |
+| CI/CD and GitHub tokens | pipelines | See §9.4 |
+
+Controls (all mapped to M2 unless noted):
+
+1. **Secret scanning** in CI (gitleaks or equivalent over the full diff and history on PRs) plus GitHub push protection; pre-commit hook recommended. A finding means **rotate first, then clean history**.
+2. **Config validation at boot**: a zod env schema fails the process on missing or placeholder secrets. Secrets are never echoed in the error. `NEXT_PUBLIC_*` variables must never carry secrets (CI grep rule on `NEXT_PUBLIC_` names containing `KEY|SECRET|TOKEN|PASSWORD`).
+3. **Log scrubber** redacts `authorization`, `cookie`, `set-cookie`, `*_KEY`, `*_SECRET`, `*_TOKEN`, presigned-URL query strings (`X-Amz-Signature`). Covered by the canary test from G-8.
+4. **Rotation runbook** (M8 deliverable, skeleton in M2): owner, interval (90 days for service tokens, at once on suspected leak or staff departure), and how to roll without downtime (dual-key window).
+5. **No secrets in CI for PR builds**: the current `ci.yml` uses throwaway values only, with `permissions: contents: read`. Keep it so: never use `pull_request_target` with a checkout of PR code; do not expose deploy secrets to forks.
+6. **Docker/compose**: `docker-compose.yml` is for local dev with throwaway credentials; production images are built without `.env` (`.dockerignore` must list `.env*`; check at scaffold).
+7. **Developer access**: no shared prod credentials; prod DB access via audited break-glass, not stored in laptops.
+8. **AI agents and automation** (the platform runs autonomous workers on this repo): agent runs must not receive prod secrets; they work on branches and cannot push to `main`.
+
+### 9.4 GitHub tokens: least privilege
+
+| Use | Recommended credential | Permissions | Notes |
+|---|---|---|---|
+| CI jobs (build, lint, test) | Built-in `GITHUB_TOKEN` | Workflow-level `permissions: contents: read` (already set); grant extra scopes per job only | Default token permissions in repo settings set to **read-only** |
+| Dependency updates (Dependabot/Renovate) | Dependabot native, or a GitHub App | PRs and contents on this repo only | Not a personal token |
+| Automation that opens PRs/merges (platform worker) | **GitHub App** installation token or a **fine-grained PAT** limited to **this one repository** | `contents: write` and `pull_requests: write` on feature branches. **No** `administration`, `workflows`, `secrets`, `actions`, org scopes | Expiry <= 90 days; owned by a bot account, not a person; 2FA on the bot owner |
+| Deploy | OIDC federation from Actions to the cloud/hosting account (short-lived) | Deploy role scoped to one environment | No long-lived cloud keys in repo secrets. Production environment requires reviewer approval |
+| Humans | SSO/2FA, no classic PATs | Review required | Classic PATs prohibited by policy |
+
+Repository settings to enforce (M2, owner: repo admin): branch protection on `main` (PR required, CI green, at least one review, no force-push, no direct pushes by the automation identity; CEO approval gate stays as is); CODEOWNERS for `docs/security/`, `.github/`, `packages/core/auth`, migrations; pin third-party Actions by commit SHA (currently tag-pinned `@v4`, accepted risk, see §9.7 R-S3); secret scanning and push protection on; Dependabot alerts on; Actions allowed only from GitHub and an allow-list; "approve workflows from first-time contributors" on.
+
+### 9.5 Object-storage credentials: least privilege (ADR-0006)
+
+Three buckets per environment: `ingest` (private, raw), `private` (redacted proofs and evidence), `public` (served via CDN host). Never share credentials between environments or components.
+
+| Component | `ingest` | `private` | `public` | Notes |
+|---|---|---|---|---|
+| Web app (presigner) | **Sign PUT only** (key-bound, size and content-type limited, <= 10 min); no GET, no LIST, no DELETE | Sign GET <= 60 s; no PUT | none | The web token cannot read raw uploads or write public media. Confirm step uses HEAD via a separate narrow capability, or a worker callback, not broad read |
+| Worker `media` | GET, DELETE | PUT | PUT (promote), DELETE (demote), purge | No LIST on `private` beyond its prefix where the provider supports prefix scoping |
+| Worker `core` | none | GET/DELETE on proofs for the deletion job | none | Deletion job only |
+| CDN / public host | none | none | read-only, via CDN origin access, no write | Bucket not world-writable; listing disabled |
+| Staff proof viewer | via web presign only | short-lived GET with `no-store` | none | Every issue is audited (R-9) |
+| Backup/lifecycle admin | separate admin credential, not used by any running service | | | Kept offline; used for lifecycle and CORS setup |
+
+Additional controls: scope R2 API tokens to **specific buckets** (object-level read/write as above), not "account-wide"; CORS on `ingest` allows only the app origin and `PUT`; lifecycle deletes `UPLOADING` objects after 24 h and ingest after the 2-day backstop; bucket-level object lock/versioning on any audit export (P-6); alerts on unusual egress and on credential use from unexpected IPs where supported; separate dev/staging/prod accounts or at least separate tokens and buckets; presigned URLs are never logged (U-11).
+
+### 9.6 Updated roll-up: additions by milestone
+
+| Milestone | Additional deliverables from this addendum |
+|---|---|
+| M2 | Secret scanning + push protection, env schema validation, log scrubber with canary test, branch protection + CODEOWNERS, read-only default workflow token, token inventory and rotation skeleton, Redis auth/TLS/network isolation (MT-1), component-specific DB users (MT-2 prep) |
+| M5 | Per-component storage tokens as §9.5; `media` worker group without AI key or egress (MT-2) |
+| M6 | AP-1..AP-7 controls and tests; MT-3..MT-6; appeal DTO allow-lists; four-eyes for ban/suspension overturn |
+| M8 | Rotation drills for all §9.3 secrets, review of all tokens against §9.4/§9.5 tables, pin Actions by SHA |
+
+### 9.7 Additional secrets/supply-chain risks
+
+| ID | STRIDE | Threat | L | I | Risk | Mitigation | Milestone |
+|---|---|---|---|---|---|---|---|
+| R-S1 | I | Long-lived storage or GitHub token leaked (log, repo, laptop) and used for bulk read of proofs or repository takeover | 2 | 3 | High | §9.3-9.5: per-component scoped tokens, expiry, scanning, alerts, rotation runbook | M2 / M5 |
+| R-S2 | E | Over-privileged automation token pushes to `main` or edits workflows to exfiltrate secrets | 2 | 3 | High | Fine-grained/App token without `workflows` scope; branch protection; CODEOWNERS on `.github/` | M2 |
+| R-S3 | T | Compromised third-party GitHub Action (tag moved) runs in CI | 2 | 2 | Medium | CI has no real secrets and read-only token; pin by SHA by M8; Dependabot for Actions | M2 / M8 |
+| R-S4 | I | Secrets baked into the Docker image or Next.js client bundle | 2 | 3 | High | `.dockerignore`, `NEXT_PUBLIC_` rule, build-time check, only runtime injection | M2 |
+
+## 10. Security checklist for M2 (Auth and Accounts)
+
+Use as the review gate for the M2 PR(s). Each item cites the threat. "Evidence" means a named automated test, CI check, or a config reference. Items marked **[B]** block enabling signup in any shared environment.
+
+### 10.1 Sessions and cookies
+- [ ] **[B]** `__Host-sid` cookie: `HttpOnly; Secure; SameSite=Lax; Path=/`, no `Domain`; token 256-bit random; only SHA-256 stored (A-3). Evidence: cookie attribute test.
+- [ ] **[B]** Session rotation on login, 2FA completion, password change, privilege change (A-4). Revocation matrix of ADR-0002 §1 tested, including suspension/ban effective on next request.
+- [ ] Idle/absolute timeouts differ for staff (2 h/12 h) and users (30 d/90 d); `lastActiveAt` refresh throttled to 5 min.
+- [ ] If the Redis session cache is used, revocation deletes the key synchronously (P-10).
+- [ ] Session tokens never appear in URLs, logs, error reports (scrubber test, A-3).
+
+### 10.2 Credentials and recovery
+- [ ] **[B]** Argon2id (m>=19 MiB, t>=2, p=1; ~250 ms), rate limit **before** hashing, concurrent hash cap (A-11); dummy verify for unknown emails to equalise timing (A-9).
+- [ ] **[B]** Login, signup, reset and resend are non-enumerating in body and timing (A-9, G-12).
+- [ ] Breached-password k-anonymity check; fail-open is logged; min length 10, no composition rules.
+- [ ] Verification and reset tokens: random, hashed at rest, single-use, expiry 24 h / 30 min; reset revokes all sessions and **does not** disable or bypass 2FA (A-8).
+- [ ] Email change: step-up, notice to old address with 24-48 h revert link (A-8).
+- [ ] Unverified accounts cannot create content, vote, report or follow.
+
+### 10.3 Google OIDC
+- [ ] **[B]** PKCE, `state`, `nonce` validated; exact-match redirect URIs (A-13); only `provider+sub` stored, no provider tokens.
+- [ ] **[B]** Link only if Google email verified **and** control of the existing account proven; pre-account-takeover test (A-2); if the local account was never email-verified, revoke its sessions and force reset.
+
+### 10.4 Two-factor
+- [ ] **[B]** Pending-2FA session: 10 min expiry, may call only the verify endpoint (default-deny middleware), per-session cap of 5 attempts that kills the session, 10/15 min/user across sessions (A-1, A-5, G-1). Evidence: test every route with a pending session.
+- [ ] TOTP secret AES-256-GCM with `keyId`; enrolment confirmed by a valid code before `enabled`; secret shown once; `lastUsedStep` replay rejection (A-6, A-14).
+- [ ] Recovery codes: >= 50 bits, stored as keyed HMAC or Argon2id (not bare SHA-256), share the TOTP limiter, `SECURITY_ALERT` on use; staff use forces re-enrolment (A-7).
+- [ ] PlatformRole and seller OWNER/MANAGER permissions inactive until 2FA enrolled; sessions need `secondFactorVerifiedAt` (ADR-0002 §3, A-5).
+- [ ] Step-up (10 min `reauthenticatedAt`, password/OAuth + TOTP) on the ADR-0002 §4 list; tested for each action.
+
+### 10.5 Authorization framework
+- [ ] **[B]** `defineAction()` cannot be built without a permission and a rate-limit key; CI route/action registry test fails on unregistered handlers (P-1, D-1, G-2).
+- [ ] **[B]** Authz matrix tests per ADR-0003 §5 including cross-seller cases derived from the resource (P-2), no self-grant, AI/RULE principal cannot create SUSPENSION/BAN (P-9).
+- [ ] No cross-request caching of `ActorContext` (P-10).
+- [ ] Role grant/revoke revokes the target's sessions; four-eyes for ADMIN/SUPER_ADMIN grants is at least designed (P-3, lands M6).
+
+### 10.6 Request-level protections
+- [ ] **[B]** Central `assertSameOrigin` on every non-GET handler/action; reject missing or `null` Origin when `Sec-Fetch-Site` is not same-origin (A-10).
+- [ ] **[B]** Rate-limit registry (§5) with fail-open/closed policy per entry (auth entries fail closed), trusted-proxy count for `X-Forwarded-For` (D-1, D-2, G-3). Evidence: registry coverage test.
+- [ ] CAPTCHA escalation after 3 failures; no hard lockout (D-6).
+- [ ] `returnTo` accepts relative allow-listed paths only (A-13).
+- [ ] Headers: nonce CSP, `frame-ancestors 'none'`, HSTS, `nosniff`, `Referrer-Policy`; header test in CI (X-1, X-8).
+- [ ] No `dangerouslySetInnerHTML` (lint rule) and no `$queryRawUnsafe` (SAST rule) (X-1, X-2).
+
+### 10.7 Audit and data
+- [ ] Auth events audited (login ok/fail, 2FA change, session revoke, password change) with `ipHash`/`userAgent`; `ipHash` is a keyed HMAC (X-9, A-12).
+- [ ] App DB user has INSERT/SELECT only on `audit_logs`; migrator user separate (P-6, G-6).
+- [ ] DTO mappers: no `passwordHash`, `tokenHash`, TOTP fields, `ipHash` in any response; test with a field deny-list (X-5).
+- [ ] Email templates contain no user-supplied links; SPF/DKIM/DMARC configured for the sending domain (X-7). Notification for new-device login and credential change.
+
+### 10.8 Secrets and supply chain (M2 baseline)
+- [ ] **[B]** Secret scanning + push protection enabled; CI secret-scan job green on full history (X-3).
+- [ ] **[B]** Env schema validation at boot; separate values per environment; no `NEXT_PUBLIC_` secret (R-S4).
+- [ ] Branch protection, CODEOWNERS, read-only default workflow token, no `pull_request_target` on untrusted code (R-S2, §9.4).
+- [ ] `pnpm audit` / OSV and Dependabot enabled; lockfile committed; Argon2 binding version pinned (X-4).
+- [ ] Redis requires auth, not publicly reachable (MT-1).
+- [ ] Token inventory started: every token documented with owner, scope, expiry (§9.4, §9.5).
+
+### 10.9 Verification
+- [ ] Auth abuse tests: credential stuffing against login limiter, pending-session attempt cap, recovery-code brute force, reset-token reuse, OAuth pre-takeover, fixation.
+- [ ] Manual security review of the M2 diff by the Security Engineer before merge; findings tracked as bugs with severity per §2.
