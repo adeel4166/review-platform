@@ -1,6 +1,8 @@
-// Scaffold schema: only what the worker skeleton needs (transactional outbox, ADR-0001 §1).
-// The full domain model lives in docs/architecture/schema.draft.prisma and is adopted
-// table-by-table, with migrations, in the feature tasks. Do not copy it wholesale here.
+// Adopted from docs/architecture/schema.draft.prisma (latest merged data model: task #24 / M1-T1,
+// which supersedes #18). Adopted so far (M2-1): identity (User, UserRole), catalogue (Category,
+// Product) and Review/ReviewRevision. Remaining draft tables are adopted by later feature tasks.
+// Relations to not-yet-adopted tables (Seller, MediaAsset, PurchaseProof, ...) are omitted for now.
+// Physical names follow ADR-0010; CHECK constraints live in the migration SQL.
 
 generator client {
   provider = "prisma-client-js"
@@ -9,6 +11,195 @@ generator client {
 datasource db {
   provider = "mysql"
   url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  BANNED
+  DEACTIVATED
+  DELETED
+}
+
+/// Global staff roles. "USER" is implicit (any active account) and not stored.
+enum PlatformRole {
+  MODERATOR
+  SENIOR_MODERATOR
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum ProductStatus {
+  PENDING
+  ACTIVE
+  MERGED
+  ARCHIVED
+  REMOVED
+}
+
+enum ContentStatus {
+  PENDING
+  PUBLISHED
+  HIDDEN
+  REJECTED
+  REMOVED
+  DELETED
+}
+
+enum IncentiveDisclosure {
+  NONE
+  FREE_PRODUCT
+  DISCOUNT
+  PAYMENT
+  OTHER
+}
+
+enum RevisionStatus {
+  PENDING
+  HELD
+  APPROVED
+  REJECTED
+  SUPERSEDED
+}
+
+model User {
+  id              String     @id @default(cuid())
+  email           String     @unique
+  emailVerifiedAt DateTime?
+  passwordHash    String?    @db.VarChar(255)
+  handle          String     @unique @db.VarChar(32)
+  displayName     String     @db.VarChar(64)
+  bio             String?    @db.Text
+  locale          String?    @db.VarChar(16)
+  timeZone        String?    @db.VarChar(64)
+  status          UserStatus @default(ACTIVE)
+  lastLoginAt     DateTime?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  roles           UserRole[]       @relation("UserRoles")
+  rolesGranted    UserRole[]       @relation("RoleGrantedBy")
+  productsCreated Product[]        @relation("ProductCreatedBy")
+  reviews         Review[]         @relation("ReviewAuthor")
+  revisionsEdited ReviewRevision[] @relation("RevisionEditor")
+
+  @@index([status])
+  @@map("users")
+}
+
+model UserRole {
+  userId      String
+  role        PlatformRole
+  grantedById String?
+  grantedAt   DateTime     @default(now())
+  reason      String?      @db.VarChar(255)
+
+  user      User  @relation("UserRoles", fields: [userId], references: [id], onDelete: Cascade)
+  grantedBy User? @relation("RoleGrantedBy", fields: [grantedById], references: [id], onDelete: SetNull)
+
+  @@id([userId, role])
+  @@index([role])
+  @@map("user_roles")
+}
+
+model Category {
+  id        String   @id @default(cuid())
+  slug      String   @unique @db.VarChar(80)
+  name      String   @db.VarChar(120)
+  parentId  String?
+  position  Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children Category[] @relation("CategoryTree")
+  products Product[]
+
+  @@index([parentId, position])
+  @@map("categories")
+}
+
+model Product {
+  id            String        @id @default(cuid())
+  slug          String        @unique @db.VarChar(160)
+  name          String        @db.VarChar(200)
+  brandName     String?       @db.VarChar(120)
+  description   String?       @db.Text
+  categoryId    String
+  gtin          String?       @unique @db.VarChar(14)
+  mpn           String?       @db.VarChar(64)
+  specs         Json?
+  status        ProductStatus @default(PENDING)
+  mergedIntoId  String?
+  createdById   String
+  ratingAverage Decimal?      @db.Decimal(3, 2) // cache, maintained by the worker
+  ratingCount   Int           @default(0)
+  reviewCount   Int           @default(0)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  category   Category  @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  mergedInto Product?  @relation("ProductMerge", fields: [mergedIntoId], references: [id], onDelete: SetNull)
+  mergedFrom Product[] @relation("ProductMerge")
+  createdBy  User      @relation("ProductCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  reviews Review[]
+
+  @@index([categoryId, status])
+  @@index([status, createdAt])
+  @@map("products")
+}
+
+/// One review per (product, author), ever. Edits create ReviewRevision rows.
+model Review {
+  id               String              @id @default(cuid())
+  productId        String
+  authorId         String
+  rating           Int                 @db.TinyInt // 1..5, CHECK in migration
+  title            String              @db.VarChar(150)
+  body             String              @db.Text
+  incentive        IncentiveDisclosure @default(NONE)
+  language         String?             @db.VarChar(16)
+  status           ContentStatus       @default(PENDING)
+  currentVersion   Int                 @default(1)
+  publishedVersion Int?
+  helpfulCount     Int                 @default(0)
+  notHelpfulCount  Int                 @default(0)
+  commentCount     Int                 @default(0)
+  publishedAt      DateTime?
+  editedAt         DateTime?
+  deletedAt        DateTime?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  author  User    @relation("ReviewAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+
+  revisions ReviewRevision[]
+
+  @@unique([productId, authorId])
+  @@index([productId, status, publishedAt])
+  @@index([authorId, createdAt])
+  @@index([status, createdAt])
+  @@map("reviews")
+}
+
+model ReviewRevision {
+  id        String         @id @default(cuid())
+  reviewId  String
+  version   Int
+  rating    Int            @db.TinyInt
+  title     String         @db.VarChar(150)
+  body      String         @db.Text
+  editorId  String
+  status    RevisionStatus @default(PENDING)
+  createdAt DateTime       @default(now())
+
+  review Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  editor User   @relation("RevisionEditor", fields: [editorId], references: [id], onDelete: Restrict)
+
+  @@unique([reviewId, version])
+  @@map("review_revisions")
 }
 
 model OutboxEvent {

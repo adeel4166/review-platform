@@ -38,3 +38,21 @@ CI (`.github/workflows/ci.yml`) runs the same `pnpm qa` and `pnpm build` on ever
 1. Add the name and zod payload to `packages/core/src/queues.ts`.
 2. Register a processor in `apps/worker/src/processors.ts` (must be idempotent).
 3. Map the outbox event type in `apps/worker/src/outbox.ts` `routes`.
+
+## Database, auth and API (M2-1)
+
+```bash
+pnpm infra:up
+pnpm --filter @rp/db migrate:deploy   # applies packages/db/prisma/migrations
+pnpm --filter @rp/db seed             # idempotent demo data (admin@example.com, user@example.com)
+```
+
+| Endpoint | Auth | Notes |
+|---|---|---|
+| `POST /api/auth/register` | – | email, password (10-128), handle, displayName |
+| `/api/auth/*` | – | Auth.js (credentials, JWT sessions; role `user`/`admin`) |
+| `GET /api/products` | – | `?page&pageSize&category&q`, ACTIVE only |
+| `GET /api/products/:idOrSlug` | – | |
+| `GET /api/products/:id/reviews` | – | PUBLISHED only, paginated |
+| `POST /api/products/:id/reviews` | user | `{rating 1-5, title, body}`; starts `PENDING` |
+| `PATCH/DELETE /api/reviews/:id` | author | only while `PENDING` (delete is soft) |
