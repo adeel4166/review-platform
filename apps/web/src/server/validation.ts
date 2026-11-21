@@ -85,3 +85,35 @@ export const sellerSuspendInput = z
     endsAt: z.coerce.date().optional(),
   })
   .strict();
+
+// M3-05 ownership claims. `.strict()`: the seller comes from the path, never the body (AZ-010).
+const claimBase = z
+  .object({
+    scope: z.enum(["SELLER", "PRODUCT"]),
+    method: z.enum(["DNS_TXT", "META_TAG", "BUSINESS_EMAIL_DOMAIN", "DOCUMENT", "MARKETPLACE"]),
+    domain: z.string().trim().min(3).max(253).optional(),
+    productId: id.optional(),
+    evidenceUrl: z.string().trim().url().max(2048).regex(/^https:\/\//i, "https only").optional(),
+    businessEmail: z.string().trim().toLowerCase().email().max(254).optional(),
+  })
+  .strict();
+export const claimSubmitInput = claimBase.superRefine((v, ctx) => {
+  const bad = (path: string, message: string) => ctx.addIssue({ code: "custom", path: [path], message });
+  if (v.scope === "PRODUCT" && !v.productId) bad("productId", "productId is required for PRODUCT scope"); // SEL-012
+  if (v.scope === "SELLER" && v.productId) bad("productId", "productId is only allowed for PRODUCT scope");
+  if (v.scope === "PRODUCT" && v.method !== "DOCUMENT" && v.method !== "MARKETPLACE") bad("method", "PRODUCT claims use DOCUMENT or MARKETPLACE");
+  if ((v.method === "DNS_TXT" || v.method === "META_TAG" || v.method === "BUSINESS_EMAIL_DOMAIN") && !v.domain) bad("domain", "domain is required for this method");
+  if (v.method === "BUSINESS_EMAIL_DOMAIN" && !v.businessEmail) bad("businessEmail", "businessEmail is required");
+  if (v.method === "MARKETPLACE" && !v.evidenceUrl) bad("evidenceUrl", "evidenceUrl is required for MARKETPLACE");
+});
+
+export const claimQueueQuery = pageQuery.extend({
+  tab: z.enum(["review", "contested", "spot_check"]).default("review"),
+});
+export const claimDecisionInput = z
+  .object({
+    action: z.enum(["approve", "reject", "request_info", "revoke", "spot_check_pass", "spot_check_fail"]),
+    reasonCode: z.string().regex(/^[A-Z0-9_]{3,64}$/).optional(),
+    note: z.string().trim().max(2000).optional(),
+  })
+  .strict();

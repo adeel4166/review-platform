@@ -1,7 +1,7 @@
 import nodemailer from "nodemailer";
 
 /** Mail provider interface (ADR-0016 §3.5). Only the worker sends mail; the web app never holds SMTP credentials. */
-export type MailTemplateId = "verify_account" | "account_exists" | "seller_invitation";
+export type MailTemplateId = "verify_account" | "account_exists" | "seller_invitation" | "claim_notice";
 
 export interface RenderedMail { to: string; subject: string; text: string; html: string }
 
@@ -39,6 +39,15 @@ export function renderMail(template: MailTemplateId, to: string, vars: Record<st
         text: `You have been invited to join a seller account (link valid for 7 days). Sign in with this email address, then open:\n\n${url}\n\nIf you did not expect this, ignore this message.`,
         html: `<p>You have been invited to join a seller account (link valid for 7 days). Sign in with this email address, then open:</p><p><a href="${esc(url)}">Accept invitation</a></p><p>If you did not expect this, ignore this message.</p>`,
       };
+    case "claim_notice": {
+      const headline = vars.headline ?? "Update on your ownership claim";
+      return {
+        to,
+        subject: headline,
+        text: `${headline}\n\nOpen your seller dashboard for details: ${url}`,
+        html: `<p>${esc(headline)}</p><p><a href="${esc(url)}">Open seller dashboard</a></p>`,
+      };
+    }
   }
 }
 

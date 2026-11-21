@@ -4,6 +4,9 @@ import { prisma } from "@rp/db";
 import { StubPurchaseLookup, createModerationProvider, markVerifiedBuyer } from "@rp/core";
 import { sendAccountExistsEmail, sendSellerInvitationEmail, sendVerificationEmail, type EmailDb, type EmailDbInvitations } from "./email";
 import { markMediaFailed, processMedia, type MediaDb } from "./media";
+import { createDnsResolver, createProductionFetcher } from "./verification/safe-fetch";
+import { processClaimCheck, type CheckStore } from "./verification/checks";
+import { sendClaimNotice, type NotifyDb } from "./verification/notify";
 import { processModeration, verifiedBuyerStore, type VerifiedBuyerDb, type WorkerDb } from "./moderation";
 
 export type Processor = (job: Job) => Promise<void>;
@@ -52,6 +55,26 @@ export const processors: Partial<Record<QueueName, Processor>> = {
     if (job.name === "user.email_verification_requested" && data.tokenId) outcome = await sendVerificationEmail(d, data.tokenId, key);
     else if (job.name === "user.registration_conflict" && data.userId) outcome = await sendAccountExistsEmail(d, data.userId, key);
     else if (job.name === "seller.invitation_created" && data.invitationId) outcome = await sendSellerInvitationEmail(d, data.invitationId, key);
+    else if (job.name.startsWith("claim.") || job.name === "seller.downgraded") {
+      const id = (job.name === "seller.downgraded" ? (data as { sellerId?: string }).sellerId : (data as { claimId?: string }).claimId) ?? "";
+      if (id) outcome = await sendClaimNotice({ db: prisma as unknown as NotifyDb, mail: getMail() }, job.name, id, key);
+    }
     console.log(JSON.stringify({ msg: "notification.done", jobId: job.id, type: job.name, outcome })); // never the address, token or URL
   },
+  // M3-05: DNS/META ownership checks. SSRF-safe fetcher + public resolvers only (ADR-0015).
+  [QUEUES.verification]: async (job) => {
+    const claimId = String(((job.data ?? {}) as { claimId?: string }).claimId ?? "");
+    if (!claimId) return;
+    const outcome = await processClaimCheck(prisma as unknown as CheckStore, getEgress(), claimId);
+    console.log(JSON.stringify({ msg: "claim.check.done", jobId: job.id, claimId, outcome })); // never domains' bodies or tokens
+  },
+};
+
+let egress: { fetcher: ReturnType<typeof createProductionFetcher>; dns: ReturnType<typeof createDnsResolver> } | undefined;
+const getEgress = () => {
+  if (!egress) {
+    const dns = createDnsResolver();
+    egress = { fetcher: createProductionFetcher(dns), dns };
+  }
+  return egress;
 };
