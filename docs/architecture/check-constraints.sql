@@ -184,3 +184,10 @@ ALTER TABLE `media_assets` ADD CONSTRAINT `chk_media_parent_by_purpose`
   CHECK (((`purpose` = 'REVIEW_MEDIA') = (`reviewId` IS NOT NULL))
      AND ((`purpose` = 'OWNERSHIP_EVIDENCE') = (`ownershipClaimId` IS NOT NULL)));
 -- chk_enforcement_one_subject (above) is applied unchanged with the enforcement_actions migration.
+
+-- =============================================================================
+-- M3-04 (task #47): the seller CHECKs (chk_seller_*, chk_invitation_*, chk_claim_*, chk_claim_decision_source,
+-- chk_enforcement_one_subject) are applied by migration 20261202000000_sellers_claims_enforcement. Definitions:
+-- docs/architecture/m3-sellers-spec.md §2.4. Not expressible in MySQL (service invariant + daily sweeper): SEL-011 "the
+-- referenced claim is SELLER-scope and VERIFIED" (recomputeSeller in apps/web/src/server/sellers.ts) and ">= 1 OWNER".
+-- =============================================================================

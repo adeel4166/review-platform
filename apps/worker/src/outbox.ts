@@ -13,6 +13,7 @@ export const routes: Record<string, QueueName> = {
   "media.uploaded": QUEUES.media,
   "user.email_verification_requested": QUEUES.notifications,
   "user.registration_conflict": QUEUES.notifications,
+  "seller.invitation_created": QUEUES.notifications,
 };
 
 export interface OutboxStore {

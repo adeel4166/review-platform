@@ -2,7 +2,7 @@ import type { Job } from "bullmq";
 import { QUEUES, createMailProvider, createS3Store, loadEnv, mediaBuckets, mediaJobSchema, moderationJobSchema, type QueueName } from "@rp/core";
 import { prisma } from "@rp/db";
 import { StubPurchaseLookup, createModerationProvider, markVerifiedBuyer } from "@rp/core";
-import { sendAccountExistsEmail, sendVerificationEmail, type EmailDb } from "./email";
+import { sendAccountExistsEmail, sendSellerInvitationEmail, sendVerificationEmail, type EmailDb, type EmailDbInvitations } from "./email";
 import { markMediaFailed, processMedia, type MediaDb } from "./media";
 import { processModeration, verifiedBuyerStore, type VerifiedBuyerDb, type WorkerDb } from "./moderation";
 
@@ -45,12 +45,13 @@ export const processors: Partial<Record<QueueName, Processor>> = {
     console.log(JSON.stringify({ msg: "media.done", jobId: job.id, assetId: p.assetId, outcome }));
   },
   [QUEUES.notifications]: async (job) => {
-    const d = { db: prisma as unknown as EmailDb, mail: getMail() };
+    const d = { db: prisma as unknown as EmailDb & EmailDbInvitations, mail: getMail() };
     const key = String(job.id);
-    const data = (job.data ?? {}) as { tokenId?: string; userId?: string };
+    const data = (job.data ?? {}) as { tokenId?: string; userId?: string; invitationId?: string };
     let outcome = "SKIPPED";
     if (job.name === "user.email_verification_requested" && data.tokenId) outcome = await sendVerificationEmail(d, data.tokenId, key);
     else if (job.name === "user.registration_conflict" && data.userId) outcome = await sendAccountExistsEmail(d, data.userId, key);
+    else if (job.name === "seller.invitation_created" && data.invitationId) outcome = await sendSellerInvitationEmail(d, data.invitationId, key);
     console.log(JSON.stringify({ msg: "notification.done", jobId: job.id, type: job.name, outcome })); // never the address, token or URL
   },
 };
