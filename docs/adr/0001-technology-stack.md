@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Proposed. Becomes *Accepted* when merged to `main` with CEO approval |
+| **Status** | Accepted (merged to `main` with CEO approval, proposal #8). §4 job rules detailed in [ADR-0007](./0007-queue-based-worker.md) |
 | **Date** | 2026-11-20 |
 | **Deciders** | Software Architect (author). CEO (approval) |
 | **Task** | #18 (M1.1) |
@@ -88,6 +88,7 @@ flowchart LR
 | `maintenance` (repeatable) | Enforcement expiry, retention purges, orphan media cleanup, session/token purge, outbox purge | Cron via BullMQ repeatable jobs |
 
 Every job is **idempotent** and keyed by the domain id plus the version or event id, so at-least-once delivery is safe.
+The full job, outbox and deployment-group contract is [ADR-0007](./0007-queue-based-worker.md).
 
 ### 5. Upload path
 

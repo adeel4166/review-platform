@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Proposed. Becomes *Accepted* when merged to `main` with CEO approval |
+| **Status** | Accepted (merged to `main` with CEO approval, proposal #8). Amended by [ADR-0010](./0010-database-physical-naming.md) (table naming) |
 | **Date** | 2026-11-20 |
 | **Deciders** | Software Architect (author). CEO (approval) |
 | **Task** | #18 (M1.1) |
