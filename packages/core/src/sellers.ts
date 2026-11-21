@@ -89,7 +89,7 @@ const ROLE_GRANTS: Record<SellerPermission, readonly SellerMemberRole[]> = {
   "product.update": ["OWNER", "MANAGER"],
 };
 
-export type DenyCode = "ACCOUNT_INACTIVE" | "SELLER_SUSPENDED" | "NOT_IN_SCOPE" | "FORBIDDEN_ROLE" | "CONFLICT_OF_INTEREST";
+export type DenyCode = "ACCOUNT_INACTIVE" | "SELLER_SUSPENDED" | "NOT_IN_SCOPE" | "FORBIDDEN_ROLE" | "CONFLICT_OF_INTEREST" | "TWO_FACTOR_REQUIRED";
 export type AuthzResult = { allowed: true } | { allowed: false; code: DenyCode };
 
 export interface SellerAuthzContext {
@@ -102,6 +102,8 @@ export interface SellerAuthzContext {
   sellerSuspended: boolean;
   /** Actor belongs to the other (conflicting) seller of a contested claim. */
   memberOfConflictingSeller?: boolean;
+  /** 2FA facts (m3b-spec 2.9). Required: a caller that cannot supply them is denied for OWNER/MANAGER permissions (fail closed). */
+  twoFactor: { enrolled: boolean; sessionVerified: boolean };
 }
 
 /**
@@ -119,6 +121,10 @@ export function authorizeSeller(ctx: SellerAuthzContext, perm: SellerPermission)
   if (ctx.sellerSuspended) return { allowed: false, code: "SELLER_SUSPENDED" };
   if (ctx.memberRole === null) return { allowed: false, code: "NOT_IN_SCOPE" };
   if (!ROLE_GRANTS[perm].includes(ctx.memberRole)) return { allowed: false, code: "FORBIDDEN_ROLE" };
+  // 2FA gate (AZ-008): OWNER/MANAGER permissions need an enrolled account AND a second-factor-verified session. RESPONDER is exempt.
+  if ((ctx.memberRole === "OWNER" || ctx.memberRole === "MANAGER") && !(ctx.twoFactor.enrolled && ctx.twoFactor.sessionVerified)) {
+    return { allowed: false, code: "TWO_FACTOR_REQUIRED" };
+  }
   return { allowed: true };
 }
 

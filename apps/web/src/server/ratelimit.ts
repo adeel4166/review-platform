@@ -62,3 +62,14 @@ export const limitReviewWrite = (req: Request, userId: string) => {
 
 export const limitUploadSlot = (userId: string) =>
   enforce([{ key: `upload:u:h:${userId}`, rule: rule(rateConfig().RATE_UPLOAD_SLOTS_PER_HOUR, HOUR) }]);
+
+/**
+ * 2FA code checks (m3b-spec 2.6). "attempt" is charged per check (stricter than per failure): 10 / 15 min per account across
+ * all sessions, 30 / 15 min per IP. Fail closed: the in-process fallback keeps counting when Redis is down.
+ */
+export const limit2fa = (req: Request, kind: "attempt" | "enrol" | "regenerate" | "disable", userId: string) =>
+  enforce(
+    kind === "attempt"
+      ? [closed({ key: `2fa:acct:${userId}`, rule: rule(10, 15 * MIN) }), closed({ key: `2fa:ip:${ipOf(req)}`, rule: rule(30, 15 * MIN) })]
+      : [closed({ key: `2fa:${kind}:${userId}`, rule: rule(kind === "enrol" ? 5 : 3, kind === "enrol" ? HOUR : DAY) })],
+  );

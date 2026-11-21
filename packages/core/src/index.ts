@@ -17,3 +17,4 @@ export * from "./domain-policy";
 export * from "./claims";
 export * from "./claim-service";
 export * from "./claim-fake-db";
+export * from "./two-factor";

@@ -41,3 +41,9 @@ describe("T-01 verification-egress startup assertion", () => {
     }
   });
 });
+
+describe("AUT-029: 2FA secrets are forbidden in the verification-egress environment", () => {
+  it.each(["TOTP_ENC_KEYS", "TOTP_ENC_ACTIVE_KEY_ID", "RECOVERY_CODE_PEPPERS", "RECOVERY_CODE_ACTIVE_KEY_ID", "AUTH_SECRET"])("%s is reported", (name) => {
+    expect(forbiddenEgressEnv({ [name]: "x" })).toEqual([name]);
+  });
+});

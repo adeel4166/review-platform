@@ -61,7 +61,7 @@ function makeDb() {
 }
 
 const NOW = new Date("2026-11-21T12:00:00Z");
-const actor = (id: string, role: Actor["role"] = "user"): Actor => ({ id, role });
+const actor = (id: string, role: Actor["role"] = "user"): Actor => ({ id, role, twoFactor: { enrolled: true, verified: true } });
 const token = "tok-" + "x".repeat(30);
 
 let h: ReturnType<typeof makeDb>;

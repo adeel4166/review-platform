@@ -15,8 +15,8 @@ const mk = (path: string, init: ConstructorParameters<typeof NextRequest>[1] = {
 
 describe("security headers", () => {
   for (const path of ["/products/abc", "/api/health"]) {
-    it(`middleware sets headers on ${path}`, () => {
-      const res = middleware(mk(path));
+    it(`middleware sets headers on ${path}`, async () => {
+      const res = await middleware(mk(path));
       const csp = res.headers.get("content-security-policy")!;
       expect(csp).toMatch(/default-src 'self'/);
       expect(csp).toMatch(/script-src 'self' 'nonce-[A-Za-z0-9+/=]+'/);
@@ -29,29 +29,29 @@ describe("security headers", () => {
       expect(res.headers.get("permissions-policy")).toContain("camera=()");
     });
   }
-  it("includes the storage origin in img-src and no unsafe-eval in production", () => {
+  it("includes the storage origin in img-src and no unsafe-eval in production", async () => {
     const csp = buildCsp("n", { dev: false, storage: "https://cdn.example.com" });
     expect(csp).toMatch(/img-src 'self' https:\/\/cdn\.example\.com data:/);
     expect(csp).not.toContain("unsafe-eval");
   });
-  it("uses a fresh nonce per request", () => {
+  it("uses a fresh nonce per request", async () => {
     const n = (r: Response) => r.headers.get("content-security-policy")!.match(/nonce-([^']+)/)![1];
-    expect(n(middleware(mk("/")))).not.toBe(n(middleware(mk("/"))));
+    expect(n(await middleware(mk("/")))).not.toBe(n(await middleware(mk("/"))));
   });
 });
 
 describe("request origin / content-type checks", () => {
   const body = JSON.stringify({});
-  it("middleware rejects a cross-origin POST", () => {
-    const res = middleware(mk("/api/products/x/reviews", { method: "POST", body, headers: { origin: "https://evil.test", "content-type": "application/json" } }));
+  it("middleware rejects a cross-origin POST", async () => {
+    const res = await middleware(mk("/api/products/x/reviews", { method: "POST", body, headers: { origin: "https://evil.test", "content-type": "application/json" } }));
     expect(res.status).toBe(403);
   });
-  it("middleware rejects Sec-Fetch-Site: cross-site", () => {
-    expect(middleware(mk("/api/x", { method: "POST", body, headers: { "sec-fetch-site": "cross-site" } })).status).toBe(403);
+  it("middleware rejects Sec-Fetch-Site: cross-site", async () => {
+    expect((await middleware(mk("/api/x", { method: "POST", body, headers: { "sec-fetch-site": "cross-site" } }))).status).toBe(403);
   });
-  it("middleware allows same-origin POST and GETs from anywhere", () => {
-    expect(middleware(mk("/api/x", { method: "POST", body, headers: { origin: "http://app.test", "sec-fetch-site": "same-origin" } })).status).toBe(200);
-    expect(middleware(mk("/api/x", { headers: { origin: "https://evil.test" } })).status).toBe(200);
+  it("middleware allows same-origin POST and GETs from anywhere", async () => {
+    expect((await middleware(mk("/api/x", { method: "POST", body, headers: { origin: "http://app.test", "sec-fetch-site": "same-origin" } }))).status).toBe(200);
+    expect((await middleware(mk("/api/x", { headers: { origin: "https://evil.test" } }))).status).toBe(200);
   });
   it("route rejects a cross-origin POST even if middleware is bypassed", async () => {
     const r = new Request("http://app.test/api", { method: "POST", body, headers: { origin: "https://evil.test", "content-type": "application/json" } });
