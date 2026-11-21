@@ -1,0 +1,41 @@
+import type { Job } from "bullmq";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { QUEUES } from "@rp/core";
+import { processors } from "./processors";
+
+/** SMK-003: worker smoke. Skeleton processors must validate payloads and fail closed. */
+const job = (data: unknown) => ({ id: "j1", data }) as unknown as Job;
+
+describe("worker processors (smoke, SMK-003)", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("registers exactly the queues with validated skeleton processors", () => {
+    expect(Object.keys(processors).sort()).toEqual([QUEUES.media, QUEUES.moderation].sort());
+  });
+
+  it("accepts a valid moderation payload", async () => {
+    await expect(
+      processors[QUEUES.moderation]!(job({ subjectType: "REVIEW", subjectId: "r1", version: 1 })),
+    ).resolves.toBeUndefined();
+  });
+
+  it("rejects a malformed moderation payload instead of approving it", async () => {
+    await expect(
+      processors[QUEUES.moderation]!(job({ subjectType: "NOPE", subjectId: "r1", version: 1 })),
+    ).rejects.toThrow();
+  });
+
+  it("accepts a valid media payload and defaults the step to VALIDATE", async () => {
+    await processors[QUEUES.media]!(job({ assetId: "a1" }));
+    expect(console.log).toHaveBeenCalledWith(expect.stringContaining('"step":"VALIDATE"'));
+  });
+
+  it("rejects a media payload with an unknown step", async () => {
+    await expect(processors[QUEUES.media]!(job({ assetId: "a1", step: "PUBLISH" }))).rejects.toThrow();
+  });
+});

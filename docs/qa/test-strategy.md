@@ -313,3 +313,27 @@ be written now. The Architect must confirm or correct them, and the catalogue is
    for E2E and add the production-absence check (`OPS-003`).
 5. **Before M2 gate:** Architect confirms the §9 assumptions, and a Gemini planning review is run on the catalogue.
 6. **Before M8:** pen-test scope written from the threat model, using the Critical and High rows in the catalogue.
+
+---
+
+## 11. First smoke suite (M1-T6, running in CI)
+
+M1-T6 adds the first tests that exercise the M1 scaffold, not just the pure helpers. They run in the existing CI
+`qa` job through `pnpm qa` (which calls `pnpm test` and `pnpm -r`). No new dependencies, no services.
+
+| ID | Level | Package | File | What it proves |
+|---|---|---|---|---|
+| SMK-001 | Schema | `packages/db` | `prisma validate` (package `test` script) | The Prisma schema parses and is valid after `db:generate` |
+| SMK-002 | Unit (shell) | `apps/web` | `src/app/home.smoke.test.ts` | Root layout is `<html lang="en">`; home page has a `<main>` landmark and `<h1>` |
+| SMK-003 | Unit (worker) | `apps/worker` | `src/processors.smoke.test.ts` | Processors fail closed: malformed payloads reject, never resolve as approved |
+
+**Config note.** `apps/web/vitest.config.ts` sets `esbuild.jsx = "automatic"`. Next.js keeps `"jsx": "preserve"` in
+`tsconfig.json`, and without this override vitest cannot import `.tsx` sources.
+
+**Pyramid for M1 (current counts).** Unit: 15 (core 5; worker 7, of which 5 are SMK-003; web 3, of which 2 are SMK-002 and 1 is WEB-001). Integration: 0.
+E2E: 0. Schema: 1 (SMK-001). Design tokens and compose config run as separate CI steps. The pyramid is intentionally
+bottom-heavy until M2 adds the integration and E2E harnesses (§10).
+
+**Not yet covered by a smoke test (by design).** The moderation transition matrix (`MOD-001` to `MOD-016`), the media
+edge cases (`MED-*`) and the core-flow E2E journeys (`E2E-*`) need code that lands in M2 to M6. They are catalogued and
+gated in §6, not stubbed here, because a stub would pass without testing anything.
