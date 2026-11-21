@@ -54,3 +54,10 @@ E2E_ADMIN_PASSWORD=... pnpm --filter @rp/web test:e2e
 `pnpm coverage` (repo root) runs Vitest with the v8 coverage provider for `@rp/core`, `@rp/worker` and `@rp/web`.
 Reports land in each package's `coverage/` folder (git-ignored). CI uploads them as a build artifact.
 It reports only; there is no threshold gate yet.
+
+## Seller journeys (`seller.spec.ts`, M3-06)
+
+Needs Mailpit (`pnpm infra:up` starts it; the worker must send through it, `SMTP_URL=smtp://127.0.0.1:1025`). Optional
+`E2E_MAILPIT_URL` (default `http://localhost:8025`). The tests read the confirmation and invitation links from Mailpit.
+The DNS verifier is mocked at the browser boundary (the wizard's status poll); the worker's SSRF-guarded egress is not
+touched. The admin approval test uses the seeded admin.

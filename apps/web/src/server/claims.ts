@@ -149,7 +149,7 @@ export async function listClaimQueue(db: Db, tab: "review" | "contested" | "spot
     : tab === "spot_check" ? { status: "VERIFIED" as const, spotCheckRequired: true, spotCheckedAt: null }
     : { status: "PENDING" as const, OR: [{ requiresHumanReview: true }, { lastCheckOutcome: "PASS" as const }] };
   const [items, total] = await Promise.all([
-    db.sellerOwnershipClaim.findMany({ where, orderBy: { createdAt: "asc" }, skip: (page.page - 1) * page.pageSize, take: page.pageSize, select: { ...QUEUE_SELECT, _count: { select: { decisions: true } } } }),
+    db.sellerOwnershipClaim.findMany({ where, orderBy: { createdAt: "asc" }, skip: (page.page - 1) * page.pageSize, take: page.pageSize, select: { ...QUEUE_SELECT, seller: { select: { name: true } }, _count: { select: { decisions: true } } } }),
     db.sellerOwnershipClaim.count({ where }),
   ]);
   return { items, total, page: page.page, pageSize: page.pageSize };

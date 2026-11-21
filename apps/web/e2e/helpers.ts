@@ -137,3 +137,49 @@ export async function waitForCaseState(admin: APIRequestContext, state: string, 
     { timeout: 90_000, intervals: [2_000, 3_000, 5_000], message: `case for "${title}" reaches ${state}` },
   ).toBe(true);
 }
+
+// ---- M3-06 seller flows -----------------------------------------------------------------------------------------------
+/** Mailpit (docker compose `mailpit`, ADR-0016) is the dev/E2E mail sink; its HTTP API lets tests read the links the worker sent. */
+export const MAILPIT_URL = process.env.E2E_MAILPIT_URL ?? "http://localhost:8025";
+
+/** Polls Mailpit for a mail to `to` containing a link whose path matches `pathRe`; returns that link's path + query. */
+export async function mailLinkFor(request: APIRequestContext, to: string, pathRe: RegExp): Promise<string> {
+  let found = "";
+  await expect.poll(
+    async () => {
+      const list = await request.get(`${MAILPIT_URL}/api/v1/search?query=${encodeURIComponent(`to:${to}`)}`);
+      if (!list.ok()) return `mailpit ${list.status()}`;
+      const { messages } = (await list.json()) as { messages?: { ID: string }[] };
+      for (const m of messages ?? []) {
+        const body = (await (await request.get(`${MAILPIT_URL}/api/v1/message/${m.ID}`)).json()) as { Text?: string; HTML?: string };
+        const hit = `${body.Text ?? ""}\n${body.HTML ?? ""}`.match(/https?:\/\/[^\s"'<>]+/g)?.map((u) => new URL(u)).find((u) => pathRe.test(u.pathname));
+        if (hit) { found = hit.pathname + hit.search; return "ok"; }
+      }
+      return "no mail yet";
+    },
+    { timeout: 60_000, intervals: [1_000, 2_000, 3_000], message: `mail to ${to} with a link matching ${pathRe}` },
+  ).toBe("ok");
+  return found;
+}
+
+/** Registers a user, confirms the email through the link in the mailed message (UI), and returns a signed-in context. */
+export async function newVerifiedUser(browser: Browser, baseURL: string | undefined, tag = uniqueTag()) {
+  const context = await browser.newContext({ baseURL });
+  const user = await registerUser(context.request, newUser(tag));
+  const link = await mailLinkFor(context.request, user.email, /\/verify-email$/);
+  const page = await context.newPage();
+  await page.goto(link);
+  await page.getByRole("button", { name: "Confirm email" }).click();
+  await expect(page.getByText("Your email is confirmed.")).toBeVisible();
+  await signInInContext(context, user.email, user.password);
+  return { context, page, user };
+}
+
+/** Creates a seller through the /sellers/new form; returns its id (from the dashboard URL). */
+export async function createSellerViaUi(page: Page, name: string): Promise<string> {
+  await page.goto("/sellers/new");
+  await page.getByLabel(/Seller name/).fill(name);
+  await page.getByRole("button", { name: "Create seller" }).click();
+  await page.waitForURL(/\/seller\/[^/]+$/);
+  return new URL(page.url()).pathname.split("/").pop()!;
+}

@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { t } from "@/i18n/en";
+import { EmailVerificationBanner } from "@/components/seller/EmailVerificationBanner";
 import { SiteHeader } from "@/components/SiteHeader";
 import "./globals.css";
 
@@ -14,6 +15,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           {t("nav.skip")}
         </a>
         <SiteHeader />
+        <EmailVerificationBanner />
         <div id="main" tabIndex={-1}>{children}</div>
       </body>
     </html>
