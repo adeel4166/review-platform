@@ -46,6 +46,10 @@ export const limitLogin = (req: Request, email: string) => {
 export const limitRegister = (req: Request) =>
   enforce([closed({ key: `register:h:${ipOf(req)}`, rule: rule(rateConfig().RATE_REGISTER_PER_HOUR, HOUR) })]);
 
+/** Token confirmation and resend: per IP, fail closed (token guessing / mail flooding). */
+export const limitVerifyEmail = (req: Request) =>
+  enforce([closed({ key: `verify:h:${ipOf(req)}`, rule: rule(30, HOUR) })]);
+
 /** Review create and edit share the budget: both enqueue moderation work. */
 export const limitReviewWrite = (req: Request, userId: string) => {
   const c = rateConfig();

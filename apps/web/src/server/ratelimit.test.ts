@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeRateLimitRedis, setRateLimitErrorHook, setRateLimitFallback } from "@rp/core";
 
 vi.mock("@/server/session", () => ({ requireUser: vi.fn(async () => ({ id: "u1", role: "user" })) }));
-vi.mock("@/server/db", () => ({ db: { user: { create: vi.fn(async () => ({ id: "n" })) }, review: { findFirst: vi.fn(async () => null) } } }));
+vi.mock("@/server/db", () => ({ db: { user: { findUnique: vi.fn(async () => null) }, $transaction: vi.fn(async () => undefined), review: { findFirst: vi.fn(async () => null) } } }));
 vi.mock("@/server/storage", () => ({ getStorage: () => ({}) }));
 vi.mock("@/server/reviews", () => ({
   createReview: vi.fn(async () => ({ id: "r" })), updateOwnReview: vi.fn(async () => ({ id: "r" })),

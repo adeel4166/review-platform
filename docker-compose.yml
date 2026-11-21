@@ -28,6 +28,16 @@ services:
       timeout: 3s
       retries: 20
 
+  # Dev/E2E mail sink (ADR-0016). SMTP on 1025, web UI + API on 8025. Nothing is delivered externally.
+  mailpit:
+    image: axllent/mailpit:v1.21
+    ports: ["127.0.0.1:1025:1025", "127.0.0.1:8025:8025"]
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   minio:
     image: minio/minio:latest
     command: ["server", "/data", "--console-address", ":9001"]

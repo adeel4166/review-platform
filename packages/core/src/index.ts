@@ -9,3 +9,5 @@ export * from "./media";
 export * from "./media-store-fake";
 export * from "./rate-limit";
 export * from "./audit-metadata";
+export * from "./email-token";
+export * from "./mail";

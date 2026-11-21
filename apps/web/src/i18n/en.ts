@@ -157,6 +157,11 @@ export const en = {
   "register.error.generic": "Something went wrong. Please try again.",
   "register.error.throttled": "Too many attempts. Please wait a minute and try again.",
   "register.error.signin": "Your account was created, but we couldn't sign you in automatically. Please sign in.",
+  "register.sent": "Check your inbox. If the address can be registered, we have sent a link to confirm it. Then sign in.",
+  "verify.title": "Confirm your email",
+  "verify.confirm": "Confirm email",
+  "verify.done": "Your email is confirmed.",
+  "verify.invalid": "This link is invalid or has expired. Sign in and request a new one.",
   "register.haveAccount": "Already have an account?",
   "register.signIn": "Sign in",
 } as const;

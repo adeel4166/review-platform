@@ -134,6 +134,7 @@ export function LoginForm({ callbackUrl }: { callbackUrl: string }) {
 
 export function RegisterForm({ callbackUrl }: { callbackUrl: string }) {
   const s = useAuthState();
+  const [sent, setSent] = useState(false);
 
   async function onSubmit(ev: React.FormEvent<HTMLFormElement>) {
     ev.preventDefault();
@@ -161,10 +162,9 @@ export function RegisterForm({ callbackUrl }: { callbackUrl: string }) {
       if (res.status === 429) {
         const secs = retryAfter(res);
         s.setFormError(secs ? t("login.error.throttled", { seconds: secs }) : t("register.error.throttled"));
-      } else if (res.status === 201) {
-        const r = await signInWithCredentials(email, password);
-        if (r === "ok") { window.location.assign(callbackUrl); return; }
-        s.setFormError(t("register.error.signin"));
+      } else if (res.status === 202) {
+        setSent(true); // identical for new and existing emails (SEC-05); no automatic sign-in
+        return;
       } else if (res.status === 409 || res.status === 400) {
         s.setFormError(t("register.error.failed")); // generic: never reveals which field collided
       } else {
@@ -175,6 +175,15 @@ export function RegisterForm({ callbackUrl }: { callbackUrl: string }) {
     }
     s.setBusy(false);
     s.focusSummary();
+  }
+
+  if (sent) {
+    return (
+      <div className="mt-6 space-y-4">
+        <p role="status">{t("register.sent")}</p>
+        <Link className="text-link underline" href={callbackUrl === "/" ? "/login" : `/login?callbackUrl=${encodeURIComponent(callbackUrl)}`}>{t("register.signIn")}</Link>
+      </div>
+    );
   }
 
   return (

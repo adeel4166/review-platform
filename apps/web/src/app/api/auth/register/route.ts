@@ -1,24 +1,17 @@
 import { limitRegister } from "@/server/ratelimit";
 import { hashPassword } from "@rp/db";
 import { db } from "@/server/db";
-import { handle, HttpError, json, readJson } from "@/server/http";
+import { handle, json, readJson } from "@/server/http";
+import { registerAccount } from "@/server/registration";
 import { registerInput } from "@/server/validation";
 
 export const runtime = "nodejs";
 
+/** SEC-05: 202 {"status":"verification_sent"} for a new and an existing email alike; no session is created. */
 export async function POST(req: Request) {
   return handle(async () => {
-    await limitRegister(req); // before the argon2 hash and the 409 oracle (SEC-03/SEC-05)
+    await limitRegister(req); // before the argon2 hash (SEC-03)
     const input = registerInput.parse(await readJson(req));
-    try {
-      const user = await db.user.create({
-        data: { email: input.email, handle: input.handle, displayName: input.displayName, passwordHash: await hashPassword(input.password) },
-        select: { id: true, handle: true, displayName: true },
-      });
-      return json(user, 201);
-    } catch (e) {
-      if ((e as { code?: string }).code === "P2002") throw new HttpError(409, "conflict", "Email or handle already in use");
-      throw e;
-    }
+    return json(await registerAccount(db as never, input, hashPassword), 202);
   });
 }

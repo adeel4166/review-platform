@@ -59,3 +59,4 @@ export const rejectInput = z.object({ reason: z.string().trim().min(3).max(500) 
 export const STAFF_ROLES = ["MODERATOR", "SENIOR_MODERATOR", "ADMIN", "SUPER_ADMIN"] as const;
 export const staffRoleInput = z.object({ role: z.enum(STAFF_ROLES), reason: z.string().trim().min(3).max(255) }).strict();
 export const staffRoleRevokeInput = z.object({ role: z.enum(STAFF_ROLES) }).strict();
+export type RegisterInput = z.infer<typeof registerInput>;
