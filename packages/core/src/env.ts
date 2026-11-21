@@ -16,6 +16,8 @@ export const envSchema = z.object({
   S3_BUCKET_PUBLIC: z.string().min(1),
   WORKER_CONCURRENCY: z.coerce.number().int().positive().default(2),
   OUTBOX_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(2000),
+  MODERATION_PROVIDER: z.string().min(1).default("mock"),
+  MODERATION_API_KEY: z.string().min(1).optional(), // secret: env only, never logged
 });
 export type Env = z.infer<typeof envSchema>;
 

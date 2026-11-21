@@ -3,6 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QUEUES } from "@rp/core";
 import { processors } from "./processors";
 
+vi.mock("@rp/db", () => ({ prisma: {} }));
+vi.mock("./moderation", () => ({ processModeration: vi.fn(async () => "SKIPPED") }));
+
 /** SMK-003: worker smoke. Skeleton processors must validate payloads and fail closed. */
 const job = (data: unknown) => ({ id: "j1", data }) as unknown as Job;
 

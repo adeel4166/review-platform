@@ -1,8 +1,9 @@
 import { Queue, Worker } from "bullmq";
 import { Redis } from "ioredis";
 import { prisma } from "@rp/db";
-import { loadEnv, type Env, type QueueName } from "@rp/core";
+import { QUEUES, loadEnv, moderationJobSchema, type Env, type QueueName } from "@rp/core";
 import { processors } from "./processors";
+import { MODERATION_JOB_OPTIONS, escalateDeadLetter, isFinalFailure, type WorkerDb } from "./moderation";
 import { relayOnce, type OutboxStore } from "./outbox";
 
 // Without infra config (e.g. a preview with no Redis/MySQL) idle instead of crashing next to the web app.
@@ -20,7 +21,7 @@ const connection = new Redis(env.REDIS_URL, { maxRetriesPerRequest: null });
 const queues = new Map<QueueName, Queue>();
 const getQueue = (n: QueueName) => {
   let q = queues.get(n);
-  if (!q) queues.set(n, (q = new Queue(n, { connection })));
+  if (!q) queues.set(n, (q = new Queue(n, { connection, ...(n === QUEUES.moderation ? { defaultJobOptions: MODERATION_JOB_OPTIONS } : {}) })));
   return q;
 };
 
@@ -34,7 +35,16 @@ const store: OutboxStore = {
 
 const workers = Object.entries(processors).map(([name, fn]) => {
   const w = new Worker(name, (job) => fn!(job), { connection, concurrency: env.WORKER_CONCURRENCY });
-  w.on("failed", (job, err) => console.error(JSON.stringify({ msg: "job.failed", queue: name, jobId: job?.id, err: err.message })));
+  w.on("failed", (job, err) => {
+    console.error(JSON.stringify({ msg: "job.failed", queue: name, jobId: job?.id, attempt: job?.attemptsMade, err: err.message }));
+    if (name !== QUEUES.moderation || !job || !isFinalFailure(job)) return;
+    // Retries exhausted: park the job in the dead-letter queue and send the review to a human (fail closed).
+    const payload = moderationJobSchema.safeParse(job.data);
+    void (async () => {
+      await getQueue(QUEUES.moderationDead).add("moderation.dead", { original: job.data, error: err.message.slice(0, 500), failedJobId: job.id }, { removeOnFail: false });
+      if (payload.success) await escalateDeadLetter(prisma as unknown as WorkerDb, payload.data, err.message, String(job.id));
+    })().catch((e: Error) => console.error(JSON.stringify({ msg: "moderation.deadletter.error", jobId: job.id, err: e.message })));
+  });
   return w;
 });
 
