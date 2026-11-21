@@ -14,6 +14,16 @@ export const routes: Record<string, QueueName> = {
   "user.email_verification_requested": QUEUES.notifications,
   "user.registration_conflict": QUEUES.notifications,
   "seller.invitation_created": QUEUES.notifications,
+  // M3-05 ownership claims (spec §7)
+  "claim.submitted": QUEUES.verification,
+  "claim.check_due": QUEUES.verification,
+  "claim.verified": QUEUES.notifications,
+  "claim.rejected": QUEUES.notifications,
+  "claim.expired": QUEUES.notifications,
+  "claim.revoked": QUEUES.notifications,
+  "claim.contested": QUEUES.notifications,
+  "claim.grace_started": QUEUES.notifications,
+  "seller.downgraded": QUEUES.notifications,
 };
 
 export interface OutboxStore {

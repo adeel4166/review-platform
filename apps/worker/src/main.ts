@@ -5,6 +5,7 @@ import { MEDIA_PUT_TTL_SECONDS, QUEUES, loadEnv, mediaJobSchema, moderationJobSc
 import { expireStaleUploads } from "./media";
 import { getMediaDeps, markMediaFailed, processors } from "./processors";
 import { MODERATION_JOB_OPTIONS, escalateDeadLetter, isFinalFailure, type WorkerDb } from "./moderation";
+import { sweepDueChecks, sweepExpiry, sweepGrace, type SweepStore } from "./verification/checks";
 import { relayOnce, type OutboxStore } from "./outbox";
 
 // Without infra config (e.g. a preview with no Redis/MySQL) idle instead of crashing next to the web app.
@@ -22,7 +23,7 @@ const connection = new Redis(env.REDIS_URL, { maxRetriesPerRequest: null });
 const queues = new Map<QueueName, Queue>();
 const getQueue = (n: QueueName) => {
   let q = queues.get(n);
-  if (!q) queues.set(n, (q = new Queue(n, { connection, ...(n === QUEUES.moderation ? { defaultJobOptions: MODERATION_JOB_OPTIONS } : {}), ...(n === QUEUES.notifications ? { defaultJobOptions: { attempts: 5, backoff: { type: "exponential", delay: 5000 } } } : {}), ...(n === QUEUES.media ? { defaultJobOptions: { attempts: 3, backoff: { type: "exponential", delay: 5000 }, removeOnFail: false } } : {}) })));
+  if (!q) queues.set(n, (q = new Queue(n, { connection, ...(n === QUEUES.moderation ? { defaultJobOptions: MODERATION_JOB_OPTIONS } : {}), ...(n === QUEUES.notifications ? { defaultJobOptions: { attempts: 5, backoff: { type: "exponential", delay: 5000 } } } : {}), ...(n === QUEUES.verification ? { defaultJobOptions: { attempts: 5, backoff: { type: "exponential", delay: 30_000 } } } : {}), ...(n === QUEUES.media ? { defaultJobOptions: { attempts: 3, backoff: { type: "exponential", delay: 5000 }, removeOnFail: false } } : {}) })));
   return q;
 };
 
@@ -67,11 +68,22 @@ const sweepTimer = setInterval(() => {
     .catch((e: Error) => console.error(JSON.stringify({ msg: "media.upload_sweep.error", err: e.message })));
 }, env.UPLOAD_SWEEP_INTERVAL_MS);
 
+// M3-05 maintenance sweepers (spec §7): due checks + monthly/daily re-verification, expiry, grace/downgrade. Idempotent, safe to overlap.
+const sweepDb = prisma as unknown as SweepStore;
+const logSweep = (name: string) => (r: unknown) => { if (r && JSON.stringify(r) !== "0" && JSON.stringify(r) !== '{"graceStarted":0,"expired":0}') console.log(JSON.stringify({ msg: `maintenance.${name}`, result: r })); };
+const sweepErr = (name: string) => (e: Error) => console.error(JSON.stringify({ msg: `maintenance.${name}.error`, err: e.message }));
+const claimTimers = [
+  setInterval(() => { sweepDueChecks(sweepDb, { add: (n, d, o) => getQueue(QUEUES.verification).add(n, d, o) }).then(logSweep("claims-due-checks")).catch(sweepErr("claims-due-checks")); }, 60_000),
+  setInterval(() => { sweepExpiry(sweepDb).then(logSweep("claims-expire")).catch(sweepErr("claims-expire")); }, 15 * 60_000),
+  setInterval(() => { sweepGrace(sweepDb).then(logSweep("claims-grace")).catch(sweepErr("claims-grace")); }, 60 * 60_000),
+];
+
 console.log(JSON.stringify({ msg: "worker.started", queues: Object.keys(processors) }));
 
 async function shutdown() {
   clearInterval(timer);
   clearInterval(sweepTimer);
+  claimTimers.forEach(clearInterval);
   await Promise.all(workers.map((w) => w.close()));
   await Promise.all([...queues.values()].map((q) => q.close()));
   await prisma.$disconnect();
