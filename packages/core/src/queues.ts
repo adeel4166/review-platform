@@ -9,6 +9,7 @@ export const QUEUES = {
   notifications: "notifications",
   trust: "trust",
   maintenance: "maintenance",
+  moderationDead: "moderation-dead",
 } as const;
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
 

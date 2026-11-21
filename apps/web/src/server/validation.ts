@@ -42,3 +42,13 @@ export const loginInput = z.object({
 
 export const idParam = id;
 export type ReviewInput = z.infer<typeof reviewInput>;
+
+export const moderationQueueQuery = pageQuery.extend({
+  state: z.enum(["PENDING", "AI_REVIEW", "NEEDS_HUMAN", "APPROVED", "REJECTED"]).default("NEEDS_HUMAN"),
+  productId: id.optional(),
+  minScore: z.coerce.number().min(0).max(1).optional(),
+  maxScore: z.coerce.number().min(0).max(1).optional(),
+});
+
+export const approveInput = z.object({ reason: z.string().trim().min(1).max(500).optional() }).strict();
+export const rejectInput = z.object({ reason: z.string().trim().min(3).max(500) }).strict();

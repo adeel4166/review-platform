@@ -62,6 +62,21 @@ enum RevisionStatus {
   SUPERSEDED
 }
 
+enum ModerationState {
+  PENDING
+  AI_REVIEW
+  NEEDS_HUMAN
+  APPROVED
+  REJECTED
+}
+
+enum AuditActorType {
+  USER
+  STAFF
+  AI
+  SYSTEM
+}
+
 model User {
   id              String     @id @default(cuid())
   email           String     @unique
@@ -82,6 +97,8 @@ model User {
   productsCreated Product[]        @relation("ProductCreatedBy")
   reviews         Review[]         @relation("ReviewAuthor")
   revisionsEdited ReviewRevision[] @relation("RevisionEditor")
+  casesDecided    ModerationCase[] @relation("CaseDecidedBy")
+  auditLogs       AuditLog[]       @relation("AuditActor")
 
   @@index([status])
   @@map("users")
@@ -166,6 +183,9 @@ model Review {
   helpfulCount     Int                 @default(0)
   notHelpfulCount  Int                 @default(0)
   commentCount     Int                 @default(0)
+  verifiedBuyer    Boolean             @default(false)
+  verifiedAt       DateTime?
+  verifiedOrderId  String?             @db.VarChar(64)
   publishedAt      DateTime?
   editedAt         DateTime?
   deletedAt        DateTime?
@@ -176,6 +196,7 @@ model Review {
   author  User    @relation("ReviewAuthor", fields: [authorId], references: [id], onDelete: Restrict)
 
   revisions ReviewRevision[]
+  cases     ModerationCase[]
 
   @@unique([productId, authorId])
   @@index([productId, status, publishedAt])
@@ -212,4 +233,46 @@ model OutboxEvent {
 
   @@index([publishedAt, id])
   @@map("outbox_events")
+}
+
+/// One case per (review, version). `state` is the moderation workflow; Review.status mirrors it (ADR-0005).
+model ModerationCase {
+  id             String          @id @default(cuid())
+  reviewId       String
+  version        Int
+  state          ModerationState @default(PENDING)
+  aiScore        Decimal?        @db.Decimal(4, 3)
+  aiConfidence   Decimal?        @db.Decimal(4, 3)
+  aiReasons      Json?
+  aiProvider     String?         @db.VarChar(64)
+  decisionReason String?         @db.VarChar(500)
+  decidedById    String?
+  decidedAt      DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  review    Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  decidedBy User?  @relation("CaseDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+
+  @@unique([reviewId, version])
+  @@index([state, createdAt])
+  @@map("moderation_cases")
+}
+
+/// Append-only audit trail (never updated or deleted by the app).
+model AuditLog {
+  id         BigInt         @id @default(autoincrement())
+  actorType  AuditActorType
+  actorId    String?
+  action     String         @db.VarChar(64)
+  entityType String         @db.VarChar(32)
+  entityId   String         @db.VarChar(64)
+  metadata   Json?
+  createdAt  DateTime       @default(now()) @db.DateTime(3)
+
+  actor User? @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId, id])
+  @@index([actorId, createdAt])
+  @@map("audit_logs")
 }
