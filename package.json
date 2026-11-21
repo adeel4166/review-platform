@@ -15,10 +15,12 @@
     "test": "pnpm -r test",
     "build": "pnpm -r build",
     "design:check": "node design/gen.cjs && git diff --exit-code design/tokens.css design/tailwind-preset.cjs && node design/check-contrast.cjs",
-    "qa": "pnpm lint && pnpm typecheck && pnpm test && pnpm design:check"
+    "qa": "pnpm lint && pnpm typecheck && pnpm test && pnpm design:check",
+    "coverage": "pnpm --filter @rp/core --filter @rp/worker --filter @rp/web exec vitest run --coverage"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
+    "@vitest/coverage-v8": "^2.1.9",
     "eslint": "^9.17.0",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.18.0"

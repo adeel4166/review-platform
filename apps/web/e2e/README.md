@@ -1,0 +1,56 @@
+# E2E tests (Playwright)
+
+Browser journeys for the review flow: sign up and sign in, submit a review (with a photo), AI moderation
+(mock provider) auto-approve, needs-human and reject paths, admin approve and reject, and the public result
+(published reviews visible, rejected reviews hidden, Verified buyer badge).
+
+Quarantined and known-gap tests are listed in [QUARANTINE.md](./QUARANTINE.md).
+
+## What the suite needs
+
+The suite talks to a real stack. Nothing is mocked in the browser.
+
+| Piece | Why | CI (`.github/workflows/ci.yml`, job `e2e`) |
+|---|---|---|
+| MySQL 8, migrated and seeded | Users, products, reviews, cases | service container, `migrate:deploy` + `seed` |
+| Redis 7 | BullMQ queues and outbox | service container |
+| MinIO with buckets `rp-ingest`, `rp-private`, `rp-public` | Presigned photo upload | `docker run` + `mc mb` |
+| Worker (`apps/worker`) | Runs AI moderation (mock provider) and publishes | started in background |
+| Web app from a production build | Browser target, started by Playwright `webServer` | `pnpm build` then `pnpm start` |
+
+Environment variables the tests read:
+
+- `E2E_ADMIN_PASSWORD` (required): must equal `SEED_ADMIN_PASSWORD` used by the seed.
+- `E2E_ADMIN_EMAIL` (optional, default `admin@example.com`).
+- `E2E_PORT` (optional, default `3000`).
+- Everything the web app and worker need (`DATABASE_URL`, `REDIS_URL`, `S3_*`, `AUTH_SECRET`, `AUTH_TRUST_HOST`).
+
+Use throwaway values only. Never point the suite at a database with real data.
+
+## Run locally
+
+```bash
+pnpm infra:up                                    # MySQL, Redis, MinIO (docker compose)
+pnpm --filter @rp/db migrate:deploy
+SEED_ADMIN_PASSWORD=... SEED_USER_PASSWORD=... pnpm --filter @rp/db seed
+pnpm build
+pnpm --filter @rp/worker start &                 # moderation and outbox relay
+pnpm --filter @rp/web exec playwright install chromium
+E2E_ADMIN_PASSWORD=... pnpm --filter @rp/web test:e2e
+```
+
+`test:e2e:quarantine` runs the quarantined tests on their own.
+
+## Conventions
+
+- Every test title starts with its ID (`E2E-MOD-001 ...`) so reports map back to the catalogue.
+- Tests create their own users, emails and review titles (`uniqueTag()`), so they can run in parallel.
+- Moderation is asynchronous: wait with `expect.poll` or `toPass`, never with fixed sleeps.
+- Clean text, one blocklist word and two blocklist words give APPROVED, NEEDS_HUMAN and REJECTED from the mock provider.
+- A test that depends on the worker must not pass without it. Failures there are real, not retried into green.
+
+## Coverage of backend services
+
+`pnpm coverage` (repo root) runs Vitest with the v8 coverage provider for `@rp/core`, `@rp/worker` and `@rp/web`.
+Reports land in each package's `coverage/` folder (git-ignored). CI uploads them as a build artifact.
+It reports only; there is no threshold gate yet.
