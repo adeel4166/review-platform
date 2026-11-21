@@ -1,5 +1,6 @@
 import type { Db } from "./db";
 import { HttpError } from "./http";
+import { readyMediaUrls, type Storage } from "./media";
 import type { ReviewInput } from "./validation";
 
 const publicSelect = {
@@ -18,7 +19,7 @@ function isUniqueViolation(e: unknown): boolean {
 }
 
 /** Published reviews only, newest first, paginated. */
-export async function listPublishedReviews(db: Db, productId: string, page: number, pageSize: number) {
+export async function listPublishedReviews(db: Db, productId: string, page: number, pageSize: number, storage?: Storage) {
   const product = await db.product.findFirst({ where: { id: productId, status: "ACTIVE" }, select: { id: true } });
   if (!product) throw new HttpError(404, "not_found", "Product not found");
   const where = { productId, status: "PUBLISHED" as const };
@@ -29,7 +30,9 @@ export async function listPublishedReviews(db: Db, productId: string, page: numb
     }),
     db.review.count({ where }),
   ]);
-  return { items, page, pageSize, total };
+  // Media is shown only when it is READY and its review is PUBLISHED.
+  const media = storage ? await readyMediaUrls(db, storage, items.map((r) => r.id)) : new Map();
+  return { items: items.map((r) => ({ ...r, media: media.get(r.id) ?? [] })), page, pageSize, total };
 }
 
 /** New reviews always start PENDING; the review, its first revision and the outbox event commit atomically. */

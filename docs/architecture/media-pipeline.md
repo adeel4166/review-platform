@@ -413,3 +413,16 @@ Applied to [schema.draft.prisma](./schema.draft.prisma):
 | MD-4 | Transcode cost and latency at volume | Separate `media-video` deployment, autoscale on queue depth; managed transcoding (e.g. Cloudflare Stream) can replace the job behind the same interface |
 | MD-5 | CDN purge failure leaves removed media cached | Demote deletes the origin object first; purge retried; alert |
 | MD-6 | Retention periods are proposals | OPEN(LEGAL) L-5 |
+
+---
+
+## 13. MVP implementation (task #32, M2-3)
+
+Images only (jpeg/png/webp, ≤ 10 MiB, ≤ 5 per review). `POST /api/reviews/:id/media` issues a presigned PUT into the
+ingest bucket; `POST /api/media/:id/confirm` HEADs the object and emits `media.uploaded` (outbox). The `media` worker
+(`apps/worker/src/media.ts`) reads the object once, detects the type by magic bytes, re-encodes via sharp (EXIF/GPS dropped,
+orientation applied) into `thumb` (256 px) and `medium` (1024 px) WebP variants in the private bucket, deletes the
+original and sets `READY`; permanent problems set `FAILED` + `failureReason`; infra errors retry (3 attempts) and then
+`FAILED/PROCESSING_ERROR`. `GET /api/reviews/:id/media` shows the owner every asset incl. failures. Public review reads
+return presigned GET URLs only for `READY` media of `PUBLISHED` reviews. Virus scan, video, promote/demote and the
+separate public bucket are deferred (the migration `20261123000000_media` is not yet applied).

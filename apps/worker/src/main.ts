@@ -1,8 +1,8 @@
 import { Queue, Worker } from "bullmq";
 import { Redis } from "ioredis";
 import { prisma } from "@rp/db";
-import { QUEUES, loadEnv, moderationJobSchema, type Env, type QueueName } from "@rp/core";
-import { processors } from "./processors";
+import { QUEUES, loadEnv, mediaJobSchema, moderationJobSchema, type Env, type QueueName } from "@rp/core";
+import { getMediaDeps, markMediaFailed, processors } from "./processors";
 import { MODERATION_JOB_OPTIONS, escalateDeadLetter, isFinalFailure, type WorkerDb } from "./moderation";
 import { relayOnce, type OutboxStore } from "./outbox";
 
@@ -21,7 +21,7 @@ const connection = new Redis(env.REDIS_URL, { maxRetriesPerRequest: null });
 const queues = new Map<QueueName, Queue>();
 const getQueue = (n: QueueName) => {
   let q = queues.get(n);
-  if (!q) queues.set(n, (q = new Queue(n, { connection, ...(n === QUEUES.moderation ? { defaultJobOptions: MODERATION_JOB_OPTIONS } : {}) })));
+  if (!q) queues.set(n, (q = new Queue(n, { connection, ...(n === QUEUES.moderation ? { defaultJobOptions: MODERATION_JOB_OPTIONS } : {}), ...(n === QUEUES.media ? { defaultJobOptions: { attempts: 3, backoff: { type: "exponential", delay: 5000 }, removeOnFail: false } } : {}) })));
   return q;
 };
 
@@ -37,6 +37,11 @@ const workers = Object.entries(processors).map(([name, fn]) => {
   const w = new Worker(name, (job) => fn!(job), { connection, concurrency: env.WORKER_CONCURRENCY });
   w.on("failed", (job, err) => {
     console.error(JSON.stringify({ msg: "job.failed", queue: name, jobId: job?.id, attempt: job?.attemptsMade, err: err.message }));
+    if (name === QUEUES.media && job && isFinalFailure(job)) {
+      // Retries exhausted (e.g. storage outage): surface FAILED on the asset instead of leaving it PROCESSING.
+      const m = mediaJobSchema.safeParse(job.data);
+      if (m.success) markMediaFailed(getMediaDeps(), m.data.assetId, "PROCESSING_ERROR").catch((e: Error) => console.error(JSON.stringify({ msg: "media.fail.mark.error", jobId: job.id, err: e.message })));
+    }
     if (name !== QUEUES.moderation || !job || !isFinalFailure(job)) return;
     // Retries exhausted: park the job in the dead-letter queue and send the review to a human (fail closed).
     const payload = moderationJobSchema.safeParse(job.data);

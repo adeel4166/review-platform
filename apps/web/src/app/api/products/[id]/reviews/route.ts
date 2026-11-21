@@ -1,4 +1,5 @@
 import { db } from "@/server/db";
+import { getStorage } from "@/server/storage";
 import { handle, json, readJson } from "@/server/http";
 import { createReview, listPublishedReviews } from "@/server/reviews";
 import { requireUser } from "@/server/session";
@@ -8,7 +9,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   return handle(async () => {
     const id = idParam.parse((await ctx.params).id);
     const q = reviewListQuery.parse(Object.fromEntries(new URL(req.url).searchParams));
-    return json(await listPublishedReviews(db, id, q.page, q.pageSize));
+    return json(await listPublishedReviews(db, id, q.page, q.pageSize, getStorage()));
   });
 }
 

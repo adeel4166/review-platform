@@ -5,3 +5,5 @@ export * from "./moderation-provider";
 export * from "./verified-buyer";
 export * from "./moderation-service";
 export * from "./moderation-fake";
+export * from "./media";
+export * from "./media-store-fake";
