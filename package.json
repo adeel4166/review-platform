@@ -7,7 +7,7 @@
   },
   "scripts": {
     "start:local": "bash scripts/local-up.sh",
-    "infra:up": "docker compose up -d --wait mysql redis minio && docker compose --profile init run --rm minio-init",
+    "infra:up": "docker compose up -d --wait mysql redis minio mailpit && docker compose --profile init run --rm minio-init",
     "infra:down": "docker compose down",
     "dev": "pnpm --parallel --filter @rp/web --filter @rp/worker dev",
     "db:generate": "pnpm --filter @rp/db generate",

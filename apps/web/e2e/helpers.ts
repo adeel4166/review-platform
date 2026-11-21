@@ -45,7 +45,7 @@ export async function registerUser(request: APIRequestContext, user: TestUser = 
   const res = await request.post("/api/auth/register", {
     data: { email: user.email, password: user.password, handle: user.handle, displayName: user.displayName },
   });
-  expect(res.status(), await res.text()).toBe(201);
+  expect(res.status(), await res.text()).toBe(202); // generic register response (SEC-05)
   return user;
 }
 

@@ -49,7 +49,9 @@ pnpm --filter @rp/db seed             # idempotent demo data (admin@example.com,
 
 | Endpoint | Auth | Notes |
 |---|---|---|
-| `POST /api/auth/register` | – | email, password (10-128), handle, displayName |
+| `POST /api/auth/register` | – | email, password (10-128), handle, displayName. Always `202 {"status":"verification_sent"}` for new and existing emails (SEC-05); a handle clash is 409 |
+| `POST /api/auth/verify-email` | – | `{token}`; single use, 24 h; every failure is `400 invalid_or_expired` |
+| `POST /api/auth/verify-email/resend` | user | 202; max 3/h, 10/day |
 | `/api/auth/*` | – | Auth.js (credentials, JWT sessions; role `user`/`admin`) |
 | `GET /api/products` | – | `?page&pageSize&category&q`, ACTIVE only |
 | `GET /api/products/:idOrSlug` | – | |

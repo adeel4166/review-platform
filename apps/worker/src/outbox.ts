@@ -11,6 +11,8 @@ export interface OutboxRow {
 export const routes: Record<string, QueueName> = {
   "review.submitted": QUEUES.moderation,
   "media.uploaded": QUEUES.media,
+  "user.email_verification_requested": QUEUES.notifications,
+  "user.registration_conflict": QUEUES.notifications,
 };
 
 export interface OutboxStore {

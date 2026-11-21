@@ -1,7 +1,8 @@
 import type { Job } from "bullmq";
-import { QUEUES, createS3Store, loadEnv, mediaBuckets, mediaJobSchema, moderationJobSchema, type QueueName } from "@rp/core";
+import { QUEUES, createMailProvider, createS3Store, loadEnv, mediaBuckets, mediaJobSchema, moderationJobSchema, type QueueName } from "@rp/core";
 import { prisma } from "@rp/db";
 import { StubPurchaseLookup, createModerationProvider, markVerifiedBuyer } from "@rp/core";
+import { sendAccountExistsEmail, sendVerificationEmail, type EmailDb } from "./email";
 import { markMediaFailed, processMedia, type MediaDb } from "./media";
 import { processModeration, verifiedBuyerStore, type VerifiedBuyerDb, type WorkerDb } from "./moderation";
 
@@ -20,6 +21,8 @@ export const getMediaDeps = () => {
   return { db: prisma as unknown as MediaDb, ...storage };
 };
 export { markMediaFailed };
+let mailer: ReturnType<typeof createMailProvider> | undefined;
+const getMail = () => (mailer ??= createMailProvider());
 const getDb = () => prisma as unknown as WorkerDb;
 
 /**
@@ -40,5 +43,14 @@ export const processors: Partial<Record<QueueName, Processor>> = {
     const p = mediaJobSchema.parse(job.data);
     const outcome = await processMedia(getMediaDeps(), p.assetId);
     console.log(JSON.stringify({ msg: "media.done", jobId: job.id, assetId: p.assetId, outcome }));
+  },
+  [QUEUES.notifications]: async (job) => {
+    const d = { db: prisma as unknown as EmailDb, mail: getMail() };
+    const key = String(job.id);
+    const data = (job.data ?? {}) as { tokenId?: string; userId?: string };
+    let outcome = "SKIPPED";
+    if (job.name === "user.email_verification_requested" && data.tokenId) outcome = await sendVerificationEmail(d, data.tokenId, key);
+    else if (job.name === "user.registration_conflict" && data.userId) outcome = await sendAccountExistsEmail(d, data.userId, key);
+    console.log(JSON.stringify({ msg: "notification.done", jobId: job.id, type: job.name, outcome })); // never the address, token or URL
   },
 };

@@ -96,6 +96,8 @@ model User {
   timeZone        String?    @db.VarChar(64)
   status          UserStatus @default(ACTIVE)
   lastLoginAt     DateTime?
+  /// Throttle for the "someone tried to register" mail (ADR-0016): at most one per hour.
+  accountExistsNoticeAt DateTime?
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
 
@@ -107,6 +109,7 @@ model User {
   mediaAssets     MediaAsset[]     @relation("MediaOwner")
   casesDecided    ModerationCase[] @relation("CaseDecidedBy")
   auditLogs       AuditLog[]       @relation("AuditActor")
+  emailTokens     EmailVerificationToken[]
 
   @@index([status])
   @@map("users")
@@ -314,4 +317,29 @@ model MediaAsset {
   @@index([ownerId, createdAt])
   @@index([status, createdAt])
   @@map("media_assets")
+}
+
+enum EmailTokenPurpose {
+  ACCOUNT_EMAIL        // prove control of User.email
+  CLAIM_BUSINESS_EMAIL // reserved for M3-06 claim checks
+}
+
+/// ADR-0016. The web app inserts the row with tokenHash NULL; the worker generates the raw token, stores only
+/// its SHA-256 hex digest, then mails it. Single use, 24 h expiry, bound to the target address.
+model EmailVerificationToken {
+  id            String            @id @default(cuid())
+  userId        String
+  purpose       EmailTokenPurpose
+  email         String            @db.VarChar(254)
+  tokenHash     String?           @unique @db.Char(64)
+  expiresAt     DateTime          @db.DateTime(3)
+  sentAt        DateTime?         @db.DateTime(3)
+  consumedAt    DateTime?         @db.DateTime(3)
+  invalidatedAt DateTime?         @db.DateTime(3)
+  createdAt     DateTime          @default(now()) @db.DateTime(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose, createdAt])
+  @@map("email_verification_tokens")
 }

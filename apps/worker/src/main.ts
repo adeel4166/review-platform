@@ -22,7 +22,7 @@ const connection = new Redis(env.REDIS_URL, { maxRetriesPerRequest: null });
 const queues = new Map<QueueName, Queue>();
 const getQueue = (n: QueueName) => {
   let q = queues.get(n);
-  if (!q) queues.set(n, (q = new Queue(n, { connection, ...(n === QUEUES.moderation ? { defaultJobOptions: MODERATION_JOB_OPTIONS } : {}), ...(n === QUEUES.media ? { defaultJobOptions: { attempts: 3, backoff: { type: "exponential", delay: 5000 }, removeOnFail: false } } : {}) })));
+  if (!q) queues.set(n, (q = new Queue(n, { connection, ...(n === QUEUES.moderation ? { defaultJobOptions: MODERATION_JOB_OPTIONS } : {}), ...(n === QUEUES.notifications ? { defaultJobOptions: { attempts: 5, backoff: { type: "exponential", delay: 5000 } } } : {}), ...(n === QUEUES.media ? { defaultJobOptions: { attempts: 3, backoff: { type: "exponential", delay: 5000 }, removeOnFail: false } } : {}) })));
   return q;
 };
 
