@@ -119,6 +119,10 @@ model User {
   invitationsSent      SellerInvitation[]     @relation("InvitationSentBy")
   invitationsAccepted  SellerInvitation[]     @relation("InvitationAcceptedBy")
   invitationsRevoked   SellerInvitation[]     @relation("InvitationRevokedBy")
+  transfersInitiated   SellerOwnershipTransfer[]   @relation("TransferInitiator")
+  transfersTargeted    SellerOwnershipTransfer[]   @relation("TransferTarget")
+  transfersEnded       SellerOwnershipTransfer[]   @relation("TransferEndedBy")
+  transferCancelTokens SellerTransferCancelToken[] @relation("TransferCancelRecipient")
   ownershipClaims      SellerOwnershipClaim[] @relation("ClaimSubmittedBy")
   claimDecisions       SellerClaimDecision[]  @relation("ClaimDecisionReviewer")
   enforcementsReceived EnforcementAction[]    @relation("EnforcementSubjectUser")
@@ -351,6 +355,7 @@ model EmailVerificationToken {
   userId        String
   purpose       EmailTokenPurpose
   email         String            @db.VarChar(254)
+  claimId       String? // CLAIM_BUSINESS_EMAIL only: the claim this token verifies (m3b-spec 4.4)
   tokenHash     String?           @unique @db.Char(64)
   expiresAt     DateTime          @db.DateTime(3)
   sentAt        DateTime?         @db.DateTime(3)
@@ -358,9 +363,11 @@ model EmailVerificationToken {
   invalidatedAt DateTime?         @db.DateTime(3)
   createdAt     DateTime          @default(now()) @db.DateTime(3)
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user  User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  claim SellerOwnershipClaim? @relation(fields: [claimId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([userId, purpose, createdAt])
+  @@index([claimId])
   @@map("email_verification_tokens")
 }
 
@@ -483,6 +490,7 @@ model Seller {
 
   members            SellerMember[]
   invitations        SellerInvitation[]
+  ownershipTransfers SellerOwnershipTransfer[]
   ownershipClaims    SellerOwnershipClaim[] @relation("ClaimSeller")
   products           Product[]
   enforcementActions EnforcementAction[]
@@ -550,6 +558,7 @@ model SellerOwnershipClaim {
   challengeValue       String?              @unique @db.VarChar(64)
   challengeExpiresAt   DateTime?            @db.DateTime(3)
   evidenceUrl          String?              @db.VarChar(2048)
+  businessEmail        String?              @db.VarChar(254) // BUSINESS_EMAIL_DOMAIN only (chk_claim_business_email_*); personal data, never audited
   requiresHumanReview  Boolean              @default(false)
   humanReviewReason    String?              @db.VarChar(32)
   requiredApprovals    Int                  @default(1)
@@ -582,7 +591,8 @@ model SellerOwnershipClaim {
   conflictedBy  SellerOwnershipClaim[] @relation("ClaimConflict")
   verifiedFor   Seller?                @relation("SellerVerifiedClaim")
 
-  decisions SellerClaimDecision[]
+  decisions    SellerClaimDecision[]
+  emailTokens  EmailVerificationToken[]
 
   @@unique([id, sellerId])
   @@index([status, createdAt])
@@ -708,4 +718,93 @@ model RecoveryCode {
 
   @@unique([userId, codeHash])
   @@map("recovery_codes")
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// M3b-05: delayed two-party ownership changes (docs/architecture/m3b-spec.md section 3, ADR-0020).
+// ---------------------------------------------------------------------------------------------------------------
+
+enum OwnershipTransferKind {
+  ADD_OWNER // target member becomes an additional OWNER; initiator stays OWNER
+  TRANSFER // target becomes OWNER; initiator steps down (initiatorOutcome)
+  REMOVE_OWNER // another OWNER is demoted or removed (targetOutcome); no acceptance, cancellable by the target
+}
+
+enum OwnershipTransferStatus {
+  PENDING // waiting for the target's acceptance (ADD_OWNER/TRANSFER)
+  ACCEPTED // accepted (REMOVE_OWNER starts here); waiting for executeAfter
+  COMPLETED // terminal
+  CANCELLED // terminal
+  EXPIRED // terminal: not accepted before acceptBy
+  FAILED // terminal: a precondition no longer held at execution
+}
+
+enum OwnerChangeOutcome {
+  REMAIN_OWNER
+  BECOME_MANAGER
+  BECOME_RESPONDER
+  REMOVED
+}
+
+enum OwnershipTransferEndReason {
+  CANCELLED_BY_INITIATOR
+  CANCELLED_BY_OWNER
+  CANCELLED_BY_TARGET
+  CANCELLED_BY_LINK
+  CANCELLED_BY_STAFF
+  CANCELLED_MEMBERSHIP_CHANGED
+  INITIATOR_NOT_OWNER
+  TARGET_NOT_ELIGIBLE
+  TWO_FACTOR_MISSING
+  SELLER_BLOCKED
+  LAST_OWNER
+}
+
+model SellerOwnershipTransfer {
+  id               String                      @id @default(cuid())
+  sellerId         String
+  kind             OwnershipTransferKind
+  status           OwnershipTransferStatus     @default(PENDING)
+  initiatorId      String
+  targetUserId     String
+  initiatorOutcome OwnerChangeOutcome          @default(REMAIN_OWNER)
+  targetOutcome    OwnerChangeOutcome? // REMOVE_OWNER only
+  openKey          String?                     @unique @db.VarChar(32) // = sellerId while PENDING/ACCEPTED
+  executeAfter     DateTime                    @db.DateTime(3) // createdAt + 72 h; DB floor chk_transfer_delay
+  acceptBy         DateTime                    @db.DateTime(3) // createdAt + 7 d
+  acceptedAt       DateTime?                   @db.DateTime(3)
+  endedAt          DateTime?                   @db.DateTime(3)
+  endReason        OwnershipTransferEndReason?
+  endedById        String?
+  createdAt        DateTime                    @default(now()) @db.DateTime(3)
+  updatedAt        DateTime                    @updatedAt @db.DateTime(3)
+
+  seller       Seller                      @relation(fields: [sellerId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  initiator    User                        @relation("TransferInitiator", fields: [initiatorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  target       User                        @relation("TransferTarget", fields: [targetUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  endedBy      User?                       @relation("TransferEndedBy", fields: [endedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  cancelTokens SellerTransferCancelToken[]
+
+  @@index([sellerId, createdAt])
+  @@index([status, executeAfter])
+  @@index([status, acceptBy])
+  @@index([targetUserId, status])
+  @@map("seller_ownership_transfers")
+}
+
+/// Single-use cancel link per recipient (every OWNER, plus the target). The raw token is generated by the worker; only SHA-256 is stored.
+model SellerTransferCancelToken {
+  id          String    @id @default(cuid())
+  transferId  String
+  recipientId String
+  tokenHash   String?   @unique @db.Char(64)
+  sentAt      DateTime? @db.DateTime(3)
+  usedAt      DateTime? @db.DateTime(3)
+  createdAt   DateTime  @default(now()) @db.DateTime(3)
+
+  transfer  SellerOwnershipTransfer @relation(fields: [transferId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  recipient User                    @relation("TransferCancelRecipient", fields: [recipientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([transferId, recipientId])
+  @@map("seller_transfer_cancel_tokens")
 }

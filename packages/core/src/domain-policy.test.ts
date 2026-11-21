@@ -51,3 +51,49 @@ describe("isPublicAddress (spec §6.3 deny table)", () => {
   it.each(denied)("denies %s", (a) => expect(isPublicAddress(a)).toBe(false));
   it.each(allowed)("allows %s", (a) => expect(isPublicAddress(a)).toBe(true));
 });
+
+import { EmailNotAllowedError, assertClaimableBusinessEmail, classifySuffix } from "./index";
+import { PSL_ICANN_RULES, PSL_SHA256, PSL_VERSION } from "./psl-snapshot";
+
+describe("pinned full PSL snapshot (T-10)", () => {
+  it("is a real, versioned snapshot", () => {
+    expect(PSL_VERSION).toMatch(/^\d{4}-\d\d-\d\d/);
+    expect(PSL_SHA256).toMatch(/^[0-9a-f]{64}$/);
+    expect(PSL_ICANN_RULES.split("\n").length).toBeGreaterThan(5000);
+  });
+  it("applies wildcard and exception rules and suffixes the old subset missed", () => {
+    expect(classifySuffix("a.b.example.ck".split("."))).toEqual({ suffixLen: 2, isPrivate: false }); // *.ck makes example.ck the suffix
+    expect(classifySuffix("www.ck".split("."))).toEqual({ suffixLen: 1, isPrivate: false }); // !www.ck
+    expect(classifySuffix("brand.com.au".split("."))).toEqual({ suffixLen: 2, isPrivate: false });
+    expect(classifySuffix("brand.gov.in".split("."))).toEqual({ suffixLen: 2, isPrivate: false }); // not in the old subset
+    expect(classifySuffix("brand.github.io".split("."))).toEqual({ suffixLen: 2, isPrivate: true });
+  });
+  it.each(["brand.pages.dev", "x.vercel.app", "x.s3.amazonaws.com", "x.cloudfront.net", "x.my.id.example.web.app"])("private-section suffix %s is shared_host", (d) => {
+    expect(reason(() => assertOwnableDomain(d))).toBe("shared_host");
+  });
+  it("registrable domains under newer multi-label suffixes are accepted", () => {
+    expect(assertOwnableDomain("brand.com.ng").domain).toBe("brand.com.ng");
+    expect(assertOwnableDomain("brand.ac.nz").domain).toBe("brand.ac.nz");
+    expect(reason(() => assertOwnableDomain("com.ng"))).toBe("not_registrable");
+  });
+});
+
+describe("assertClaimableBusinessEmail (m3b-spec 4.1)", () => {
+  const err = (f: () => unknown) => { try { f(); return "OK"; } catch (e) { return e instanceof DomainNotAllowedError ? e.reason : e instanceof EmailNotAllowedError ? e.reason : "OTHER"; } };
+  it("accepts a personal address and flags role addresses", () => {
+    expect(assertClaimableBusinessEmail("Jane.Doe+rp@Acme.com", "acme.com")).toMatchObject({ domain: "acme.com", localClass: "personal", address: "Jane.Doe+rp@Acme.com" });
+    expect(assertClaimableBusinessEmail("info@acme.com").localClass).toBe("role");
+    expect(assertClaimableBusinessEmail("Sales+x@acme.com").localClass).toBe("role");
+  });
+  it.each(["jane@gmail.com", "jane@hotmail.fr", "jane@yahoo.co.uk"])("free mail %s is refused", (a) => expect(err(() => assertClaimableBusinessEmail(a))).toBe("free_mail"));
+  it.each(["jane@shop.myshopify.com", "jane@brand.github.io", "jane@brand.pages.dev", "jane@shopify.com"])("shared suffix / host %s is refused", (a) => expect(err(() => assertClaimableBusinessEmail(a))).toBe("shared_host"));
+  it("refuses a subdomain mailbox, a bare suffix and a mismatching claimed domain", () => {
+    expect(err(() => assertClaimableBusinessEmail("jane@mail.acme.com"))).toBe("subdomain_mailbox");
+    expect(err(() => assertClaimableBusinessEmail("jane@co.uk"))).toBe("not_registrable");
+    expect(err(() => assertClaimableBusinessEmail("jane@acme.com", "other.com"))).toBe("invalid");
+  });
+  it.each(["noreply@acme.com", "no-reply+x@acme.com", "abuse@acme.com", "x-request@acme.com", "owner-list@acme.com"])("reserved %s is refused", (a) => expect(err(() => assertClaimableBusinessEmail(a))).toBe("reserved_local_part"));
+  it.each(['"jane doe"@acme.com', "jane@[1.2.3.4]", "jane..doe@acme.com", ".jane@acme.com", "jane.@acme.com", "jäne@acme.com", "a@b@acme.com", "jane", `${"a".repeat(65)}@acme.com`])("invalid address %j is refused", (a) => {
+    expect(["invalid_email", "invalid", "ip_literal"]).toContain(err(() => assertClaimableBusinessEmail(a)));
+  });
+});

@@ -80,7 +80,7 @@ export interface ApprovalFacts {
   contested?: boolean;
 }
 
-export type HumanReviewReason = "MANUAL_METHOD" | "CONFLICT" | "HIGH_VOLUME" | "NAME_FLAG" | "PRODUCT_SCOPE";
+export type HumanReviewReason = "MANUAL_METHOD" | "CONFLICT" | "HIGH_VOLUME" | "NAME_FLAG" | "PRODUCT_SCOPE" | "ROLE_ADDRESS";
 
 /** Whether the claim must go to the human queue, why, and how many distinct approvers it needs. */
 export function reviewRequirements(f: ApprovalFacts): { requiresHumanReview: boolean; reason: HumanReviewReason | null; requiredApprovals: 1 | 2 } {

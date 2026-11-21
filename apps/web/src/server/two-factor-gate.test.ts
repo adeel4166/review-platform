@@ -23,6 +23,8 @@ const exported = (file: string) => METHODS.filter((m) => new RegExp(`export (asy
 const PUBLIC = new Set([
   "health/route.ts:GET", "auth/register/route.ts:POST", "auth/verify-email/route.ts:POST", "auth/verify-email/route.ts:GET",
   "auth/verify-email/status/route.ts:GET", // answers `{unverified:false}` exactly as for an anonymous caller: a pending session has no visible user
+  "ownership-transfers/cancel-by-link/route.ts:POST", // cancel link: the unused token is the credential (m3b-spec 3.4)
+  "claims/email-verify/deny/route.ts:POST", // mailbox holder's veto link (m3b-spec 4.4)
   "products/route.ts:GET", "products/[id]/route.ts:GET", "products/[id]/reviews/route.ts:GET",
 ]);
 /** Handled by Auth.js itself (sign out / session marker / credentials sign-in). */

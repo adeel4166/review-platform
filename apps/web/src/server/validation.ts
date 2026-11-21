@@ -102,7 +102,7 @@ export const claimSubmitInput = claimBase.superRefine((v, ctx) => {
   if (v.scope === "PRODUCT" && !v.productId) bad("productId", "productId is required for PRODUCT scope"); // SEL-012
   if (v.scope === "SELLER" && v.productId) bad("productId", "productId is only allowed for PRODUCT scope");
   if (v.scope === "PRODUCT" && v.method !== "DOCUMENT" && v.method !== "MARKETPLACE") bad("method", "PRODUCT claims use DOCUMENT or MARKETPLACE");
-  if ((v.method === "DNS_TXT" || v.method === "META_TAG" || v.method === "BUSINESS_EMAIL_DOMAIN") && !v.domain) bad("domain", "domain is required for this method");
+  if ((v.method === "DNS_TXT" || v.method === "META_TAG") && !v.domain) bad("domain", "domain is required for this method");
   if (v.method === "BUSINESS_EMAIL_DOMAIN" && !v.businessEmail) bad("businessEmail", "businessEmail is required");
   if (v.method === "MARKETPLACE" && !v.evidenceUrl) bad("evidenceUrl", "evidenceUrl is required for MARKETPLACE");
 });
@@ -117,3 +117,12 @@ export const claimDecisionInput = z
     note: z.string().trim().max(2000).optional(),
   })
   .strict();
+
+/** m3b-spec 3.4: the seller id comes from the path; the body is strict and never carries it. */
+const outcome = z.enum(["BECOME_MANAGER", "BECOME_RESPONDER", "REMOVED"]);
+export const transferCreateInput = z
+  .object({ kind: z.enum(["ADD_OWNER", "TRANSFER", "REMOVE_OWNER"]), targetUserId: z.string().min(1).max(191), initiatorOutcome: outcome.optional(), targetOutcome: outcome.optional() })
+  .strict();
+export const transferTokenInput = z.object({ token: z.string().min(20).max(128) }).strict();
+export const transferStaffCancelInput = z.object({ reasonCode: z.string().regex(/^[A-Z0-9_]{2,40}$/) }).strict();
+export const claimEmailTokenInput = z.object({ token: z.string().min(20).max(128) }).strict();
