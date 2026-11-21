@@ -2,7 +2,9 @@
   "name": "review-platform",
   "private": true,
   "packageManager": "pnpm@9.15.0",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start:local": "bash scripts/local-up.sh",
     "infra:up": "docker compose up -d --wait mysql redis minio && docker compose --profile init run --rm minio-init",
@@ -24,5 +26,13 @@
     "eslint": "^9.17.0",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.18.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "@auth/core": "^0.41.3",
+      "postcss": "^8.5.23",
+      "effect": "^3.22.1",
+      "deepmerge-ts": "^8.0.0"
+    }
   }
 }
