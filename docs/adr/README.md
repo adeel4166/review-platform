@@ -24,6 +24,9 @@ We record significant architecture decisions as ADRs (lightweight Michael Nygard
 | [0008](./0008-verified-buyer-approach.md) | Verified-buyer approach | Proposed | 2026-11-21 |
 | [0009](./0009-i18n-readiness.md) | Internationalisation readiness (English default) | Proposed | 2026-11-21 |
 | [0010](./0010-database-physical-naming.md) | Database physical naming (amends ADR-0004) | Proposed | 2026-11-21 |
+| [0011](./0011-moderation-lifecycle-and-audit.md) | Moderation lifecycle completion and audit contract (amends ADR-0005) | Proposed | 2026-11-21 |
+| [0012](./0012-media-job-decomposition.md) | Media processing as step jobs with a verified staging copy (amends ADR-0006) | Proposed | 2026-11-21 |
+| [0013](./0013-outbox-fan-out-routing.md) | Outbox fan-out routing and domain job keys (refines ADR-0007) | Proposed | 2026-11-21 |
 
 ### Task #24 coverage map (stack, storage, worker, verified buyer, i18n)
 
@@ -34,3 +37,13 @@ We record significant architecture decisions as ADRs (lightweight Michael Nygard
 | Queue-based worker | [0007](./0007-queue-based-worker.md) (builds on 0001 §4, 0005, 0006) |
 | Verified-buyer approach | [0008](./0008-verified-buyer-approach.md) |
 | i18n readiness (English default) | [0009](./0009-i18n-readiness.md) |
+
+### Task #25 coverage map (moderation lifecycle and media pipeline)
+
+| Required topic | Where |
+|---|---|
+| Lifecycle states (submitted … removed), transitions, actors, audit logging | [moderation-lifecycle.md](../architecture/moderation-lifecycle.md), [0011](./0011-moderation-lifecycle-and-audit.md) |
+| State diagram + transition table | [moderation-lifecycle.md §2, §4, §5](../architecture/moderation-lifecycle.md#2-state-diagram) |
+| Signed upload, scanning, resizing, thumbnails | [media-pipeline.md §2, §4](../architecture/media-pipeline.md), [0012](./0012-media-job-decomposition.md) |
+| Job definitions, payloads, retry policy, failure handling | [job-catalogue.md](../architecture/job-catalogue.md), [0013](./0013-outbox-fan-out-routing.md) |
+| Consistency with the M1-T1 schema | [moderation-lifecycle.md §8](../architecture/moderation-lifecycle.md#8-consistency-with-the-m1-t1-schema), [job-catalogue.md §8](../architecture/job-catalogue.md#8-scaffold-deltas-m2-follow-ups-backend-engineer) |

@@ -5,6 +5,7 @@
 | **Status** | Draft for review (task #19, milestone M1.2) |
 | **Owner** | Software Architect |
 | **Decision record** | [ADR-0006 Media storage and processing](../adr/0006-media-storage-and-processing.md) |
+| **Jobs (M1-T2)** | Step jobs, payloads and retry policy: [job-catalogue.md §4.2](./job-catalogue.md#42-media-queues-media-and-media-video-deployments) ([ADR-0012](../adr/0012-media-job-decomposition.md)) |
 | **Related** | [moderation-pipeline.md](./moderation-pipeline.md) · [data-model.md](./data-model.md) (§6.2 proofs, §7 retention) · [ADR-0001](../adr/0001-technology-stack.md) §5 (upload path, amended here) |
 
 How photos and videos get from the browser into object storage, how they are checked (type, size, malware),
@@ -36,6 +37,11 @@ Per-parent and per-user limits (config, enforced when the upload slot is issued 
 The browser pre-checks type, size and video duration (via a `<video>` element's metadata) for fast feedback only.
 **Every limit is re-checked server-side.**
 
+**Exact boundaries** (answers test-strategy §9.3/§9.4). "MB" means MiB: photo and document ≤ **10 485 760** bytes,
+video ≤ **52 428 800** bytes. Video duration is accepted up to **30.5 s** inclusive, measured on both the container and
+the video stream, and rejected above that. The output is still hard-capped at 30 s. The config stores byte counts,
+not "MB".
+
 ---
 
 ## 2. Upload flow (direct browser → object storage)
@@ -51,7 +57,8 @@ sequenceDiagram
   participant W as Web (Server Action)
   participant DB as MySQL
   participant I as R2 ingest bucket
-  participant Q as Worker (media)
+  participant P as R2 private bucket
+  participant Q as Worker (media / media-video)
 
   B->>B: pre-check type / size / duration (UX only)
   B->>W: createUploadSlot(purpose, kind, mimeType, sizeBytes)
@@ -61,10 +68,16 @@ sequenceDiagram
   B->>I: PUT bytes (direct, with progress)
   B->>W: confirmUpload(assetId)
   W->>I: HEAD object (exists, size == declared ≤ max)
-  W->>DB: MediaAsset(PROCESSING) + log UPLOAD_CONFIRMED + Outbox(media.uploaded)
-  Q->>I: GET object (streamed, byte-capped)
-  Q->>Q: validate → virus scan → sanitize / transcode → variants
-  Q->>DB: MediaAsset(READY, bucket PRIVATE) + logs + Outbox(media.processed)
+  W->>DB: conditional UPLOADING→PROCESSING (ownerId = caller) + log UPLOAD_CONFIRMED + Outbox(media.uploaded)
+  Q->>I: media.scan: GET object once (streamed, byte-capped) → temp file, sha256
+  Q->>Q: validate → banned hash → virus scan (same temp file)
+  Q->>P: PUT that file → staging/{assetId}/original (checksum)
+  Q->>I: DELETE ingest object
+  Q->>DB: MediaAsset(bucket PRIVATE, sha256) + log + Outbox(media.image_requested or media.transcode_requested)
+  Q->>P: media.image / media.transcode: GET staging, verify sha256
+  Q->>Q: sanitize / transcode → variants + thumbnails
+  Q->>P: PUT variants, DELETE staging original
+  Q->>DB: MediaAsset(READY) + logs + Outbox(media.processed)
   B->>W: submit review with mediaAssetIds
   W->>DB: attach (ownership, purpose, status ∈ {PROCESSING, READY})
 ```
@@ -77,12 +90,21 @@ Rules:
    `Content-Length` are part of the signature, so the client must send exactly the declared type and size, and the
    server has already checked the size against the limit. TTL 10 min. One object per slot. If the provider supports
    it, the client also sends `x-amz-checksum-sha256` and the signature includes it.
-3. **Confirm is mandatory.** A slot that is not confirmed within 24 h is cleaned up (§8). A confirm whose `HEAD` shows
+3. **Confirm is mandatory and one-shot.** `confirmUpload` is a conditional update `UPLOADING → PROCESSING` with
+   `ownerId = caller` and an unexpired slot, so a user cannot confirm someone else's slot (threat U-4). A repeated
+   confirm returns the current status and emits nothing. A slot that is not confirmed within 24 h is cleaned up
+   (`maintenance.media-orphans`). A confirm whose `HEAD` shows
    a missing object or a size mismatch marks the asset `REJECTED (TYPE_MISMATCH / TOO_LARGE)` and deletes the object.
 4. **Attaching** happens when the parent is submitted: the asset must belong to the submitter, match the parent's
    purpose, not be attached elsewhere, and be `PROCESSING` or `READY`. A parent can be submitted before processing
    finishes; moderation waits for it ([moderation-pipeline.md §2.4](./moderation-pipeline.md#24-content-with-media)).
-5. 50 MB is sent as a single PUT in Phase 1. Resumable multipart upload is a follow-up if mobile failure rates
+5. **Scanned bytes are the processed bytes** (threat U-5, ADR-0012). `media.scan` reads the ingest object exactly
+   once, scans that copy and uploads it to `staging/`. Later steps decode only the staging copy, and only after its
+   sha256 matches. A later PUT to the ingest key, which the presigned URL allows until it expires, is never read.
+   Where the provider supports it, the slot also signs `If-None-Match: *` (to verify for R2 and MinIO in M5).
+6. **Client retries:** the browser retries a failed PUT up to 3 times with the same URL while it is valid, and after
+   that requests a new slot. The abandoned slot is cleaned up as unconfirmed.
+7. 50 MB is sent as a single PUT in Phase 1. Resumable multipart upload is a follow-up if mobile failure rates
    demand it (§12).
 
 ---
@@ -124,7 +146,7 @@ stateDiagram-v2
 
 | Step | What happens | On failure |
 |---|---|---|
-| **VALIDATE** | Stream from ingest to a per-job temp dir, aborting at `max + 1` bytes. Compute sha256. Detect the real type from magic bytes. It must be in the allow-list for the purpose and match the declared kind. Reject polyglots (multiple valid signatures) and known-banned hashes | `REJECTED` with `failureReason` |
+| **VALIDATE** | (`media.scan`) Stream from ingest **once** to a per-job temp dir, aborting at `max + 1` bytes. Compute sha256. Detect the real type from magic bytes. It must be in the allow-list for the purpose and match the declared kind. Reject polyglots (multiple valid signatures) and known-banned hashes | `REJECTED` with `failureReason` |
 | **VIRUS_SCAN** | ClamAV `clamd` (sidecar container in the worker pod) via `INSTREAM`. Signatures updated hourly by `freshclam`; the signature version is logged per scan. `StreamMaxLength`, `MaxScanSize` and `MaxFileSize` raised to **64 MB** (ClamAV's 25 MB default would silently skip part of a 50 MB video) | **INFECTED** → copy to `quarantine/`, delete from ingest, `REJECTED (MALWARE)`, `TrustSignal MALWARE_UPLOAD`, parent forced to UNSURE, uploader gets `MEDIA_REJECTED`. **Scanner error** → retry; **fail closed**: after ~6 h of retries → `FAILED (SCAN_UNAVAILABLE)` |
 
 Nothing is decoded by image or video libraries before the virus scan passes.
@@ -148,8 +170,9 @@ Nothing is decoded by image or video libraries before the virus scan passes.
 | `large` | 1920 px | WebP q82 | lightbox |
 | `large_jpg` | 1920 px | JPEG q82 | email / Open Graph fallback |
 
-5. Compute a perceptual hash (`perceptualHash`) for near-duplicate detection. Delete the raw object from ingest.
-   `READY`, emit `media.processed`.
+5. Compute a perceptual hash (`perceptualHash`) for near-duplicate detection. Delete the staging original.
+   `READY`, emit `media.processed`. Steps 1–5 are the `media.image` job; `thumb` is the thumbnail and is produced from
+   the same decode as the other sizes.
 
 Evidence purposes (proof, ownership, appeal) use the same steps 1–3 but keep a single full-resolution `master`
 (max 4096 px) instead of web variants, and PDFs are rasterised for redaction (data-model.md §6.2).
@@ -183,7 +206,7 @@ concurrency) so transcodes cannot starve moderation or image jobs.
 4. **Poster** frame at 1 s (or 0 s for shorter clips) → `poster` WebP (sanitised like a photo) + `poster_thumb` 320 px.
 5. **Moderation frames**: 1 fps, at most 30, 512 px WebP in `frames/{assetId}/` (private). Deleted by the moderation
    job after assessment; a 2-day lifecycle rule is the safety net.
-6. Delete the raw object from ingest. `READY`, emit `media.processed`.
+6. Delete the staging original. `READY`, emit `media.processed`. Steps 1–6 are the `media.transcode` job.
 
 ### 4.4 Moderation and publication (visibility gating)
 
@@ -216,7 +239,7 @@ lifecycle rules, so a leaked web-app credential can at worst write raw files int
 | Bucket | Access | Encryption | Lifecycle safety net | Purpose |
 |---|---|---|---|---|
 | `rp-{env}-ingest` | Private. Browsers write via presigned PUT only | Provider SSE | Delete objects older than **2 days** | Raw, untrusted uploads |
-| `rp-{env}-private` | Private. Signed GET ≤ 5 min | Provider SSE | `frames/` 2 days, `quarantine/` 30 days | Processed media not (or no longer) public, evidence, quarantine |
+| `rp-{env}-private` | Private. Signed GET ≤ 5 min | Provider SSE | `staging/` 2 days, `frames/` 2 days, `quarantine/` 30 days | Processed media not (or no longer) public, evidence, quarantine |
 | `rp-{env}-public` | Public read **through the CDN custom domain only** (`r2.dev` access disabled, no listing) | Provider SSE | none (deletion is driven by the app) | Published media |
 
 ### 5.2 Key layout
@@ -228,6 +251,7 @@ rp-{env}-ingest/
 rp-{env}-private/
   media/{assetId}/{variant}.{ext}                         processed UGC media while not public
                                                           (pending, hidden, rejected, removed, deleted)
+  staging/{assetId}/original                              scanned upload, exact bytes that passed the scan (transient)
   frames/{assetId}/{nnn}.webp                             video frames for AI moderation (transient)
   evidence/{purpose}/{yyyy}/{mm}/{assetId}/master.{ext}   PURCHASE_PROOF | OWNERSHIP_EVIDENCE | APPEAL_EVIDENCE
                                                           (redacted copies are their own MediaAsset row/key)
@@ -327,17 +351,12 @@ Access: staff with `moderation.queue.read` see an asset's log in the media detai
 
 ## 8. Jobs
 
-| Job | Queue | Triggered by | `jobId` | Attempts / back-off | Timeout | On final failure |
-|---|---|---|---|---|---|---|
-| `media.process` | media | `media.uploaded` | `process:<assetId>` | 8: 1 m, 5 m, 15 m, 30 m, 1 h ×4 (≈ 6 h; scanner outages) | 2 min | `FAILED`, notify uploader, parent proceeds without it |
-| `media.transcode` | media-video | `media.process` (video, after scan) | `transcode:<assetId>` | 3, exp 1 m | 5 min | `FAILED (PROCESSING_ERROR)`, notify |
-| `media.promote` | media | `moderation.decided` → PUBLISHED, appeal overturn | `promote:<assetId>:<decisionId>` | 5, exp | 60 s | Alert (content live without media) |
-| `media.demote` | media | parent hidden / removed / deleted, account erasure | `demote:<assetId>:<decisionId>` | 10, exp | 60 s | **Page on-call** |
-| `media.purge` | media | retention sweep, erasure | `purge:<assetId>` | 5, exp | 60 s | Alert, retried next sweep |
-| `maintenance.media-orphans` | maintenance | hourly | repeat | 1 | 5 min | Alert after 3 failures |
-| `maintenance.media-retention` | maintenance | daily 03:00 UTC | repeat | 1 | 30 min | Alert |
-| `maintenance.purge-media-logs` | maintenance | daily | repeat | 1 | 10 min | Alert |
-| `maintenance.clamav-freshness` | maintenance | hourly | repeat | 1 | 30 s | Alert when signatures > 24 h old |
+Moved to [job-catalogue.md §4.2](./job-catalogue.md#42-media-queues-media-and-media-video-deployments) (M1-T2,
+[ADR-0012](../adr/0012-media-job-decomposition.md)). The former `media.process` job is split into `media.scan`
+(validate, banned hash, virus scan, staging copy) and `media.image` (sanitise, resize, thumbnails). `media.transcode`
+now starts from the staging copy. The same section has payloads, job ids, retry budgets (scanner: 9 attempts ≈ 6 h,
+fail closed), unrecoverable-error mapping and the failure-handling matrix. Sweepers and schedules are in §5 of that
+document.
 
 Every handler is idempotent: it re-reads the asset and checks `status`/`bucket` before acting, and object copies
 are "copy then delete", so a retry after a crash finds the object in one place or both and finishes the move.
