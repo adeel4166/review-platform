@@ -93,3 +93,14 @@ describe("readyMediaUrls", () => {
     expect(out.get("r1")?.[0]?.thumbUrl).toContain("private/t");
   });
 });
+
+describe("upload quota (SEC-03)", () => {
+  it("429s once the 24h quota (FAILED included) is used, and creates nothing", async () => {
+    const { db, st, m } = setup({ count: 3 });
+    await expect(createUploadSlot(db, st, "u1", "r1", input, 3)).rejects.toMatchObject({ status: 429, code: "upload_quota", headers: { "Retry-After": "3600" } });
+    expect(m.mediaAsset.create).not.toHaveBeenCalled();
+    const q = m.mediaAsset.count.mock.calls[0]![0].where;
+    expect(q.status).toBeUndefined(); // counts every status
+    expect(q.ownerId).toBe("u1");
+  });
+});

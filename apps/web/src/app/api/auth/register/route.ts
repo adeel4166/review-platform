@@ -1,3 +1,4 @@
+import { limitRegister } from "@/server/ratelimit";
 import { hashPassword } from "@rp/db";
 import { db } from "@/server/db";
 import { handle, HttpError, json, readJson } from "@/server/http";
@@ -7,6 +8,7 @@ export const runtime = "nodejs";
 
 export async function POST(req: Request) {
   return handle(async () => {
+    await limitRegister(req); // before the argon2 hash and the 409 oracle (SEC-03/SEC-05)
     const input = registerInput.parse(await readJson(req));
     try {
       const user = await db.user.create({

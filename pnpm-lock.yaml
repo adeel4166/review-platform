@@ -41,6 +41,9 @@ importers:
       '@rp/db':
         specifier: workspace:*
         version: link:../../packages/db
+      ioredis:
+        specifier: ^5.4.2
+        version: 5.11.1
       next:
         specifier: ^15.5.29
         version: 15.5.29(@playwright/test@1.65.1)(@types/node@20.19.43)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
