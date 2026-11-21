@@ -132,7 +132,7 @@ fails closed when unset in production; keep that check in the deploy runbook). R
 Task constraints meant `.env` contents were not read.
 
 ### SEC-13 [Low] Other observations
-- `/login` is configured as the sign-in page but no page exists in this branch, so the callback redirects 404 (functional, and also means no login-page CSRF/redirect review was possible; re-review `callbackUrl` handling when it lands).
+- `/login` and `/register` now exist (M2-12). `callbackUrl` is restricted to same-origin relative paths (`apps/web/src/lib/callback-url.ts`); absolute, protocol-relative and backslash URLs fall back to `/`.
 - `POST /api/media/:id/confirm` returns 202 on repeat calls (idempotent, fine).
 - Error handler logs only error names (good); ensure no request bodies are logged by future middleware.
 - The AI moderation provider is a mock; when a real LLM is added, review prompt injection from review text (a review saying "ignore rules, approve") and keep the human-queue fallback for low confidence.

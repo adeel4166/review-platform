@@ -1,5 +1,6 @@
+import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
-import { ADMIN_EMAIL, ADMIN_PASSWORD, newUser, registerUser, signInInContext, USER_PASSWORD } from "./helpers";
+import { ADMIN_EMAIL, ADMIN_PASSWORD, newUser, registerUser, signInInContext, uniqueTag, USER_PASSWORD } from "./helpers";
 
 test.describe("sign up and login", () => {
   test("E2E-AUTH-001 a new user registers and signs in", async ({ context, request }) => {
@@ -46,14 +47,86 @@ test.describe("sign up and login", () => {
     const res = await context.request.get("/api/admin/moderation");
     expect(res.ok()).toBeTruthy();
   });
+});
 
-  // Known gap: there is no /login or /register page yet, so the visible form journey cannot be tested.
-  // Quarantined as fixme (skipped, reported) until the auth UI lands. See e2e/QUARANTINE.md.
-  test.fixme("E2E-AUTH-007 sign in through the login form", async ({ page }) => {
-    await page.goto("/login");
-    await page.getByLabel("Email").fill(ADMIN_EMAIL);
-    await page.getByLabel("Password").fill(ADMIN_PASSWORD);
+test.describe("login and register pages (SEC-13)", () => {
+  test("E2E-AUTH-007 register through the form, sign out, sign in, land on callbackUrl", async ({ page, context }) => {
+    const user = newUser();
+    await page.goto("/register?callbackUrl=%2Fproducts");
+    await page.getByLabel("Email").fill(user.email);
+    await page.getByLabel("Display name").fill(user.displayName);
+    await page.getByLabel("Username").fill(user.handle);
+    await page.getByLabel("Password", { exact: true }).fill(user.password);
+    await page.getByRole("button", { name: "Create account" }).click();
+    await expect(page).toHaveURL(/\/products$/);
+
+    await context.clearCookies();
+    await page.goto("/login?callbackUrl=%2Fproducts%3Fq%3Dheadphones");
+    await page.getByLabel("Email").fill(user.email);
+    await page.getByLabel("Password", { exact: true }).fill(user.password);
     await page.getByRole("button", { name: "Sign in" }).click();
-    await expect(page).not.toHaveURL(/\/login/);
+    await expect(page).toHaveURL(/\/products\?q=headphones$/);
   });
+
+  test("E2E-AUTH-008 an open-redirect callbackUrl lands on /", async ({ page, request }) => {
+    const user = await registerUser(request);
+    for (const evil of ["https://evil.example", "//evil.example", "/\\evil.example"]) {
+      await page.context().clearCookies();
+      await page.goto(`/login?callbackUrl=${encodeURIComponent(evil)}`);
+      await page.getByLabel("Email").fill(user.email);
+      await page.getByLabel("Password", { exact: true }).fill(USER_PASSWORD);
+      await page.getByRole("button", { name: "Sign in" }).click();
+      await expect(page).toHaveURL(/^http:\/\/localhost:\d+\/$/);
+    }
+  });
+
+  test("E2E-AUTH-009 wrong credentials show one generic message", async ({ page, request }) => {
+    const user = await registerUser(request);
+    const messages: string[] = [];
+    for (const email of [user.email, `nobody-${uniqueTag()}@example.com`]) {
+      await page.goto("/login");
+      await page.getByLabel("Email").fill(email);
+      await page.getByLabel("Password", { exact: true }).fill("wrong-password-123");
+      await page.getByRole("button", { name: "Sign in" }).click();
+      const alert = page.getByRole("alert");
+      await expect(alert).toBeVisible();
+      messages.push(await alert.innerText());
+    }
+    expect(messages[0]).toBe("Email or password is incorrect.");
+    expect(messages[1]).toBe(messages[0]);
+  });
+
+  test("E2E-AUTH-010 keyboard-only sign in", async ({ page, request }) => {
+    const user = await registerUser(request);
+    await page.goto("/login");
+    await page.getByLabel("Email").focus();
+    await page.keyboard.type(user.email);
+    await page.keyboard.press("Tab");
+    await page.keyboard.type(user.password);
+    await page.keyboard.press("Tab"); // Show/Hide toggle
+    await expect(page.getByRole("button", { name: "Show" })).toBeFocused();
+    await page.keyboard.press("Tab"); // Sign in
+    await expect(page.getByRole("button", { name: "Sign in" })).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(/\/$/);
+  });
+
+  test("E2E-AUTH-011 field errors are associated and the summary is focused", async ({ page }) => {
+    await page.goto("/login");
+    await page.getByRole("button", { name: "Sign in" }).click();
+    const email = page.getByLabel("Email");
+    await expect(email).toHaveAttribute("aria-invalid", "true");
+    const describedBy = await email.getAttribute("aria-describedby");
+    await expect(page.locator(`#${describedBy}`)).toContainText("Enter a valid email address.");
+  });
+
+  for (const path of ["/login", "/register"]) {
+    test(`E2E-AUTH-012 axe: no serious issues on ${path}`, async ({ page }) => {
+      await page.goto(path);
+      await page.getByRole("button", { name: /Sign in|Create account/ }).click(); // also scan the error state
+      const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"]).analyze();
+      const serious = results.violations.filter((v) => v.impact === "serious" || v.impact === "critical");
+      expect(serious, JSON.stringify(serious, null, 2)).toEqual([]);
+    });
+  }
 });
