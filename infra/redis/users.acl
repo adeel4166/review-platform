@@ -1,0 +1,4 @@
+# T-01 Redis ACL (local/dev throwaway credentials; production uses secret-managed passwords).
+# core/web/worker keep using the default user. The isolated verification-egress worker may only touch its two queues' keys.
+user default on nopass ~* &* +@all
+user verif-egress on >egress_local_pw ~bull:verification-egress:* ~bull:verification-result:* &* +@all -@admin -@dangerous +@scripting +info +client|setname +client|setinfo +client|id

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CLAIM_CONFIG, DAY_MS, createFakeClaimDb } from "@rp/core";
 import { extractMetaTokens } from "./meta";
-import { observeDns, observeMeta, processClaimCheck, sweepDueChecks, sweepExpiry, sweepGrace, type CheckDeps, type CheckStore } from "./checks";
+import { observeDns, observeMeta, processClaimCheck, prepareClaimCheck, applyClaimObservation, runEgressCheck, sweepDueChecks, sweepExpiry, sweepGrace, type CheckDeps, type CheckStore } from "./checks";
 import { sendClaimNotice } from "./notify";
 import { FakeMailProvider } from "@rp/core";
 
@@ -176,5 +176,24 @@ describe("META_TAG www-only token does not approve (T-03)", () => {
     };
     await processClaimCheck(db as unknown as CheckStore, d, "c1", at(1000));
     expect(db.t.sellerOwnershipClaim![0]!.status).toBe("PENDING");
+  });
+});
+
+describe("T-01 split pipeline (core -> egress -> core)", () => {
+  it("egress rejects malformed requests without touching the network", async () => {
+    let called = false;
+    const d: CheckDeps = { dns: { resolveTxt: async () => { called = true; return []; } }, fetcher: { fetch: async () => { called = true; return { ok: false, error: "FETCH_ERROR", hop: 0 }; } } };
+    const r = await runEgressCheck(d, { claimId: "c1", method: "META_TAG", domain: "http://169.254.169.254/x" });
+    expect(r.error).toBe("FETCH_BLOCKED");
+    expect(called).toBe(false);
+  });
+  it("prepare returns null for unknown claims; egress result round-trips through JSON", async () => {
+    const db = { sellerOwnershipClaim: { findUnique: async () => null, findMany: async () => [] } } as unknown as CheckStore;
+    expect(await prepareClaimCheck(db, "nope")).toBeNull();
+    expect(await applyClaimObservation(db, "nope", { observed: [], error: null })).toBe("SKIPPED");
+    const d: CheckDeps = { dns: { resolveTxt: async () => [["rp-verify=abc"]] }, fetcher: { fetch: async () => ({ ok: false, error: "FETCH_ERROR", hop: 0 }) } };
+    const r = JSON.parse(JSON.stringify(await runEgressCheck(d, { claimId: "c1", method: "DNS_TXT", domain: "example.com" })));
+    expect(r.claimId).toBe("c1");
+    expect(r.error).toBeNull();
   });
 });

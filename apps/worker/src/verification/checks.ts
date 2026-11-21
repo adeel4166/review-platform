@@ -45,15 +45,38 @@ export interface CheckStore extends ClaimDb {
 const SYSTEM = { id: null, type: "SYSTEM" } as const;
 const FOREVER = new Date(8.64e15);
 
+/** Job sent core -> egress worker (queue `verification-egress`). Everything the isolated worker needs; no DB access there. */
+export interface EgressRequest { claimId: string; method: string; domain: string }
+/** Job sent egress worker -> core (queue `verification-result`): the raw observation, never a decision. */
+export interface EgressResult { claimId: string; observed: string[]; error: CheckOutcome | null; proofHost?: string }
+
+const DOMAIN_RE = /^[a-z0-9.-]{1,253}$/i;
+
+/** Core side, step 1: decide whether a claim needs an egress check and build the request (no network here). */
+export async function prepareClaimCheck(db: CheckStore, claimId: string): Promise<EgressRequest | null> {
+  const c = await db.sellerOwnershipClaim.findUnique({ where: { id: claimId } });
+  if (!c || !c.domain || !WORKER_CHECKED_METHODS.includes(c.method as never)) return null;
+  if (c.status !== "PENDING" && c.status !== "VERIFIED") return null;
+  return { claimId, method: c.method, domain: c.domain };
+}
+
+/** Egress side: the only code that touches the network. Validates the request shape (defence in depth) and observes. */
+export async function runEgressCheck(d: CheckDeps, req: EgressRequest): Promise<EgressResult> {
+  if (!req || typeof req.claimId !== "string" || !["DNS_TXT", "META_TAG"].includes(req.method) || typeof req.domain !== "string" || !DOMAIN_RE.test(req.domain)) {
+    return { claimId: String(req?.claimId ?? ""), observed: [], error: "FETCH_BLOCKED" };
+  }
+  const obs = await observe(d, req.method, req.domain);
+  return { claimId: req.claimId, observed: obs.observed, error: obs.error, ...(obs.proofHost ? { proofHost: obs.proofHost } : {}) };
+}
+
 /**
- * `verification.check` {claimId}: runs the DNS/META check for a PENDING claim (C2-C5) or a VERIFIED claim's re-verification
- * (C13/C14/C15). Egress errors never end a claim; they only record the outcome and back off.
+ * Core side, step 2: apply an observation returned by the egress worker to a PENDING claim (C2-C5) or a VERIFIED claim's
+ * re-verification (C13/C14/C15). Egress errors never end a claim; they only record the outcome and back off.
  */
-export async function processClaimCheck(db: CheckStore, d: CheckDeps, claimId: string, now: Date = new Date()): Promise<string> {
+export async function applyClaimObservation(db: CheckStore, claimId: string, obs: ObservedResult, now: Date = new Date()): Promise<string> {
   const c = await db.sellerOwnershipClaim.findUnique({ where: { id: claimId } });
   if (!c || !c.domain || !WORKER_CHECKED_METHODS.includes(c.method as never)) return "SKIPPED";
   if (c.status !== "PENDING" && c.status !== "VERIFIED") return "SKIPPED";
-  const obs = await observe(d, c.method, c.domain);
   if (c.status === "PENDING") {
     const outcome = obs.error ?? evaluateObservedTokens(c, obs.observed, now);
     if (outcome === "PASS") {
@@ -73,6 +96,13 @@ export async function processClaimCheck(db: CheckStore, d: CheckDeps, claimId: s
     await applyClaimTransition(db, claimId, { action: "EXPIRE_GRACE" }, SYSTEM, now);
   } else await applyClaimTransition(db, claimId, { action: "ENTER_GRACE", outcome }, SYSTEM, now);
   return `${decision}:${outcome}`;
+}
+
+/** Single-process composition of the three steps (used by tests; production splits it across the two worker groups). */
+export async function processClaimCheck(db: CheckStore, d: CheckDeps, claimId: string, now: Date = new Date()): Promise<string> {
+  const req = await prepareClaimCheck(db, claimId);
+  if (!req) return "SKIPPED";
+  return applyClaimObservation(db, claimId, await runEgressCheck(d, req), now);
 }
 
 // -- Sweepers (maintenance.claims-*) ----------------------------------------------------------------------------------

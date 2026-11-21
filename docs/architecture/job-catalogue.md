@@ -10,7 +10,7 @@
 
 This is the authoritative list of event types, jobs, payloads, job ids and retry policies for moderation and
 media. Seller-claim and proof jobs (`verification.*`) keep their definitions in ADR-0008 and moderation-pipeline
-§6.3. They follow the conventions in §1–§3.
+§6.3. They follow the conventions in §1–§3. Ownership-check execution is split over `verification` → `verification-egress` → `verification-result` ([verification-egress.md](../security/verification-egress.md)).
 
 ---
 

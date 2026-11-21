@@ -6,6 +6,10 @@ export const QUEUES = {
   media: "media",
   mediaVideo: "media-video",
   verification: "verification",
+  /** T-01: core -> isolated egress worker (claim id, method, domain). Only the egress group consumes it. */
+  verificationEgress: "verification-egress",
+  /** T-01: egress worker -> core (raw observation). Core persists it. */
+  verificationResult: "verification-result",
   notifications: "notifications",
   trust: "trust",
   maintenance: "maintenance",
