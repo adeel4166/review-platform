@@ -19,8 +19,11 @@ trust scores, comparison and social features.
 | [architecture/job-catalogue.md](./architecture/job-catalogue.md) | **Authoritative job list**: outbox events and fan-out routes, job ids, zod payloads, retry/back-off policy, sweepers, media failure handling |
 | [architecture/media-pipeline.md](./architecture/media-pipeline.md) | Direct upload, virus scan, EXIF/GPS strip, 720p video transcode, bucket/key layout, retention, scan/upload logs |
 | [architecture/open-questions.md](./architecture/open-questions.md) | **§0 For CEO review (C-1..C-9)**, **Legal: OPEN**, **Language: OPEN**, plus technical/product questions with working assumptions |
+| [design/README.md](./design/README.md) | Wireframes, design tokens, WCAG 2.2 AA checklist, i18n layout rules (index; sources in `/design`) |
 
 ## Decisions (ADRs)
+
+
 
 See [adr/README.md](./adr/README.md).
 
