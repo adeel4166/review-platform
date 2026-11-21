@@ -14,6 +14,8 @@ export interface QueueFilter {
   minScore?: number;
   maxScore?: number;
   hasMedia?: boolean;
+  /** Defaults to REVIEW so the existing reviewer UI keeps its shape; SELLER_REPLY cases share the queue via this filter (ADR-0021). */
+  subjectType?: "REVIEW" | "SELLER_REPLY";
   page: number;
   pageSize: number;
 }
@@ -22,6 +24,7 @@ export interface QueueFilter {
 export async function listModerationQueue(db: Db, f: QueueFilter) {
   const where = {
     state: f.state,
+    subjectType: f.subjectType ?? "REVIEW",
     ...(f.productId || f.hasMedia !== undefined
       ? { review: { ...(f.productId ? { productId: f.productId } : {}), ...(f.hasMedia !== undefined ? { media: f.hasMedia ? { some: {} } : { none: {} } } : {}) } }
       : {}),
@@ -39,6 +42,8 @@ export async function listModerationQueue(db: Db, f: QueueFilter) {
         id: true, state: true, version: true, aiScore: true, aiConfidence: true, aiReasons: true, aiProvider: true,
         decisionReason: true, decidedAt: true, createdAt: true,
         review: { select: { id: true, productId: true, rating: true, title: true, body: true, verifiedBuyer: true, author: { select: { handle: true } }, _count: { select: { media: true } } } },
+        subjectType: true,
+        sellerReply: { select: { id: true, sellerId: true, reviewId: true, body: true, version: true } },
       },
     }),
     db.moderationCase.count({ where }),
@@ -76,6 +81,11 @@ export async function getCaseDetail(db: Db, st: Storage, caseId: string) {
     },
   });
   if (!c) throw new HttpError(404, "not_found", "Moderation case not found");
+  if (!c.review) {
+    // SELLER_REPLY case: no review media; the reply text is shown by the reviewer UI from the case's sellerReply.
+    const reply = await db.moderationCase.findUnique({ where: { id: caseId }, select: { sellerReply: { select: { id: true, sellerId: true, reviewId: true, body: true, status: true, version: true } } } });
+    return { ...c, review: null, sellerReply: reply?.sellerReply ?? null };
+  }
   const media = await Promise.all(
     c.review.media.map(async (m) => ({
       id: m.id, status: m.status, width: m.width, height: m.height, failureReason: m.failureReason,
@@ -83,7 +93,7 @@ export async function getCaseDetail(db: Db, st: Storage, caseId: string) {
       mediumUrl: m.status === "READY" && m.mediumKey ? await st.store.presignGet(st.buckets.private, m.mediumKey, MEDIA_GET_TTL_SECONDS) : null,
     })),
   );
-  return { ...c, review: { ...c.review, media } };
+  return { ...c, review: { ...c.review, media }, sellerReply: null };
 }
 
 /** Read-only audit trail, newest first; optionally for one entity (a review id). */

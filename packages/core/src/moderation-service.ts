@@ -7,7 +7,10 @@ import { assertAuditMetadataClean } from "./audit-metadata";
  */
 export interface CaseRow {
   id: string;
-  reviewId: string;
+  /** Subject arc (m3b-spec 6.1): exactly one of reviewId / sellerReplyId is set. Absent subjectType means REVIEW. */
+  subjectType?: "REVIEW" | "SELLER_REPLY";
+  reviewId: string | null;
+  sellerReplyId?: string | null;
   version: number;
   state: ModerationState;
 }
@@ -21,6 +24,11 @@ export interface ModerationTx {
     updateMany(args: unknown): Promise<{ count: number }>;
   };
   reviewRevision: { updateMany(args: unknown): Promise<{ count: number }> };
+  /** Only needed for SELLER_REPLY cases. */
+  sellerReply?: {
+    findUnique(args: unknown): Promise<{ id: string; authorId?: string; status: string; version: number } | null>;
+    updateMany(args: unknown): Promise<{ count: number }>;
+  };
   auditLog: { create(args: unknown): Promise<unknown> };
 }
 export interface ModerationDb extends ModerationTx {
@@ -63,6 +71,14 @@ export class TransitionConflictError extends Error {
   }
 }
 
+const REPLY_AUDIT_ACTION: Record<ModerationState, string> = {
+  PENDING: "seller_reply.moderation_reset",
+  AI_REVIEW: "seller_reply.ai_review_start",
+  NEEDS_HUMAN: "seller_reply.hold",
+  APPROVED: "seller_reply.approve",
+  REJECTED: "seller_reply.reject",
+};
+
 const AUDIT_ACTION: Record<ModerationState, string> = {
   PENDING: "review.moderation_reset",
   AI_REVIEW: "review.ai_review_start",
@@ -83,8 +99,12 @@ export async function transitionCase(db: ModerationDb, input: TransitionInput): 
     // Humans only decide cases escalated to them; AI_REVIEW belongs to the worker.
     if (input.actor.type === "STAFF" && c.state !== "NEEDS_HUMAN") throw new IllegalTransitionError(c.state, input.to);
 
+    const isReply = c.subjectType === "SELLER_REPLY";
+    if (isReply && (!c.sellerReplyId || !tx.sellerReply)) throw new CaseNotFoundError();
     if (input.actor.type === "STAFF") {
-      const own = await tx.review.findUnique({ where: { id: c.reviewId }, select: { id: true, authorId: true } });
+      const own = isReply
+        ? await tx.sellerReply!.findUnique({ where: { id: c.sellerReplyId }, select: { id: true, authorId: true } })
+        : await tx.review.findUnique({ where: { id: c.reviewId }, select: { id: true, authorId: true } });
       if (own?.authorId && own.authorId === input.actor.id) throw new SelfDecisionError();
     }
 
@@ -105,7 +125,14 @@ export async function transitionCase(db: ModerationDb, input: TransitionInput): 
     if (res.count !== 1) throw new TransitionConflictError();
 
     const status = REVIEW_STATUS_FOR[input.to];
-    if (status && input.to !== "PENDING" && input.to !== "AI_REVIEW") {
+    if (isReply && status && input.to !== "PENDING" && input.to !== "AI_REVIEW") {
+      const r = await tx.sellerReply!.updateMany({
+        // Guard on version: an edit has its own case; a stale decision must not publish or hide the newer text (m3b-spec 5.3).
+        where: { id: c.sellerReplyId, version: c.version, status: { in: ["PENDING", "HIDDEN"] } },
+        data: { status, ...(input.to === "APPROVED" ? { publishedAt: now } : {}) },
+      });
+      if (r.count !== 1) throw new TransitionConflictError();
+    } else if (status && input.to !== "PENDING" && input.to !== "AI_REVIEW") {
       const r = await tx.review.updateMany({
         // Guard on version: a newer revision has its own case; a stale decision must not touch the review.
         where: { id: c.reviewId, currentVersion: c.version, status: { in: ["PENDING", "HIDDEN"] } },
@@ -127,9 +154,9 @@ export async function transitionCase(db: ModerationDb, input: TransitionInput): 
       data: {
         actorType: input.actor.type,
         actorId: input.actor.id ?? null,
-        action: AUDIT_ACTION[input.to],
-        entityType: "Review",
-        entityId: c.reviewId,
+        action: (isReply ? REPLY_AUDIT_ACTION : AUDIT_ACTION)[input.to],
+        entityType: isReply ? "SellerReply" : "Review",
+        entityId: (isReply ? c.sellerReplyId : c.reviewId) as string,
         metadata,
       },
     });

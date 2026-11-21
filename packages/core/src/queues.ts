@@ -22,7 +22,7 @@ export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
  * so at-least-once delivery is safe.
  */
 export const moderationJobSchema = z.object({
-  subjectType: z.enum(["REVIEW", "REPLY", "COMMENT", "POST", "MEDIA"]),
+  subjectType: z.enum(["REVIEW", "SELLER_REPLY", "COMMENT", "POST", "MEDIA"]),
   subjectId: z.string().min(1),
   version: z.number().int().nonnegative(),
 });
