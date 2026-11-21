@@ -6,7 +6,8 @@
 | **Owner** | Software Architect |
 | **Decision record** | [ADR-0005 Moderation state machine and queues](../adr/0005-moderation-state-machine.md) |
 | **Related** | [data-model.md](./data-model.md) · [media-pipeline.md](./media-pipeline.md) · [moderation-config.example.json](./moderation-config.example.json) · [ADR-0001](../adr/0001-technology-stack.md) (outbox, BullMQ) · [ADR-0003](../adr/0003-multi-role-permissions.md) (permissions, COI) |
-| **Supersedes** | The review lifecycle sketch in data-model.md §6.1 (M1.1). This document is now authoritative for moderation states and transitions |
+| **Supersedes** | The review lifecycle sketch in data-model.md §6.1 (M1.1) |
+| **Lifecycle and jobs (M1-T2)** | [moderation-lifecycle.md](./moderation-lifecycle.md) is the authoritative transition table (lifecycle states, actors, audit actions, rows T15–T21, revisions, appeals). [job-catalogue.md](./job-catalogue.md) is the authoritative job, payload and retry list. This document remains authoritative for verdicts, timers, thresholds, queues and the side effects of T1–T14 |
 
 This document defines how user content moves from submission to "live" or "rejected": the AI verdicts, the
 content state machine, the timers, the configurable thresholds, the staff work queues (moderation, appeal,
@@ -86,10 +87,10 @@ The pipeline **never auto-approves on error** (ADR-0001). These all count as a p
 | Malformed response | Response fails the zod schema, or a category is missing | **No retry** (deterministic) → UNSURE |
 | Unsupported language / media type | Provider says so, or language detector says unsupported (G-6) | **No retry** → UNSURE (`reasonCode UNSUPPORTED_LANGUAGE`) |
 | Circuit breaker open | ≥ 50 % failures over the last 20 calls (configurable) | Skip the call → UNSURE immediately, so content does not wait |
-| Job lost / worker crash | Sweeper finds a `PENDING` case with no decision after `ai.maxPendingMinutes` (default 10) | → UNSURE |
+| Job lost / worker crash | Sweeper finds a `PENDING` case with no decision after `ai.maxPendingMinutes` (default 10), counted after the media wait when attached media is still processing (40 min; [job-catalogue.md §4.1](./job-catalogue.md#41-moderation-queue-core-deployment)) | → UNSURE |
 
-Retries: `ai.maxAttempts` (default 3) with exponential back-off 5 s → 20 s → 60 s, so the worst-case extra wait is
-about 90 s. After the final attempt, the job's failure handler records a `ModerationDecision(source=RULE,
+Retries: `ai.maxAttempts` (default 3) with the `ai` back-off 5 s → 20 s (→ 60 s only if attempts are raised to 4), so
+the worst-case extra wait is about 70 s including provider timeouts ([job-catalogue.md §3.2](./job-catalogue.md#32-named-back-off-strategies)). After the final attempt, the job's failure handler records a `ModerationDecision(source=RULE,
 outcome=ESCALATE, verdict=UNSURE, reasonCode=AI_UNAVAILABLE, failureCode=<timeout|5xx|429|schema|breaker>)`.
 
 **Re-scan on recovery** (`ai.rescanOnRecovery`, default `true`): every 10 min, while the breaker is closed, a job
@@ -121,6 +122,9 @@ components (`VIOLATION > UNSURE > CLEAN`):
 
 ### 3.1 New submissions
 
+Simplified view. The complete diagram, including the report flow (T15–T18), author delete or resubmit of
+rejected and removed content (T19–T20), and appeals, is in [moderation-lifecycle.md §2](./moderation-lifecycle.md#2-state-diagram).
+
 ```mermaid
 stateDiagram-v2
   direction LR
@@ -138,7 +142,7 @@ stateDiagram-v2
 
   PUBLISHED --> PUBLISHED : post-review CONFIRM
   PUBLISHED --> REMOVED : post-review REMOVE, or report upheld
-  PUBLISHED --> HIDDEN : report escalation (RESTRICT)
+  PUBLISHED --> HIDDEN : T15 re-scan VIOLATION or staff hide (never on report count alone)
 
   REJECTED --> PUBLISHED : appeal OVERTURNED
   REMOVED --> PUBLISHED : appeal OVERTURNED
@@ -183,10 +187,14 @@ transition is a no-op. This is what makes timers, bulk jobs and humans safe to r
 | T8 | `PUBLISHED` | post-review confirm | lane `POST_REVIEW`, not resolved | `PUBLISHED` | HUMAN / APPROVE | case `RESOLVED` |
 | T9 | `PUBLISHED` | post-review remove | as T8 + `reasonCode` | `REMOVED` | HUMAN / REMOVE | case `RESOLVED`, `appealableUntil`; notify `CONTENT_REMOVED`; media demote + CDN purge; trust `REVIEW_REMOVED`/`CONTENT_ACTIONED_AGAINST`; strikes §9 |
 | T10 | `PUBLISHED` | post-review lapses | `now ≥ postReviewDueAt + postReview.lapseAfterHours` | `PUBLISHED` | RULE / APPROVE (`POST_REVIEW_LAPSED`) | case `RESOLVED`; SLA-breach metric |
-| T11 | `PUBLISHED` | report threshold reached / staff flag | §6.1 REPORTED lane rules | `PUBLISHED` or `HIDDEN` | AI or HUMAN / RESTRICT | case lane `REPORTED`; if hidden: notify `CONTENT_HELD`, media demote |
-| T12 | `REJECTED`/`REMOVED` | appeal overturned | `appeal.decide`, reviewer ≠ original decider | `PUBLISHED` | HUMAN / APPROVE (trigger APPEAL) | notify `APPEAL_DECIDED` + `CONTENT_RESTORED`; void strike; trust `APPEAL_OVERTURNED`; media promote |
+| T11 | `PUBLISHED` | report threshold reached / staff flag | §6.1 REPORTED lane rules | `PUBLISHED` (stays live; M1-T2 change, threat F-9) | RULE or HUMAN / ESCALATE | case lane `REPORTED`, `slaDueAt` +48 h, `moderation.rescan` enqueued. Hiding is T15 ([moderation-lifecycle.md §4](./moderation-lifecycle.md#4-transition-table-content)) |
+| T12 | `REJECTED`/`REMOVED` | appeal overturned | `appeal.decide`, reviewer ≠ original decider | `PUBLISHED` | HUMAN / APPROVE (`APPEAL_OVERTURNED`, appended to the original case) | notify `APPEAL_DECIDED` + `CONTENT_RESTORED`; void strike; trust `APPEAL_OVERTURNED`; media promote |
 | T13 | `PENDING`/`HIDDEN`/`PUBLISHED` | author deletes | owner | `DELETED` | — | open case `RESOLVED` with `reasonCode WITHDRAWN_BY_AUTHOR`; timers cancelled; media demote |
 | T14 | `PENDING`/`HIDDEN` | author edits | owner, edit rate limit (5/day) | `PENDING` | — | open case closed `SUPERSEDED`; new case for the new version (the hold clock starts again, content stays non-public) |
+
+Rows **T15–T21** (restrict, restore, report-upheld removal, reports dismissed, author delete or resubmit of rejected
+and removed content, reporter-appeal overturn), the actor and `AuditLog.action` of every row, the revision rows
+R1–R8 and the appeal rows A1–A7 are in [moderation-lifecycle.md](./moderation-lifecycle.md).
 
 ### 3.3 Edits of live content
 
@@ -238,7 +246,7 @@ config later does not move deadlines for items already in the queue.
 The database is the source of truth. BullMQ delayed jobs are only a fast path:
 
 1. When a timer starts, the transaction writes the deadline column and an outbox event. The relay enqueues a
-   **delayed job** (`moderation.hold-expire`, `delay = holdExpiresAt − now`, `jobId = hold-expire:<caseId>:<holdExpiresAt>`).
+   **delayed job** (`moderation.hold-expire`, `delay = holdExpiresAt − now`, `jobId = hold-expire__<caseId>__<holdExpiresAt epoch ms>`).
 2. A **sweeper** (`maintenance.moderation-sweep`, repeatable every 5 min) queries
    `ModerationCase(lane, status, holdExpiresAt)` / `(lane, status, postReviewDueAt)` for overdue rows and applies the
    same transitions. Lost delayed jobs (Redis restore, deploy) therefore delay a transition by at most 5 min.
@@ -264,8 +272,9 @@ The database is the source of truth. BullMQ delayed jobs are only a fast path:
   [moderation-config.example.json](./moderation-config.example.json)). Exactly one row is `ACTIVE`. At most one is
   `SHADOW`.
 - Editing creates a `DRAFT`. Activating it requires `config.manage` (ADMIN, SUPER_ADMIN), **step-up auth** and a
-  note. It writes `AuditLog(action = moderation.config.activate)` with the diff, and emits `config.activated` so
-  workers reload (they also re-read the active version every 60 s).
+  note. It writes `AuditLog(action = moderation.config.activate)` with the diff, and publishes a best-effort Redis
+  `config.activated` hint after commit (not an outbox event). Workers also re-read the active version every 60 s,
+  and that re-read is the guarantee.
 - Every `ModerationDecision` stores `configVersion`. A rollback is just re-activating an older version.
 - **Shadow mode:** when a `SHADOW` version exists, `moderation.assess` also computes the shadow verdict (same scores,
   no extra provider call) and records it in metrics only (`moderation_shadow_verdict_total{active,shadow}`). This
@@ -403,7 +412,7 @@ sequenceDiagram
   W->>DB: tx: Review(PENDING) + Revision + ModerationCase(OPEN) + Outbox(review.submitted)
   W-->>U: "Checking…"
   R->>DB: poll undispatched outbox
-  R->>MQ: add moderation.assess (jobId assess:<caseId>:<version>)
+  R->>MQ: add moderation.assess (jobId assess__<caseId>__<version>)
   MQ->>M: moderation.assess
   M->>DB: load case, snapshot, media status
   alt media still processing
@@ -439,30 +448,15 @@ ops dashboard), OpenTelemetry trace id propagated in job data (ADR-0001).
 
 ### 7.3 Job catalogue
 
-`jobId` makes enqueueing idempotent (BullMQ ignores a duplicate `jobId`). Every handler is also idempotent at the
-DB level through conditional transitions, so at-least-once delivery from the outbox is safe.
-
-| Job | Queue | Triggered by (outbox topic / schedule) | `jobId` | Attempts / back-off | Timeout | On final failure |
-|---|---|---|---|---|---|---|
-| `moderation.assess` | moderation | `review.submitted`, `review.edited`, `comment.submitted`, `post.submitted`, `seller_reply.submitted`, `media.standalone_ready` | `assess:<caseId>:<contentVersion>` | 3, exp 5 s/20 s/60 s (provider errors only) | 60 s | Apply UNSURE (`AI_UNAVAILABLE`) |
-| `moderation.rescan-failed` | moderation | repeatable every 10 min | `rescan-failed:<window>` | 1 | 5 min | Log, next run retries |
-| `moderation.rescan` | moderation | report threshold, staff "re-scan", rescan-failed fan-out | `rescan:<caseId>:<n>` | 3, exp | 60 s | Leave state unchanged, alert |
-| `moderation.hold-expire` | moderation | `moderation.hold_started` (delayed until `holdExpiresAt`) | `hold-expire:<caseId>:<holdExpiresAt>` | 5, exp 30 s | 30 s | Sweeper picks it up |
-| `moderation.post-review-lapse` | moderation | `moderation.post_review_opened` (delayed) | `pr-lapse:<caseId>` | 5, exp 30 s | 30 s | Sweeper picks it up |
-| `moderation.bulk-apply` | moderation | `moderation.bulk_requested` | `bulk:<bulkOperationId>` | 3 (resumes, skips applied items) | 5 min | Partial result + alert |
-| `maintenance.moderation-sweep` | maintenance | every 5 min | repeat key | 1 | 2 min | Alert after 3 consecutive failures |
-| `appeal.intake` | moderation | `appeal.submitted` | `appeal:<appealId>` | 5 | 30 s | Alert (appeal still visible in queue) |
-| `verification.check-claim` | verification | `claim.submitted`, retries schedule | `claim:<claimId>:<attempt>` | Custom schedule: every 15 min for 1 h, then hourly to 72 h | 30 s | Claim `EXPIRED` + notify |
-| `notifications.dispatch` | notifications | `moderation.decided`, `appeal.decided`, `claim.decided`, … | `notif:<eventId>:<recipientId>` | 5, exp | 30 s | DLQ; in-app row already written |
-| `trust.signal` | trust | `moderation.decided`, `appeal.decided` | `trust:<eventId>` | 5, exp | 30 s | DLQ |
-| `media.*` | media / media-video | see media-pipeline.md §8 | | | | |
+Moved to [job-catalogue.md](./job-catalogue.md) (M1-T2). That document lists every job with its trigger, job id
+(`jobId()` form, `__` separator), zod payload, attempts and back-off, timeout, retryable and unrecoverable errors,
+and in-band final-failure fallback. `appeal.intake` is retired: its work happens in the A1 transaction plus
+`notifications.dispatch`.
 
 ### 7.4 Outbox topics written by moderation
 
-`review.submitted`, `review.edited`, `comment.submitted`, `post.submitted`, `seller_reply.submitted`,
-`content.deleted`, `moderation.decided` (payload: caseId, target, verdict, outcome, source, reasonCode),
-`moderation.hold_started`, `moderation.post_review_opened`, `moderation.bulk_requested`, `appeal.submitted`,
-`appeal.decided`, `claim.submitted`, `claim.decided`, `config.activated`.
+Moved to [job-catalogue.md §2](./job-catalogue.md#2-event-types-and-routes), together with the fan-out routes
+([ADR-0013](../adr/0013-outbox-fan-out-routing.md)).
 
 ### 7.5 Failure modes
 

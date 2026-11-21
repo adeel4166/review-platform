@@ -1260,7 +1260,7 @@ model ModerationCase {
   assignedToId    String?
   slaDueAt        DateTime?
   outcome         DecisionOutcome? // final outcome once RESOLVED
-  resolutionCode  String?           @db.VarChar(64) // e.g. HOLD_EXPIRED, POST_REVIEW_LAPSED, SUPERSEDED, WITHDRAWN_BY_AUTHOR
+  resolutionCode  String?           @db.VarChar(64) // e.g. HOLD_EXPIRED, POST_REVIEW_LAPSED, SUPERSEDED, WITHDRAWN_BY_AUTHOR; M1-T2: APPEAL_OVERTURNED, REPORTS_DISMISSED, REPORT_THRESHOLD, RESUBMITTED (moderation-lifecycle.md)
   contentSnapshot Json? // evidence: content as it was when the case opened. OPEN(LEGAL): retention
   contentVersion  Int? // revision under moderation (Review.currentVersion when opened)
 
@@ -1395,6 +1395,7 @@ model Appeal {
   decisionNote        String?      @db.Text // shown to appellant
   priority            Int          @default(0) // M1.2: HOLD_EXPIRED appeals first
   slaDueAt            DateTime? // M1.2: 7 days, 72 h for HOLD_EXPIRED
+  leaseExpiresAt      DateTime? // M1-T2: claim lease for reviewerId (15 min), mirrors ModerationCase.leaseExpiresAt
   submittedAt         DateTime     @default(now())
   decidedAt           DateTime?
   updatedAt           DateTime     @updatedAt
@@ -1415,6 +1416,7 @@ model Appeal {
   @@unique([appellantId, ownershipClaimId])
   @@index([status, submittedAt])
   @@index([status, priority, slaDueAt])
+  @@index([reviewerId, status])
   @@map("appeals")
 }
 

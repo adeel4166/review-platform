@@ -15,6 +15,8 @@ trust scores, comparison and social features.
 | [architecture/check-constraints.sql](./architecture/check-constraints.sql) | CHECK constraints Prisma cannot express (exclusive arcs, ranges) |
 | [architecture/moderation-pipeline.md](./architecture/moderation-pipeline.md) | Moderation verdicts, content state machine, timers (24 h post-review, 7-day hold), configurable thresholds, staff queues (moderation, appeal, seller verification), BullMQ job design |
 | [architecture/moderation-config.example.json](./architecture/moderation-config.example.json) | Example versioned moderation config (thresholds, timers, AI failure handling, strikes) |
+| [architecture/moderation-lifecycle.md](./architecture/moderation-lifecycle.md) | **Authoritative transition table**: lifecycle states (submitted, auto-screened, pending manual review, published, rejected, appealed, reinstated, removed), state diagram, actors, audit actions, revision and appeal sub-machines |
+| [architecture/job-catalogue.md](./architecture/job-catalogue.md) | **Authoritative job list**: outbox events and fan-out routes, job ids, zod payloads, retry/back-off policy, sweepers, media failure handling |
 | [architecture/media-pipeline.md](./architecture/media-pipeline.md) | Direct upload, virus scan, EXIF/GPS strip, 720p video transcode, bucket/key layout, retention, scan/upload logs |
 | [architecture/open-questions.md](./architecture/open-questions.md) | **§0 For CEO review (C-1..C-9)**, **Legal: OPEN**, **Language: OPEN**, plus technical/product questions with working assumptions |
 
@@ -34,6 +36,9 @@ See [adr/README.md](./adr/README.md).
 | [0008](./adr/0008-verified-buyer-approach.md) | Per-review "Verified purchase" label, human-decided with AI assist, independent of publication, provenance via `Review.verifiedProofId`, files purged, label survives |
 | [0009](./adr/0009-i18n-readiness.md) | English default, next-intl + ICU keys (no literals), `as-needed` locale prefix later, store keys not rendered text, legal text stored with its locale |
 | [0010](./adr/0010-database-physical-naming.md) | Lowercase snake_case plural tables via `@@map`, camelCase columns (amends ADR-0004) |
+| [0011](./adr/0011-moderation-lifecycle-and-audit.md) | Appealed/reinstated are derived states; report count never hides content (F-9); T15–T21 added; one `AuditLog` row per transition with `<entity>.<verb>` actions (amends ADR-0005) |
+| [0012](./adr/0012-media-job-decomposition.md) | `media.scan` → `media.image` / `media.transcode` step jobs; decoders read only a sha256-verified staging copy of the scanned bytes (amends ADR-0006) |
+| [0013](./adr/0013-outbox-fan-out-routing.md) | One outbox event → many jobs, domain job keys with `__` separator, delayed routes (refines ADR-0007) |
 
 ## Security
 
