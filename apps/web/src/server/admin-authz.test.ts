@@ -74,24 +74,24 @@ describe("admin authz matrix (SEC-09a)", () => {
   });
 
   it.each(ADMIN_TIER)("AZ-025 $method /api/admin/$file: admin passes the guard (control)", async (route) => {
-    authMock.mockResolvedValue({ user: { id: "a1", role: "admin" } });
+    authMock.mockResolvedValue({ user: { id: "a1", role: "admin", twoFactor: { enrolled: true, verified: true }, stepUpAt: Date.now() } });
     const status = (await call(route)).status;
     // The DB is an empty stub, so the handler fails later; the point is that the guard let it through.
     expect([401, 403]).not.toContain(status);
   });
 
   it.each(ADMIN_TIER)("SEC-09e $method /api/admin/$file: super admin also passes the guard", async (route) => {
-    authMock.mockResolvedValue({ user: { id: "s1", role: "super_admin" } });
+    authMock.mockResolvedValue({ user: { id: "s1", role: "super_admin", twoFactor: { enrolled: true, verified: true }, stepUpAt: Date.now() } });
     expect([401, 403]).not.toContain((await call(route)).status);
   });
 
   it.each(SUPER_ONLY)("SEC-09e $method /api/admin/$file: ADMIN is refused -> 403", async (route) => {
-    authMock.mockResolvedValue({ user: { id: "a1", role: "admin" } });
+    authMock.mockResolvedValue({ user: { id: "a1", role: "admin", twoFactor: { enrolled: true, verified: true }, stepUpAt: Date.now() } });
     expect((await call(route)).status).toBe(403);
   });
 
   it.each(SUPER_ONLY)("SEC-09e $method /api/admin/$file: SUPER_ADMIN passes the guard (control)", async (route) => {
-    authMock.mockResolvedValue({ user: { id: "s1", role: "super_admin" } });
+    authMock.mockResolvedValue({ user: { id: "s1", role: "super_admin", twoFactor: { enrolled: true, verified: true }, stepUpAt: Date.now() } });
     expect([401, 403]).not.toContain((await call(route)).status);
   });
 });

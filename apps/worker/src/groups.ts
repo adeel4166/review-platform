@@ -6,7 +6,7 @@ export const WORKER_GROUPS = ["core", "verification-egress"] as const;
 export type WorkerGroup = (typeof WORKER_GROUPS)[number];
 
 /** Env var names (or prefixes) that must never exist in the egress process: it fetches attacker-controlled URLs. */
-const FORBIDDEN_EXACT = ["DATABASE_URL", "SMTP_URL"];
+const FORBIDDEN_EXACT = ["DATABASE_URL", "SMTP_URL", "AUTH_SECRET", "TOTP_ENC_KEYS", "TOTP_ENC_ACTIVE_KEY_ID", "RECOVERY_CODE_PEPPERS", "RECOVERY_CODE_ACTIVE_KEY_ID"];
 const FORBIDDEN_PREFIX = ["S3_"];
 
 export function parseWorkerGroup(raw: string | undefined): WorkerGroup {

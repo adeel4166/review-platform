@@ -60,6 +60,7 @@ export async function requireSellerPermission(db: Reader, actor: Actor, perm: Se
       staffTier: actor.role === "admin" || actor.role === "super_admin" ? "admin" : "none",
       memberRole: (member?.role as SellerMemberRole | undefined) ?? null,
       sellerSuspended: !!suspension,
+      twoFactor: { enrolled: actor.twoFactor?.enrolled === true, sessionVerified: actor.twoFactor?.verified === true },
     },
     perm,
   );

@@ -110,6 +110,9 @@ model User {
   casesDecided    ModerationCase[]         @relation("CaseDecidedBy")
   auditLogs       AuditLog[]               @relation("AuditActor")
   emailTokens     EmailVerificationToken[]
+  sessions        UserSession[]
+  twoFactorTotp   TwoFactorTotp?
+  recoveryCodes   RecoveryCode[]
 
   sellerMemberships    SellerMember[]         @relation("SellerMembership")
   sellersCreated       Seller[]               @relation("SellerCreatedBy")
@@ -640,4 +643,69 @@ model EnforcementAction {
   @@index([subjectSellerId, status])
   @@index([status, endsAt])
   @@map("enforcement_actions")
+}
+
+/// Server-side state for one Auth.js JWT (claim `sid`). The JWT is only a carrier; this row is the session (ADR-0019).
+model UserSession {
+  id                     String    @id @default(cuid())
+  userId                 String
+  secondFactorPending    Boolean   @default(false)
+  pendingExpiresAt       DateTime? @db.DateTime(3) // createdAt + 10 min while pending
+  twoFactorFailures      Int       @default(0) // per-session cap 5 (chk_session_failures)
+  secondFactorVerifiedAt DateTime? @db.DateTime(3)
+  secondFactorMethod     String?   @db.VarChar(16) // TOTP | RECOVERY_CODE
+  authTime               DateTime  @db.DateTime(3)
+  reauthenticatedAt      DateTime? @db.DateTime(3) // step-up, valid 10 min
+  successorId            String?   @unique // rotation pointer (m3b-spec 2.4)
+  successorClaimedAt     DateTime? @db.DateTime(3)
+  absoluteExpiresAt      DateTime  @db.DateTime(3)
+  lastSeenAt             DateTime  @default(now()) @db.DateTime(3)
+  revokedAt              DateTime? @db.DateTime(3)
+  revokeReason           String?   @db.VarChar(32)
+  ipHash                 String?   @db.Char(64)
+  userAgent              String?   @db.VarChar(512)
+  createdAt              DateTime  @default(now()) @db.DateTime(3)
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  successor   UserSession? @relation("SessionRotation", fields: [successorId], references: [id], onDelete: SetNull)
+  predecessor UserSession? @relation("SessionRotation")
+
+  @@index([userId, revokedAt])
+  @@index([absoluteExpiresAt])
+  @@map("user_sessions")
+}
+
+/// One row per user. Active secret (confirmed) and an optional pending replacement live side by side.
+model TwoFactorTotp {
+  id                      String    @id @default(cuid())
+  userId                  String    @unique
+  secretCiphertext        Bytes?    @db.VarBinary(255) // AES-256-GCM iv|ct|tag, AAD "totp|<userId>|<id>"
+  keyId                   String?   @db.VarChar(64)
+  confirmedAt             DateTime? @db.DateTime(3)
+  lastUsedStep            BigInt? // replay guard
+  pendingSecretCiphertext Bytes?    @db.VarBinary(255)
+  pendingKeyId            String?   @db.VarChar(64)
+  pendingExpiresAt        DateTime? @db.DateTime(3) // enrolment start + 15 min
+  createdAt               DateTime  @default(now()) @db.DateTime(3)
+  updatedAt               DateTime  @updatedAt @db.DateTime(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([pendingExpiresAt])
+  @@map("two_factor_totps")
+}
+
+/// 10 per user, 60-bit codes. codeHash = hex HMAC-SHA-256(pepper[keyId], normalized code).
+model RecoveryCode {
+  id        String    @id @default(cuid())
+  userId    String
+  codeHash  String    @db.Char(64)
+  keyId     String    @db.VarChar(64)
+  usedAt    DateTime? @db.DateTime(3)
+  createdAt DateTime  @default(now()) @db.DateTime(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, codeHash])
+  @@map("recovery_codes")
 }

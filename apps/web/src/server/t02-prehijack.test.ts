@@ -4,10 +4,17 @@ import { hashEmailToken } from "@rp/core";
 // In-memory user store shared by the mocked db, registration and verification.
 interface U { id: string; email: string; passwordHash: string; status: string; emailVerifiedAt: Date | null; displayName: string; roles: { role: string }[]; createdAt: Date; handle: string }
 const users: U[] = [];
+const sessions: Record<string, unknown>[] = [];
 vi.mock("./db", () => ({
   db: { user: {
     findUnique: async ({ where }: { where: { id?: string; email?: string } }) => users.find((u) => (where.id ? u.id === where.id : u.email === where.email)) ?? null,
     update: async ({ where, data }: { where: { id: string }; data: Partial<U> }) => { Object.assign(users.find((u) => u.id === where.id)!, data); },
+  },
+  twoFactorTotp: { findUnique: async () => null },
+  userSession: {
+    create: async ({ data }: { data: Record<string, unknown> }) => { const r = { id: `s${sessions.length + 1}`, revokedAt: null, successorId: null, successorClaimedAt: null, ...data }; sessions.push(r); return r; },
+    findUnique: async ({ where }: { where: { id: string } }) => sessions.find((x) => x.id === where.id) ?? null,
+    update: async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => Object.assign(sessions.find((x) => x.id === where.id)!, data),
   } },
 }));
 vi.mock("@rp/db", () => ({

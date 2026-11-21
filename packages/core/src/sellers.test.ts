@@ -4,7 +4,7 @@ import {
   sellerNameSkeleton, slugify, withinEditDistanceOne, type SellerAuthzContext, type SellerMemberRole, type SellerPermission,
 } from "./sellers";
 
-const base: SellerAuthzContext = { accountActive: true, staffTier: "none", memberRole: null, sellerSuspended: false };
+const base: SellerAuthzContext = { accountActive: true, staffTier: "none", memberRole: null, sellerSuspended: false, twoFactor: { enrolled: true, sessionVerified: true } };
 
 describe("authorizeSeller (AZ-007, AZ-010): every permission x every role", () => {
   const ROLES: SellerMemberRole[] = ["OWNER", "MANAGER", "RESPONDER"];
@@ -93,4 +93,16 @@ describe("name similarity (SEL-010)", () => {
     expect(isSimilarToVerified("", [""])).toBe(false);
   });
   it("slugifies", () => expect(slugify("  Café Ünïcode & Co!  ")).toBe("cafe-unicode-co"));
+});
+
+describe("AZ-026: 2FA gate for seller OWNER/MANAGER permissions", () => {
+  const cases = [{ enrolled: false, sessionVerified: false }, { enrolled: true, sessionVerified: false }, { enrolled: false, sessionVerified: true }];
+  it.each(["OWNER", "MANAGER"] as const)("%s needs enrolment AND a verified session", (role) => {
+    for (const twoFactor of cases) expect(authorizeSeller({ ...base, memberRole: role, twoFactor }, "seller.profile.update")).toEqual({ allowed: false, code: "TWO_FACTOR_REQUIRED" });
+    expect(authorizeSeller({ ...base, memberRole: role }, "seller.profile.update")).toEqual({ allowed: true });
+  });
+  it("a non-member is NOT_IN_SCOPE before any 2FA check, and a role without the grant stays FORBIDDEN_ROLE", () => {
+    expect(authorizeSeller({ ...base, memberRole: null, twoFactor: cases[0]! }, "seller.profile.update")).toEqual({ allowed: false, code: "NOT_IN_SCOPE" });
+    expect(authorizeSeller({ ...base, memberRole: "RESPONDER", twoFactor: cases[0]! }, "seller.profile.update")).toEqual({ allowed: false, code: "FORBIDDEN_ROLE" });
+  });
 });
