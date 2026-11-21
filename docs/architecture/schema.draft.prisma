@@ -652,6 +652,10 @@ model LegalAcceptance {
 // -----------------------------------------------------------------------------
 // Sellers & ownership proof
 // -----------------------------------------------------------------------------
+// SUPERSEDED for M3 by docs/architecture/m3-sellers-spec.md §2 (task #44): final
+// Seller / SellerMember / SellerInvitation / SellerOwnershipClaim / SellerClaimDecision /
+// EmailVerificationToken models, renamed OwnershipProofMethod values and new ClaimStatus
+// values (CONTESTED, WITHDRAWN). The models below are kept as the M1 draft record.
 
 model Seller {
   id                  String       @id @default(cuid())

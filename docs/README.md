@@ -18,6 +18,7 @@ trust scores, comparison and social features.
 | [architecture/moderation-lifecycle.md](./architecture/moderation-lifecycle.md) | **Authoritative transition table**: lifecycle states (submitted, auto-screened, pending manual review, published, rejected, appealed, reinstated, removed), state diagram, actors, audit actions, revision and appeal sub-machines |
 | [architecture/job-catalogue.md](./architecture/job-catalogue.md) | **Authoritative job list**: outbox events and fan-out routes, job ids, zod payloads, retry/back-off policy, sweepers, media failure handling |
 | [architecture/media-pipeline.md](./architecture/media-pipeline.md) | Direct upload, virus scan, EXIF/GPS strip, 720p video transcode, bucket/key layout, retention, scan/upload logs |
+| [architecture/m3-sellers-spec.md](./architecture/m3-sellers-spec.md) | **M3 spec**: final seller/claim/invitation/email-token schema plan with CHECKs and migration order, claim state machine, proof methods and review policy, SSRF-safe fetcher, email verification and generic register, catalogue → task mapping |
 | [architecture/open-questions.md](./architecture/open-questions.md) | **§0 For CEO review (C-1..C-9)**, **Legal: OPEN**, **Language: OPEN**, plus technical/product questions with working assumptions |
 | [design/README.md](./design/README.md) | Wireframes, design tokens, WCAG 2.2 AA checklist, i18n layout rules (index; sources in `/design`) |
 
@@ -42,6 +43,11 @@ See [adr/README.md](./adr/README.md).
 | [0011](./adr/0011-moderation-lifecycle-and-audit.md) | Appealed/reinstated are derived states; report count never hides content (F-9); T15–T21 added; one `AuditLog` row per transition with `<entity>.<verb>` actions (amends ADR-0005) |
 | [0012](./adr/0012-media-job-decomposition.md) | `media.scan` → `media.image` / `media.transcode` step jobs; decoders read only a sha256-verified staging copy of the scanned bytes (amends ADR-0006) |
 | [0013](./adr/0013-outbox-fan-out-routing.md) | One outbox event → many jobs, domain job keys with `__` separator, delayed routes (refines ADR-0007) |
+| [0014](./adr/0014-ownership-claim-verification.md) | Five proof methods; DNS/META/business email auto-approve (SELLER scope, no conflict) with spot-checks; DOCUMENT/MARKETPLACE/PRODUCT always human, second reviewer for conflicts; CONTESTED state; 14-day re-verification grace then downgrade |
+| [0015](./adr/0015-ssrf-safe-fetcher.md) | Resolve-validate-pin fetcher, private/link-local/v6 deny, ports 80/443, max 3 re-validated redirects, 1 MB, 5 s, isolated secret-free `verification-egress` worker group |
+| [0016](./adr/0016-email-verification-and-generic-registration.md) | Generic 202 register (closes SEC-05), `EmailVerificationToken` with worker-side token generation, `MailProvider` (SMTP/Mailpit, fake), verified-email gate |
+| [0017](./adr/0017-defer-ownership-transfer-and-seller-replies.md) | Ownership transfer (SEL-006) and seller replies move to M3b; M3 gate split |
+| [0018](./adr/0018-kyb-ownership-proof-only.md) | "Verified" = proven control, no KYB (L-9 default) |
 
 ## Security
 
