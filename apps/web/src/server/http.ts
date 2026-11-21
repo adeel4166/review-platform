@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
+import { isCrossOrigin } from "./origin";
 
 export class HttpError extends Error {
   constructor(
@@ -16,6 +17,9 @@ export const json = (data: unknown, status = 200, headers?: Record<string, strin
 
 /** Parses a JSON request body; malformed or non-JSON bodies become a 400. */
 export async function readJson(req: Request): Promise<unknown> {
+  if (isCrossOrigin(req)) throw new HttpError(403, "cross_origin", "Cross-origin request rejected");
+  const ct = (req.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+  if (ct !== "application/json") throw new HttpError(415, "unsupported_media_type", "Content-Type must be application/json");
   try {
     return await req.json();
   } catch {

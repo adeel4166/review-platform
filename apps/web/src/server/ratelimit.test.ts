@@ -24,7 +24,7 @@ const mk = (url: string, method: string, body: BodyInit, headers: Record<string,
   new Request(url, { method, body, headers: { "x-forwarded-for": "203.0.113.9", ...headers } });
 const loginReq = (email: string, ip = "203.0.113.9") =>
   mk("http://t/api/auth/callback/credentials", "POST", new URLSearchParams({ email, password: "x" }), { "x-forwarded-for": ip, "content-type": "application/x-www-form-urlencoded" });
-const jsonReq = (method: string, body: unknown, ip?: string) => mk("http://t/api", method, JSON.stringify(body), ip ? { "x-forwarded-for": ip } : {});
+const jsonReq = (method: string, body: unknown, ip?: string) => mk("http://t/api", method, JSON.stringify(body), { "content-type": "application/json", ...(ip ? { "x-forwarded-for": ip } : {}) });
 
 /** Sends `n` requests; returns the statuses. */
 async function burst(n: number, f: () => Promise<Response>) {

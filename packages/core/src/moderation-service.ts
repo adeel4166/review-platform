@@ -16,7 +16,7 @@ export interface ModerationTx {
     updateMany(args: unknown): Promise<{ count: number }>;
   };
   review: {
-    findUnique(args: unknown): Promise<{ id: string; status: string; currentVersion: number; rating: number; title: string; body: string } | null>;
+    findUnique(args: unknown): Promise<{ id: string; status: string; authorId?: string; currentVersion: number; rating: number; title: string; body: string } | null>;
     updateMany(args: unknown): Promise<{ count: number }>;
   };
   reviewRevision: { updateMany(args: unknown): Promise<{ count: number }> };
@@ -47,6 +47,13 @@ export class CaseNotFoundError extends Error {
     this.name = "CaseNotFoundError";
   }
 }
+/** Separation of duties: staff may not decide a case for their own review. */
+export class SelfDecisionError extends Error {
+  constructor() {
+    super("You cannot moderate your own review");
+    this.name = "SelfDecisionError";
+  }
+}
 /** Another actor changed the case first (conditional update matched 0 rows). */
 export class TransitionConflictError extends Error {
   constructor() {
@@ -74,6 +81,11 @@ export async function transitionCase(db: ModerationDb, input: TransitionInput): 
     assertTransition(c.state, input.to); // throws IllegalTransitionError
     // Humans only decide cases escalated to them; AI_REVIEW belongs to the worker.
     if (input.actor.type === "STAFF" && c.state !== "NEEDS_HUMAN") throw new IllegalTransitionError(c.state, input.to);
+
+    if (input.actor.type === "STAFF") {
+      const own = await tx.review.findUnique({ where: { id: c.reviewId }, select: { id: true, authorId: true } });
+      if (own?.authorId && own.authorId === input.actor.id) throw new SelfDecisionError();
+    }
 
     const now = new Date();
     const terminal = input.to === "APPROVED" || input.to === "REJECTED";

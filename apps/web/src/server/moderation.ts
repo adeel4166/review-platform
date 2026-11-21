@@ -1,5 +1,5 @@
 import {
-  CaseNotFoundError, IllegalTransitionError, TransitionConflictError, transitionCase,
+  CaseNotFoundError, SelfDecisionError, IllegalTransitionError, TransitionConflictError, transitionCase,
   type ModerationDb, type ModerationState,
 } from "@rp/core";
 import { MEDIA_GET_TTL_SECONDS } from "@rp/core";
@@ -53,6 +53,7 @@ export async function decideCase(db: Db, actor: Actor, caseId: string, to: "APPR
     return { id: c.id, state: c.state };
   } catch (e) {
     if (e instanceof CaseNotFoundError) throw new HttpError(404, "not_found", "Moderation case not found");
+    if (e instanceof SelfDecisionError) throw new HttpError(403, "self_moderation_forbidden", "You cannot moderate your own review");
     if (e instanceof IllegalTransitionError) throw new HttpError(409, "illegal_transition", e.message);
     if (e instanceof TransitionConflictError) throw new HttpError(409, "conflict", "Case was changed by someone else, reload");
     throw e;

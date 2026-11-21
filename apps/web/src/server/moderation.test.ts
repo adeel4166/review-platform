@@ -27,7 +27,7 @@ import { POST as rejectRoute } from "../app/api/admin/moderation/[id]/reject/rou
 import { decideCase, listModerationQueue } from "./moderation";
 
 const ctx = (id: string) => ({ params: Promise.resolve({ id }) });
-const post = (body: unknown = {}) => new Request("http://t/x", { method: "POST", body: JSON.stringify(body) });
+const post = (body: unknown = {}) => new Request("http://t/x", { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } });
 
 function setup(state = "NEEDS_HUMAN") {
   const f = new FakeModerationDb();
@@ -45,6 +45,21 @@ describe("admin access control", () => {
     expect((await approveRoute(post(), ctx(c.id))).status).toBe(status);
     expect((await rejectRoute(post({ reason: "spam" }), ctx(c.id))).status).toBe(status);
     expect(c.state).toBe("NEEDS_HUMAN");
+  });
+});
+
+describe("separation of duties", () => {
+  it.each(["approve", "reject"] as const)("admin cannot %s a case for their own review (403)", async (act) => {
+    sessionState.role = "admin"; // actor id is "a1"
+    const f = new FakeModerationDb();
+    const r = f.addReview({ status: "HIDDEN", authorId: "a1" });
+    const c = f.addCase(r.id as string, "NEEDS_HUMAN");
+    fake.db = f;
+    const res = await (act === "approve" ? approveRoute(post(), ctx(c.id)) : rejectRoute(post({ reason: "spam" }), ctx(c.id)));
+    expect(res.status).toBe(403);
+    expect(c.state).toBe("NEEDS_HUMAN");
+    expect(r.status).toBe("HIDDEN");
+    expect(f.audit).toHaveLength(0);
   });
 });
 
