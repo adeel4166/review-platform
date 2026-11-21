@@ -19,9 +19,9 @@ services:
   redis:
     image: redis:7-alpine
     # BullMQ requires noeviction (ADR-0001); AOF for durability.
-    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction", "--aclfile", "/etc/redis/users.acl"]
     ports: ["127.0.0.1:6379:6379"]
-    volumes: ["redis-data:/data"]
+    volumes: ["redis-data:/data", "./infra/redis/users.acl:/etc/redis/users.acl:ro"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -64,6 +64,30 @@ services:
       mc mb -p local/rp-ingest local/rp-private local/rp-public &&
       mc anonymous set download local/rp-public &&
       echo buckets ready"
+
+  # T-01: isolated verification-egress worker (ADR-0015). Fetches attacker-controlled URLs, so it holds NO DATABASE_URL/S3_*/SMTP_URL:
+  # only REDIS_URL (ACL user limited to the verification queues) and VERIFY_DNS_SERVERS. Apply infra/egress/egress-policy.sh on the host.
+  # `docker compose --profile egress up -d verification-egress` (needs `pnpm install` done on the host). local-up.sh runs it on the host instead.
+  verification-egress:
+    image: node:20-bookworm-slim
+    profiles: ["egress"]
+    working_dir: /app/apps/worker
+    volumes: [".:/app:ro"]
+    command: ["node_modules/.bin/tsx", "src/main.ts"]
+    environment:
+      WORKER_GROUPS: verification-egress
+      REDIS_URL: redis://verif-egress:egress_local_pw@redis:6379
+      VERIFY_DNS_SERVERS: 1.1.1.1,8.8.8.8
+    depends_on:
+      redis: { condition: service_healthy }
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [egress]
+
+networks:
+  egress:
+    ipam: { config: [{ subnet: 172.28.0.0/24 }] }
 
 volumes:
   mysql-data:

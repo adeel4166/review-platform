@@ -4,8 +4,7 @@ import { prisma } from "@rp/db";
 import { StubPurchaseLookup, createModerationProvider, markVerifiedBuyer } from "@rp/core";
 import { sendAccountExistsEmail, sendSellerInvitationEmail, sendVerificationEmail, type EmailDb, type EmailDbInvitations } from "./email";
 import { markMediaFailed, processMedia, type MediaDb } from "./media";
-import { createDnsResolver, createProductionFetcher } from "./verification/safe-fetch";
-import { processClaimCheck, type CheckStore } from "./verification/checks";
+import { applyClaimObservation, prepareClaimCheck, type CheckStore, type EgressResult } from "./verification/checks";
 import { sendClaimNotice, type NotifyDb } from "./verification/notify";
 import { processModeration, verifiedBuyerStore, type VerifiedBuyerDb, type WorkerDb } from "./moderation";
 
@@ -61,20 +60,24 @@ export const processors: Partial<Record<QueueName, Processor>> = {
     }
     console.log(JSON.stringify({ msg: "notification.done", jobId: job.id, type: job.name, outcome })); // never the address, token or URL
   },
-  // M3-05: DNS/META ownership checks. SSRF-safe fetcher + public resolvers only (ADR-0015).
+  // T-01 / ADR-0015: the core worker never touches the network for verification. Intake prepares the request for the isolated
+  // egress group (`verification-egress`); the observation comes back on `verification-result` and is persisted here.
   [QUEUES.verification]: async (job) => {
     const claimId = String(((job.data ?? {}) as { claimId?: string }).claimId ?? "");
     if (!claimId) return;
-    const outcome = await processClaimCheck(prisma as unknown as CheckStore, getEgress(), claimId);
-    console.log(JSON.stringify({ msg: "claim.check.done", jobId: job.id, claimId, outcome })); // never domains' bodies or tokens
+    const req = await prepareClaimCheck(prisma as unknown as CheckStore, claimId);
+    if (!req) { console.log(JSON.stringify({ msg: "claim.check.skipped", jobId: job.id, claimId })); return; }
+    await getEgressQueue().add("verification.egress", req, { jobId: `egress__${job.id}`, attempts: 3, backoff: { type: "exponential", delay: 10_000 } });
+  },
+  [QUEUES.verificationResult]: async (job) => {
+    const r = (job.data ?? {}) as Partial<EgressResult>;
+    if (!r.claimId || !Array.isArray(r.observed)) return;
+    const outcome = await applyClaimObservation(prisma as unknown as CheckStore, r.claimId, { observed: r.observed.filter((x) => typeof x === "string").slice(0, 5), error: r.error ?? null, ...(r.proofHost ? { proofHost: r.proofHost } : {}) });
+    console.log(JSON.stringify({ msg: "claim.check.done", jobId: job.id, claimId: r.claimId, outcome })); // never domains' bodies or tokens
   },
 };
 
-let egress: { fetcher: ReturnType<typeof createProductionFetcher>; dns: ReturnType<typeof createDnsResolver> } | undefined;
-const getEgress = () => {
-  if (!egress) {
-    const dns = createDnsResolver();
-    egress = { fetcher: createProductionFetcher(dns), dns };
-  }
-  return egress;
-};
+// Set by main.ts: enqueues to the egress queue (the only verification-network path).
+let egressQueue: { add(name: string, data: unknown, opts?: Record<string, unknown>): Promise<unknown> } | undefined;
+export const setEgressQueue = (q: NonNullable<typeof egressQueue>) => { egressQueue = q; };
+const getEgressQueue = () => { if (!egressQueue) throw new Error("egress queue not configured"); return egressQueue; };

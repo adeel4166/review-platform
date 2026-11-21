@@ -33,6 +33,7 @@ services, DNS rebinding and redirect chains to internal hosts. The draft only sa
    has only a Redis ACL user scoped to two queues and the resolver list: **no database, storage or SMTP
    secrets**, checked at startup. Results return as a bounded job payload that the core group applies. A network
    policy denying private and metadata ranges is defence in depth.
+   Implemented in M3b-02: see [verification-egress.md](../security/verification-egress.md).
 8. The web app cannot import the fetcher (ESLint rule).
 
 ## Alternatives considered
