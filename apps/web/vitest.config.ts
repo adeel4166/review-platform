@@ -6,5 +6,9 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   esbuild: { jsx: "automatic" },
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
-  test: { include: ["src/**/*.test.{ts,tsx}"] },
+  test: {
+    include: ["src/**/*.test.{ts,tsx}"],
+    // Coverage is reported for the backend services in src/server (run via `pnpm coverage` at the repo root).
+    coverage: { provider: "v8", include: ["src/server/**"], reporter: ["text", "html", "json-summary"], reportsDirectory: "./coverage" },
+  },
 });

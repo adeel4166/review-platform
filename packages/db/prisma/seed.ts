@@ -81,6 +81,9 @@ async function main() {
       status: "PUBLISHED",
       publishedVersion: 1,
       publishedAt: new Date(),
+      // Seeded so the E2E suite can check the Verified buyer badge without an order integration (ADR-0008).
+      verifiedBuyer: true,
+      verifiedAt: new Date(),
       revisions: {
         create: { version: 1, rating: 4, title: "Great sound, average battery",
           body: "Comfortable for long sessions and the noise cancelling works well on the train.",

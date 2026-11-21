@@ -31,7 +31,7 @@ pnpm qa      # eslint, tsc (all packages), vitest, prisma validate, design token
 pnpm build
 ```
 
-CI (`.github/workflows/ci.yml`) runs the same `pnpm qa` and `pnpm build` on every push to `main`/`task/**` and on PRs, plus `docker compose config` validation. Tests today need no running services. The Phase 1 test strategy and case catalogue are in [`docs/qa/`](docs/qa/test-strategy.md). Integration and E2E harnesses land with M2.
+CI (`.github/workflows/ci.yml`) runs the same `pnpm qa` and `pnpm build` on every push to `main`/`task/**` and on PRs, plus `docker compose config` validation. Tests today need no running services. The Phase 1 test strategy and case catalogue are in [`docs/qa/`](docs/qa/test-strategy.md). The review-flow E2E suite (Playwright, job `e2e` in CI, run against a seeded stack) is in [`apps/web/e2e/`](apps/web/e2e/README.md), with quarantined tests listed in [`QUARANTINE.md`](apps/web/e2e/QUARANTINE.md). `pnpm coverage` reports coverage for the backend services. Integration tests are still to come.
 
 ## Adding a queue/job
 
