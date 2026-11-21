@@ -25,12 +25,16 @@ const ownSelect = { id: true, reviewId: true, status: true, failureReason: true,
 /**
  * Issues a presigned PUT for one image. Type/size are validated by uploadSlotInput; ownership and the per-review
  * cap are checked here. Content-Type and Content-Length are part of the signature.
+ * `dailyQuota` comes from config (MEDIA_DAILY_QUOTA).
  */
-export async function createUploadSlot(db: Db, st: Storage, userId: string, reviewId: string, input: UploadSlotInput) {
+export async function createUploadSlot(db: Db, st: Storage, userId: string, reviewId: string, input: UploadSlotInput, dailyQuota = 50) {
   if (input.sizeBytes > MEDIA_MAX_BYTES) throw new HttpError(413, "too_large", "Image exceeds 10 MB");
   const review = await db.review.findFirst({ where: { id: reviewId, authorId: userId, status: { not: "DELETED" } }, select: { id: true, status: true } });
   if (!review) throw new HttpError(404, "not_found", "Review not found"); // also hides other users' reviews
   assertPendingForMedia(review.status);
+  // SEC-03: per-user rolling-24h quota over ALL statuses, so FAILED/expired slots still count (no slot->junk->FAILED loop).
+  const today = await db.mediaAsset.count({ where: { ownerId: userId, createdAt: { gte: new Date(Date.now() - 24 * 3600 * 1000) } } });
+  if (today >= dailyQuota) throw new HttpError(429, "upload_quota", "Daily upload limit reached, try again later", { "Retry-After": "3600" });
   const used = await db.mediaAsset.count({ where: { reviewId, status: { in: ["UPLOADING", "PROCESSING", "READY"] } } });
   if (used >= MEDIA_MAX_PER_REVIEW) throw new HttpError(409, "media_limit", `At most ${MEDIA_MAX_PER_REVIEW} images per review`);
   const asset = await db.mediaAsset.create({

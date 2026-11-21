@@ -15,6 +15,7 @@ export interface MediaDb {
   mediaAsset: {
     findUnique(args: unknown): Promise<{ id: string; status: string; declaredMime: string; ingestKey: string } | null>;
     updateMany(args: unknown): Promise<{ count: number }>;
+    findMany?(args: unknown): Promise<{ id: string; ingestKey: string }[]>;
   };
 }
 export interface MediaDeps {
@@ -94,4 +95,21 @@ export async function markMediaFailed(d: Pick<MediaDeps, "db">, assetId: string,
     where: { id: assetId, status: { in: ["PROCESSING", "UPLOADING"] } },
     data: { status: "FAILED", failureReason: reason, processedAt: new Date() },
   });
+}
+
+/**
+ * SEC-03 sweeper: UPLOADING slots older than the presign TTL can no longer receive a PUT, so they are expired
+ * (FAILED / UPLOAD_EXPIRED). They keep counting toward the owner's daily quota (createdAt-based). Leftover ingest
+ * objects are removed best-effort. Idempotent; the status guard avoids racing a concurrent confirm.
+ */
+export async function expireStaleUploads(d: MediaDeps, ttlSeconds: number, now: Date = new Date(), batch = 500): Promise<number> {
+  const cutoff = new Date(now.getTime() - ttlSeconds * 1000);
+  const stale = await d.db.mediaAsset.findMany!({ where: { status: "UPLOADING", createdAt: { lt: cutoff } }, select: { id: true, ingestKey: true }, orderBy: { createdAt: "asc" }, take: batch });
+  if (!stale.length) return 0;
+  const res = await d.db.mediaAsset.updateMany({
+    where: { id: { in: stale.map((a) => a.id) }, status: "UPLOADING", createdAt: { lt: cutoff } },
+    data: { status: "FAILED", failureReason: "UPLOAD_EXPIRED" satisfies MediaFailureReason, processedAt: now },
+  });
+  await Promise.all(stale.map((a) => d.store.delete(d.buckets.ingest, a.ingestKey).catch(() => undefined)));
+  return res.count;
 }

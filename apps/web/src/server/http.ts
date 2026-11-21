@@ -6,12 +6,13 @@ export class HttpError extends Error {
     public status: number,
     public code: string,
     message?: string,
+    public headers?: Record<string, string>,
   ) {
     super(message ?? code);
   }
 }
 
-export const json = (data: unknown, status = 200) => NextResponse.json(data, { status });
+export const json = (data: unknown, status = 200, headers?: Record<string, string>) => NextResponse.json(data, { status, headers });
 
 /** Parses a JSON request body; malformed or non-JSON bodies become a 400. */
 export async function readJson(req: Request): Promise<unknown> {
@@ -27,7 +28,7 @@ export async function handle(fn: () => Promise<Response>): Promise<Response> {
   try {
     return await fn();
   } catch (e) {
-    if (e instanceof HttpError) return json({ error: { code: e.code, message: e.message } }, e.status);
+    if (e instanceof HttpError) return json({ error: { code: e.code, message: e.message } }, e.status, e.headers);
     if (e instanceof ZodError) {
       return json(
         { error: { code: "validation_error", message: "Invalid input", issues: e.issues.map((i) => ({ path: i.path.join("."), message: i.message })) } },

@@ -1,3 +1,4 @@
+import { limitReviewWrite } from "@/server/ratelimit";
 import { db } from "@/server/db";
 import { getStorage } from "@/server/storage";
 import { handle, json, readJson } from "@/server/http";
@@ -16,6 +17,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   return handle(async () => {
     const actor = await requireUser();
+    await limitReviewWrite(req, actor.id);
     const id = idParam.parse((await ctx.params).id);
     const input = reviewInput.parse(await readJson(req));
     return json(await createReview(db, actor.id, id, input), 201);

@@ -1,3 +1,4 @@
+import { limitUploadSlot, rateConfig } from "@/server/ratelimit";
 import { uploadSlotInput } from "@rp/core";
 import { db } from "@/server/db";
 import { handle, json, readJson } from "@/server/http";
@@ -16,8 +17,9 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   return handle(async () => {
     const actor = await requireUser();
+    await limitUploadSlot(actor.id);
     const id = idParam.parse((await ctx.params).id);
     const input = uploadSlotInput.parse(await readJson(req));
-    return json(await createUploadSlot(db, getStorage(), actor.id, id, input), 201);
+    return json(await createUploadSlot(db, getStorage(), actor.id, id, input, rateConfig().MEDIA_DAILY_QUOTA), 201);
   });
 }

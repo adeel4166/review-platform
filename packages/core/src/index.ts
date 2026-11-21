@@ -7,3 +7,4 @@ export * from "./moderation-service";
 export * from "./moderation-fake";
 export * from "./media";
 export * from "./media-store-fake";
+export * from "./rate-limit";

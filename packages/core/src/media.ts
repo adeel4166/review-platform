@@ -40,7 +40,7 @@ export function sniffImageMime(b: Uint8Array): MediaMime | null {
   return null;
 }
 
-export type MediaFailureReason = "TYPE_MISMATCH" | "UNSUPPORTED_TYPE" | "TOO_LARGE" | "CORRUPT" | "TOO_MANY_PIXELS" | "MISSING_OBJECT" | "PROCESSING_ERROR";
+export type MediaFailureReason = "TYPE_MISMATCH" | "UNSUPPORTED_TYPE" | "TOO_LARGE" | "CORRUPT" | "TOO_MANY_PIXELS" | "MISSING_OBJECT" | "PROCESSING_ERROR" | "UPLOAD_EXPIRED";
 
 /** Minimal storage port so web/worker logic is testable with an in-memory fake (no network in tests). */
 export interface ObjectStore {

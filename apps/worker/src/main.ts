@@ -1,7 +1,8 @@
 import { Queue, Worker } from "bullmq";
 import { Redis } from "ioredis";
 import { prisma } from "@rp/db";
-import { QUEUES, loadEnv, mediaJobSchema, moderationJobSchema, type Env, type QueueName } from "@rp/core";
+import { MEDIA_PUT_TTL_SECONDS, QUEUES, loadEnv, mediaJobSchema, moderationJobSchema, type Env, type QueueName } from "@rp/core";
+import { expireStaleUploads } from "./media";
 import { getMediaDeps, markMediaFailed, processors } from "./processors";
 import { MODERATION_JOB_OPTIONS, escalateDeadLetter, isFinalFailure, type WorkerDb } from "./moderation";
 import { relayOnce, type OutboxStore } from "./outbox";
@@ -59,10 +60,18 @@ const timer = setInterval(() => {
   );
 }, env.OUTBOX_POLL_INTERVAL_MS);
 
+// SEC-03: expire abandoned UPLOADING slots (older than the presign TTL).
+const sweepTimer = setInterval(() => {
+  expireStaleUploads(getMediaDeps(), MEDIA_PUT_TTL_SECONDS)
+    .then((n) => { if (n) console.log(JSON.stringify({ msg: "media.upload_sweep", expired: n })); })
+    .catch((e: Error) => console.error(JSON.stringify({ msg: "media.upload_sweep.error", err: e.message })));
+}, env.UPLOAD_SWEEP_INTERVAL_MS);
+
 console.log(JSON.stringify({ msg: "worker.started", queues: Object.keys(processors) }));
 
 async function shutdown() {
   clearInterval(timer);
+  clearInterval(sweepTimer);
   await Promise.all(workers.map((w) => w.close()));
   await Promise.all([...queues.values()].map((q) => q.close()));
   await prisma.$disconnect();
