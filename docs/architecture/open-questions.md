@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Living document, opened by task #18 (M1.1), updated by #19, #24 (M1-T1) and #44 (M3-01, §4) |
+| **Status** | Living document, opened by task #18 (M1.1), updated by #19, #24 (M1-T1), #44 (M3-01, §4) and #54 (M3b-03, §5) |
 | **Owner** | Software Architect, who routes each question to the decision owner listed |
 | **Rule** | A question moves to *Resolved* only with a named decision owner and a date. Resolutions that change the data model need a schema PR and an ADR update. |
 
@@ -119,6 +119,31 @@ Opened by [m3-sellers-spec.md](./m3-sellers-spec.md). Engineering builds to the 
 | M3-Q14 | Seller-verification queue: no lease columns, and contested claims are not `ModerationCase` rows | A filtered list at M3 volume. Revisit in M6 when `ModerationCase` gains its arc and leases | Architect | None |
 | M3-Q15 | The composite FK `sellers(verifiedClaimId, id) → claims(id, sellerId)`. **Passed `prisma validate` on 6.19.3** (M3-01, full M3 plan merged into the real schema). Still to confirm: the generated MySQL DDL and the circular insert order in an integration test | If MySQL rejects it: a single-column FK plus service invariant plus consistency sweeper. SEL-011 tests are unchanged | Backend (M3-04) | None |
 | M3-Q16 | Re-verification grace length (14 d) while the badge stays on | 14 d. Staff can revoke at once on a suspected takeover | Product + T&S | None |
+
+---
+
+## 5. M3b: 2FA, ownership transfer, business email, seller replies (task #54)
+
+Opened by [m3b-spec.md](./m3b-spec.md). Engineering builds to the working assumption.
+
+| ID | Question | Working assumption | Owner | Blocks |
+|---|---|---|---|---|
+| M3b-Q1 | **Auth.js stays, against ADR-0002's "no Auth.js".** The scaffold uses Auth.js JWT sessions. ADR-0019 adds a `UserSession` row behind the JWT instead of replacing Auth.js | Accept the hybrid for launch. Revisit when Google OIDC is built | CEO + Security | M3b-04 |
+| M3b-Q2 | **Staff 2FA gate in M3b** (part of SEC-09(d), planned for M8) | On from M3b, no flag. Dev seeds enrol staff. Short staff sessions (2 h / 12 h) ship with it | CEO + Security | M3b-04 |
+| M3b-Q3 | 2FA for seller `RESPONDER`s | Optional (ADR-0003). RESPONDERs can only reply, and replies are moderated. Revisit if reply abuse through stolen RESPONDER accounts appears | Product + Security | None |
+| M3b-Q4 | **Lost device and lost recovery codes.** No self-service reset | Sellers: ADMIN recovery procedure (M3-Q3) with identity checks, audited. Staff: two-person runbook (ADR-0002). Four-eyes endpoint in M6 (AZ-024) | Security + Support | Launch |
+| M3b-Q5 | Recovery-code use by a seller OWNER: alert only, or force re-enrolment like staff? | Alert only, and the UI asks to regenerate at ≤ 2 codes | Security | None |
+| M3b-Q6 | Business mail on a subdomain (`jane@mail.brand.com`) | Refused (`subdomain_mailbox`). Subdomains may be delegated to third parties. Those sellers use DNS_TXT or DOCUMENT | Product + Security | None |
+| M3b-Q7 | Role addresses (`info@`, `sales@` …) | Allowed, but always human-reviewed (`ROLE_ADDRESS`). Reserved local parts (`noreply@`, `abuse@` …) refused | T&S + Security | None |
+| M3b-Q8 | Reply link policy | `none` at launch. `allowlist` (the seller's own verified domain, shown as text) reserved behind config | Product + T&S | None |
+| M3b-Q9 | Telling the reviewer that a seller replied | Nothing in M3b. In-app notification with M7. No `seller_reply.published` event until it has a route | Product | None |
+| M3b-Q10 | Users cannot report a reply until `Report` exists (M6) | Staff removal and post-review sampling cover the gap. Add a "report" link to the support form meanwhile | T&S | Launch (if M6 is later) |
+| M3b-Q11 | Replies hidden when the seller is downgraded or loses the product; restored on re-verification | As stated (render-time rule). Legal to confirm no DSA statement of reasons is needed for this automatic hiding | Legal | None |
+| M3b-Q12 | Ownership change: the target may accept at any time, execution waits for 72 h (refines ADR-0017 §4.6 "after 72 h, B accepts") | As stated (ADR-0020) | CEO | None |
+| M3b-Q13 | Stalemate: an OWNER can cancel every `REMOVE_OWNER` against them. MANAGERs are not notified of ownership changes | ADMIN recovery procedure decides stalemates. Notify OWNERs and the target only | T&S + Support | None |
+| M3b-Q14 | TOTP algorithm and window | SHA-1, 6 digits, 30 s, ±1 step, for compatibility with common authenticator apps | Security | None |
+| M3b-Q15 | Session cookie name. ADR-0002 and AUT-012 expect `__Host-`; Auth.js defaults to `__Secure-authjs.session-token` | Backend checks the current config in M3b-04 and sets a `__Host-` name through Auth.js `cookies` options if possible; otherwise QA updates AUT-012 | Backend + QA | M3b-09 |
+| M3b-Q16 | A `SELLER_REPLY_RESTRICTION` blocks new replies and edits. Should it also hide published replies? | No. Staff remove harmful replies one by one | T&S | None |
 
 ---
 

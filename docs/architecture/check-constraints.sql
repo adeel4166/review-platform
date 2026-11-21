@@ -191,3 +191,71 @@ ALTER TABLE `media_assets` ADD CONSTRAINT `chk_media_parent_by_purpose`
 -- docs/architecture/m3-sellers-spec.md §2.4. Not expressible in MySQL (service invariant + daily sweeper): SEL-011 "the
 -- referenced claim is SELLER-scope and VERIFIED" (recomputeSeller in apps/web/src/server/sellers.ts) and ">= 1 OWNER".
 -- =============================================================================
+
+-- =============================================================================
+-- M3b (task #54, docs/architecture/m3b-spec.md §6.3). Appended by hand to the four M3b migrations.
+-- None of these uses a column carrying a CASCADE / SET NULL FK (MySQL ER 3823).
+-- =============================================================================
+
+-- 20261210000000_sessions_two_factor (M3b-04)
+ALTER TABLE `user_sessions` ADD CONSTRAINT `chk_session_pending`
+  CHECK ((`secondFactorPending` = 1) = (`pendingExpiresAt` IS NOT NULL));
+ALTER TABLE `user_sessions` ADD CONSTRAINT `chk_session_pending_verified`
+  CHECK (NOT (`secondFactorPending` = 1 AND `secondFactorVerifiedAt` IS NOT NULL));
+ALTER TABLE `user_sessions` ADD CONSTRAINT `chk_session_failures`
+  CHECK (`twoFactorFailures` BETWEEN 0 AND 5);
+ALTER TABLE `user_sessions` ADD CONSTRAINT `chk_session_method`
+  CHECK ((`secondFactorVerifiedAt` IS NULL) = (`secondFactorMethod` IS NULL));
+ALTER TABLE `two_factor_totps` ADD CONSTRAINT `chk_totp_active`
+  CHECK (((`secretCiphertext` IS NULL) = (`confirmedAt` IS NULL))
+     AND ((`secretCiphertext` IS NULL) = (`keyId` IS NULL))
+     AND (`lastUsedStep` IS NULL OR `confirmedAt` IS NOT NULL));
+ALTER TABLE `two_factor_totps` ADD CONSTRAINT `chk_totp_pending`
+  CHECK (((`pendingSecretCiphertext` IS NULL) = (`pendingExpiresAt` IS NULL))
+     AND ((`pendingSecretCiphertext` IS NULL) = (`pendingKeyId` IS NULL)));
+ALTER TABLE `two_factor_totps` ADD CONSTRAINT `chk_totp_not_empty`
+  CHECK (`secretCiphertext` IS NOT NULL OR `pendingSecretCiphertext` IS NOT NULL);
+
+-- 20261211000000_claim_business_email (M3b-06)
+ALTER TABLE `seller_ownership_claims` ADD CONSTRAINT `chk_claim_business_email_method`
+  CHECK (`method` = 'BUSINESS_EMAIL_DOMAIN' OR `businessEmail` IS NULL);
+ALTER TABLE `seller_ownership_claims` ADD CONSTRAINT `chk_claim_business_email_present`
+  CHECK (`method` <> 'BUSINESS_EMAIL_DOMAIN' OR `businessEmail` IS NOT NULL OR `endedAt` IS NOT NULL);
+
+-- 20261212000000_ownership_transfers (M3b-05)
+ALTER TABLE `seller_ownership_transfers` ADD CONSTRAINT `chk_transfer_parties`
+  CHECK (`initiatorId` <> `targetUserId`);
+ALTER TABLE `seller_ownership_transfers` ADD CONSTRAINT `chk_transfer_initiator_outcome`
+  CHECK ((`kind` = 'TRANSFER') = (`initiatorOutcome` <> 'REMAIN_OWNER'));
+ALTER TABLE `seller_ownership_transfers` ADD CONSTRAINT `chk_transfer_target_outcome`
+  CHECK (((`kind` = 'REMOVE_OWNER') = (`targetOutcome` IS NOT NULL))
+     AND (`targetOutcome` IS NULL OR `targetOutcome` <> 'REMAIN_OWNER'));
+ALTER TABLE `seller_ownership_transfers` ADD CONSTRAINT `chk_transfer_open_key`
+  CHECK (((`status` IN ('PENDING','ACCEPTED')) = (`openKey` IS NOT NULL))
+     AND (`openKey` IS NULL OR `openKey` = `sellerId`));
+ALTER TABLE `seller_ownership_transfers` ADD CONSTRAINT `chk_transfer_accepted`
+  CHECK (`status` NOT IN ('ACCEPTED','COMPLETED') OR `acceptedAt` IS NOT NULL);
+ALTER TABLE `seller_ownership_transfers` ADD CONSTRAINT `chk_transfer_ended`
+  CHECK ((`status` IN ('COMPLETED','CANCELLED','EXPIRED','FAILED')) = (`endedAt` IS NOT NULL));
+ALTER TABLE `seller_ownership_transfers` ADD CONSTRAINT `chk_transfer_end_reason`
+  CHECK ((`status` IN ('CANCELLED','FAILED')) = (`endReason` IS NOT NULL));
+-- O-6 hard floor: no configuration can shorten the 72 h delay (259200 s).
+ALTER TABLE `seller_ownership_transfers` ADD CONSTRAINT `chk_transfer_delay`
+  CHECK (TIMESTAMPDIFF(SECOND, `createdAt`, `executeAfter`) >= 259200 AND `acceptBy` > `executeAfter`);
+ALTER TABLE `seller_ownership_transfers` ADD CONSTRAINT `chk_transfer_completed_after_delay`
+  CHECK (`status` <> 'COMPLETED' OR `endedAt` >= `executeAfter`);
+ALTER TABLE `seller_transfer_cancel_tokens` ADD CONSTRAINT `chk_tct_sent`
+  CHECK ((`sentAt` IS NULL OR `tokenHash` IS NOT NULL) AND (`usedAt` IS NULL OR `tokenHash` IS NOT NULL));
+
+-- 20261213000000_seller_replies (M3b-07). Requires moderation_cases.reviewId FK changed CASCADE -> RESTRICT first.
+ALTER TABLE `seller_replies` ADD CONSTRAINT `chk_reply_body_len`
+  CHECK (CHAR_LENGTH(`body`) BETWEEN 1 AND 1500);
+ALTER TABLE `seller_replies` ADD CONSTRAINT `chk_reply_deleted`
+  CHECK ((`status` = 'DELETED') = (`deletedAt` IS NOT NULL));
+ALTER TABLE `seller_replies` ADD CONSTRAINT `chk_reply_published`
+  CHECK (`status` <> 'PUBLISHED' OR `publishedAt` IS NOT NULL);
+ALTER TABLE `seller_replies` ADD CONSTRAINT `chk_reply_version`
+  CHECK (`version` >= 1);
+ALTER TABLE `moderation_cases` ADD CONSTRAINT `chk_case_subject`
+  CHECK (((`subjectType` = 'REVIEW') = (`reviewId` IS NOT NULL))
+     AND ((`subjectType` = 'SELLER_REPLY') = (`sellerReplyId` IS NOT NULL)));

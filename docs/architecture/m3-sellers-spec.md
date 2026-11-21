@@ -715,6 +715,8 @@ function authorizeSeller(ctx: ActorContext, perm: SellerPermission, resource: { 
 
 ### 4.5 Interim 2FA and step-up (until TOTP ships)
 
+> **Superseded by [m3b-spec.md §2.9](./m3b-spec.md#29-authorization-gates-adr-0003-guard-3-az-008)** (task #54). The interim control below was never implemented.
+
 ADR-0003 guard 3 needs 2FA for seller OWNER/MANAGER permissions, but no 2FA exists yet (SEC-09(d), target M8).
 M3a interim control: OWNER and MANAGER actions (`seller.member.invite`, `seller.member.manage`,
 `seller.claim.submit`, claim withdraw) require a **recent password sign-in** (`authTime` in the session ≤ 10 minutes,
@@ -723,6 +725,8 @@ otherwise 401 `STEP_UP_REQUIRED` and re-enter the password). The guard sits behi
 recorded as M3-Q1.
 
 ### 4.6 Ownership transfer (design for M3b, not built in M3a)
+
+> **Superseded by [m3b-spec.md §3](./m3b-spec.md#3-ownership-changes-sel-006-o-6-adr-0020) and [ADR-0020](../adr/0020-seller-ownership-changes.md)** (task #54).
 
 Recorded so M3b starts from an agreed design (SEL-006, O-6): OWNER A starts a transfer to an existing member B. It
 needs **2FA step-up by A at start and by B at accept**. The state is `PENDING` for 72 h. All OWNERs get an email with a

@@ -32,6 +32,9 @@ We record significant architecture decisions as ADRs (lightweight Michael Nygard
 | [0016](./0016-email-verification-and-generic-registration.md) | Email verification, mail-provider interface and generic registration response | Proposed | 2026-11-21 |
 | [0017](./0017-defer-ownership-transfer-and-seller-replies.md) | Defer ownership transfer (SEL-006) and seller replies to M3b | Proposed | 2026-11-21 |
 | [0018](./0018-kyb-ownership-proof-only.md) | Seller verification is ownership proof only (no KYB) for Phase 1 | Proposed | 2026-11-21 |
+| [0019](./0019-two-factor-sessions-on-authjs.md) | 2FA, step-up and revocable sessions on the Auth.js baseline (amends ADR-0002) | Proposed | 2026-11-21 |
+| [0020](./0020-seller-ownership-changes.md) | Seller ownership changes as one delayed, two-party flow (refines ADR-0017) | Proposed | 2026-11-21 |
+| [0021](./0021-seller-reply-content-policy.md) | Seller replies: plain text, no links, server-state visibility, shared moderation | Proposed | 2026-11-21 |
 
 ### Task #24 coverage map (stack, storage, worker, verified buyer, i18n)
 
@@ -64,3 +67,13 @@ We record significant architecture decisions as ADRs (lightweight Michael Nygard
 | Ownership transfer and seller replies deferred to M3b | [0017](./0017-defer-ownership-transfer-and-seller-replies.md) |
 | KYB = ownership proof only (L-9) | [0018](./0018-kyb-ownership-proof-only.md) |
 | Catalogue case → task mapping | [spec §9](../architecture/m3-sellers-spec.md#9-test-case-mapping) |
+
+### Task #54 coverage map (M3b: 2FA, ownership transfer, business-email claims, seller replies)
+
+| Required topic | Where |
+|---|---|
+| 2FA: TOTP enrol/confirm, recovery codes (HMAC), pending-2FA default-deny gate, attempt caps (A-1, A-5…A-7) | [0019](./0019-two-factor-sessions-on-authjs.md), [m3b-spec §2](../architecture/m3b-spec.md#2-two-factor-authentication-adr-0002-3-adr-0019) |
+| Ownership transfer state machine (O-6): 2FA both parties, 72 h, all OWNERs notified, cancel link, audit, ≥ 1 OWNER | [0020](./0020-seller-ownership-changes.md), [m3b-spec §3](../architecture/m3b-spec.md#3-ownership-changes-sel-006-o-6-adr-0020) |
+| `BUSINESS_EMAIL_DOMAIN` flow (O-2): PSL private = shared, deny-lists, role addresses, session-bound link | [m3b-spec §4](../architecture/m3b-spec.md#4-business_email_domain-claims-o-2) (within ADR-0014) |
+| Seller replies (F-5, P-2): link policy, no contact details, plain text, limits, moderation reuse, `SELLER_REPLY_RESTRICTION` | [0021](./0021-seller-reply-content-policy.md), [m3b-spec §5](../architecture/m3b-spec.md#5-seller-replies-f-5-p-2-adr-0021) |
+| Prisma diff, job catalogue additions, error codes, test ids | [m3b-spec §6–§10](../architecture/m3b-spec.md#6-schema-changes) |
