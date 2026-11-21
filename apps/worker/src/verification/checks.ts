@@ -6,7 +6,7 @@ export interface CheckDeps {
   fetcher: { fetch(url: string, o?: { finalMustBeInside?: string }): Promise<FetchResult> };
   dns: { resolveTxt(host: string): Promise<string[][]> };
 }
-export interface ObservedResult { observed: string[]; error: CheckOutcome | null }
+export interface ObservedResult { observed: string[]; error: CheckOutcome | null; proofHost?: string }
 
 const mapFetchError = (e: FetchError): CheckOutcome => (e.startsWith("BLOCKED") || e === "REDIRECT_OFF_DOMAIN" ? "FETCH_BLOCKED" : e === "DNS_FAILURE" ? "DNS_ERROR" : "FETCH_ERROR");
 
@@ -21,17 +21,14 @@ export async function observeDns(d: CheckDeps, domain: string): Promise<Observed
   }
 }
 
-/** META_TAG: https://<domain>/ then https://www.<domain>/ through the SSRF-safe fetcher. The URL is built by the server. */
+/**
+ * META_TAG: https://<domain>/ only, through the SSRF-safe fetcher (T-03: no `www` fallback, a dangling www host must not prove
+ * the apex; a site that exists only on www uses DNS_TXT). The URL is built by the server. `proofHost` is the host that served it.
+ */
 export async function observeMeta(d: CheckDeps, domain: string): Promise<ObservedResult> {
-  let error: CheckOutcome | null = null;
-  for (const url of [`https://${domain}/`, `https://www.${domain}/`]) {
-    const r = await d.fetcher.fetch(url, { finalMustBeInside: domain });
-    if (!r.ok) { error = mapFetchError(r.error); continue; }
-    const observed = extractMetaTokens(r.body.toString("utf8"));
-    if (observed.length) return { observed, error: null };
-    error = null;
-  }
-  return { observed: [], error };
+  const r = await d.fetcher.fetch(`https://${domain}/`, { finalMustBeInside: domain });
+  if (!r.ok) return { observed: [], error: mapFetchError(r.error) };
+  return { observed: extractMetaTokens(r.body.toString("utf8")), error: null, proofHost: domain };
 }
 
 export async function observe(d: CheckDeps, method: string, domain: string): Promise<ObservedResult> {
@@ -60,7 +57,7 @@ export async function processClaimCheck(db: CheckStore, d: CheckDeps, claimId: s
   if (c.status === "PENDING") {
     const outcome = obs.error ?? evaluateObservedTokens(c, obs.observed, now);
     if (outcome === "PASS") {
-      const r = await applyClaimTransition(db, claimId, { action: "CHECK_PASSED", observed: obs.observed }, SYSTEM, now);
+      const r = await applyClaimTransition(db, claimId, { action: "CHECK_PASSED", observed: obs.observed, proofHost: obs.proofHost ?? (c.method === "DNS_TXT" ? dnsChallengeHost(c.domain) : c.domain) }, SYSTEM, now);
       return `PASS:${r.status}`;
     }
     await applyClaimTransition(db, claimId, { action: "CHECK_FAILED", outcome }, SYSTEM, now);

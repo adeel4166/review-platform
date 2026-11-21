@@ -128,6 +128,9 @@ describe("automatic verification and contest (SEL-003, SEL-005)", () => {
     const after = at(8 * DAY_MS);
     expect((await applyClaimTransition(db, "c1", { action: "STAFF_APPROVE", reviewerId: "admin1" }, { id: "admin1", type: "STAFF" }, after)).status).toBe("CONTESTED");
     await expect(applyClaimTransition(db, "c1", { action: "STAFF_APPROVE", reviewerId: "admin1" }, { id: "admin1", type: "STAFF" }, after)).rejects.toBeInstanceOf(DuplicateApprovalError);
+    // T-05: the PASS from 8 days ago is too old for the final approval; a fresh check is needed first
+    await expect(applyClaimTransition(db, "c1", { action: "STAFF_APPROVE", reviewerId: "admin2" }, { id: "admin2", type: "STAFF" }, after)).rejects.toMatchObject({ message: "evidence_stale" });
+    c.lastCheckAt = after;
     const fin = await applyClaimTransition(db, "c1", { action: "STAFF_APPROVE", reviewerId: "admin2" }, { id: "admin2", type: "STAFF" }, after);
     expect(fin.status).toBe("VERIFIED");
     const inc = db.t.sellerOwnershipClaim!.find((x) => x.id === "inc")!;
@@ -216,5 +219,40 @@ describe("re-verification, grace and downgrade with a fake clock (SEL-008, SEL-0
     expect(db.t.sellerOwnershipClaim![0]).toMatchObject({ endReason: "REVERIFY_FAILED", verifiedDomainKey: null, activeKey: null });
     expect(db.t.seller![0]!.status).toBe("UNVERIFIED");
     expect(db.t.outboxEvent!.some((o) => o.type === "seller.downgraded")).toBe(true);
+  });
+});
+
+describe("STAFF_APPROVE re-checks (T-05)", () => {
+  const staff = { id: "admin1", type: "STAFF" as const };
+  const approve = (db: ReturnType<typeof world>["db"], now = T0) => applyClaimTransition(db, "c1", { action: "STAFF_APPROVE", reviewerId: "admin1" }, staff, now);
+  const passed = { lastCheckOutcome: "PASS", lastCheckAt: T0 };
+  it("approves when seller is live, claimant is OWNER and evidence is fresh", async () => {
+    const { db, claim } = world(); claim(passed);
+    expect((await approve(db, at(3600_000))).status).toBe("VERIFIED");
+  });
+  for (const status of ["SUSPENDED", "CLOSED"]) {
+    it(`rejects when the seller is ${status}`, async () => {
+      const { db, claim } = world(); claim(passed);
+      db.t.seller!.find((s) => s.id === "A")!.status = status;
+      await expect(approve(db)).rejects.toMatchObject({ message: "seller_blocked" });
+      expect(db.t.sellerOwnershipClaim!.find((x) => x.id === "c1")!.status).toBe("PENDING");
+    });
+  }
+  it("rejects when the seller has closedAt set", async () => {
+    const { db, claim } = world(); claim(passed);
+    db.t.seller!.find((s) => s.id === "A")!.closedAt = T0;
+    await expect(approve(db)).rejects.toMatchObject({ message: "seller_blocked" });
+  });
+  it("rejects when the claimant was removed or demoted", async () => {
+    const { db, claim } = world(); claim(passed);
+    db.t.sellerMember!.find((m) => m.userId === "u1")!.role = "MEMBER";
+    await expect(approve(db)).rejects.toMatchObject({ message: "claimant_not_owner_or_manager" });
+    db.t.sellerMember!.length = 0;
+    await expect(approve(db)).rejects.toMatchObject({ message: "claimant_not_owner_or_manager" });
+  });
+  it("rejects auto-method evidence older than 24 h, accepts it just inside", async () => {
+    const { db, claim } = world(); claim(passed);
+    await expect(approve(db, at(DAY_MS + 1))).rejects.toMatchObject({ message: "evidence_stale" });
+    expect((await approve(db, at(DAY_MS - 1))).status).toBe("VERIFIED");
   });
 });

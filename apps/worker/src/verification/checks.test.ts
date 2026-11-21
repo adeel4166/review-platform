@@ -35,11 +35,14 @@ describe("observers", () => {
     expect(await observeDns(dnsDeps(Object.assign(new Error("x"), { code: "ENOTFOUND" })), "acme.com")).toEqual({ observed: [], error: null });
     expect(await observeDns(dnsDeps(Object.assign(new Error("x"), { code: "ESERVFAIL" })), "acme.com")).toEqual({ observed: [], error: "DNS_ERROR" });
   });
-  it("META: tries the apex then www, requires the final URL inside the domain, maps blocked fetches", async () => {
+  it("META: fetches only the apex (T-03, no www fallback), requires the final URL inside the domain, records the proof host, maps blocked fetches", async () => {
     const urls: string[] = [];
     const d = dnsDeps([], { fetch: async (u, o) => { urls.push(`${u}|${o?.finalMustBeInside}`); return u.includes("www.") ? { ok: true, finalUrl: u, status: 200, body: Buffer.from('<head><meta name="rp-verify" content="tok"></head>'), hops: 0, pinnedIps: ["1.1.1.1"] } : { ok: false, error: "BLOCKED_IP", hop: 0 }; } });
-    expect(await observeMeta(d, "acme.com")).toEqual({ observed: ["tok"], error: null });
-    expect(urls).toEqual(["https://acme.com/|acme.com", "https://www.acme.com/|acme.com"]);
+    // token only on www: nothing observed, never fetched
+    expect(await observeMeta(d, "acme.com")).toEqual({ observed: [], error: "FETCH_BLOCKED" });
+    expect(urls).toEqual(["https://acme.com/|acme.com"]);
+    const apex = dnsDeps([], { fetch: async (u) => ({ ok: true, finalUrl: u, status: 200, body: Buffer.from('<head><meta name="rp-verify" content="tok"></head>'), hops: 0, pinnedIps: ["1.1.1.1"] }) });
+    expect(await observeMeta(apex, "acme.com")).toEqual({ observed: ["tok"], error: null, proofHost: "acme.com" });
     const blocked = dnsDeps([], { fetch: async () => ({ ok: false, error: "BLOCKED_IP", hop: 0 }) });
     expect(await observeMeta(blocked, "acme.com")).toEqual({ observed: [], error: "FETCH_BLOCKED" });
   });
@@ -157,5 +160,21 @@ describe("claim notifications (SEL-005)", () => {
     expect(mail.sent.map((m) => m.to).sort()).toEqual(["a@a.test", "b@b.test"]);
     expect(mail.sent.every((m) => !/acme|tok/.test(m.text))).toBe(true);
     expect(await sendClaimNotice({ db, mail }, "claim.unknown", "c1", "job2")).toBe("SKIPPED");
+  });
+});
+
+describe("META_TAG www-only token does not approve (T-03)", () => {
+  it("a claim whose token is served only on www stays PENDING", async () => {
+    const db = createFakeClaimDb({
+      user: [{ id: "u1", status: "ACTIVE", emailVerifiedAt: T0 }], seller: [{ id: "A", status: "PENDING_VERIFICATION", closedAt: null }],
+      sellerMember: [{ sellerId: "A", userId: "u1", role: "OWNER" }],
+      sellerOwnershipClaim: [{ id: "c1", sellerId: "A", scope: "SELLER", method: "META_TAG", status: "PENDING", domain: "acme.com", challengeValue: "tok", challengeExpiresAt: at(72 * 3600_000), requiresHumanReview: false, requiredApprovals: 1, checkAttempts: 0, activeKey: "k", submittedById: "u1", nextCheckAt: T0 }],
+    });
+    const d: CheckDeps = {
+      dns: { resolveTxt: async () => [] },
+      fetcher: { fetch: async (u) => (u.includes("//www.") ? { ok: true, finalUrl: u, status: 200, body: Buffer.from('<head><meta name="rp-verify" content="tok"></head>'), hops: 0, pinnedIps: ["1.1.1.1"] } : { ok: false, error: "FETCH_ERROR", hop: 0 }) },
+    };
+    await processClaimCheck(db as unknown as CheckStore, d, "c1", at(1000));
+    expect(db.t.sellerOwnershipClaim![0]!.status).toBe("PENDING");
   });
 });
