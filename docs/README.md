@@ -44,7 +44,7 @@ See [adr/README.md](./adr/README.md).
 
 | Doc | Content |
 |---|---|
-| [security/threat-model.md](./security/threat-model.md) | STRIDE threat model of the M1 designs, design gaps, rate-limit baseline, mitigations mapped to M2-M8 |
+| [security/threat-model.md](./security/threat-model.md) | STRIDE threat model of the M1 designs, design gaps, rate-limit baseline, mitigations mapped to M2-M8, appeals and moderation-tooling threats, secrets/GitHub-token/storage least privilege (§9), M2 security checklist (§10) |
 
 ## QA
 
