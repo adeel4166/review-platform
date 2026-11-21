@@ -1,7 +1,7 @@
 import {
-  CLAIM_CONFIG, ClaimConflictError, ClaimConflictOfInterestError, ClaimInputError, ClaimNotFoundError, ContestWindowOpenError, DAY_MS, DomainNotAllowedError,
+  CLAIM_CONFIG, EMAIL_TOKEN_TTL_MS, ClaimConflictError, ClaimConflictOfInterestError, ClaimInputError, ClaimNotFoundError, ContestWindowOpenError, DAY_MS, DomainNotAllowedError,
   DuplicateApprovalError, InvalidClaimTransitionError, SelfDecisionError, applyClaimTransition, assertAuditMetadataClean, assertHasMx, assertOwnableDomain,
-  businessEmailDomain, generateChallenge, reviewRequirements, sellerNameSkeleton, type ClaimInput,
+  EmailNotAllowedError, assertClaimableBusinessEmail, generateChallenge, reviewRequirements, sellerNameSkeleton, type ClaimInput,
 } from "@rp/core";
 import type { z } from "zod";
 import type { Db } from "./db";
@@ -37,17 +37,21 @@ export async function submitClaim(db: Db, actor: Actor, sellerId: string, input:
 
   // SEL-002: domain policy (PSL-style registrable check, shared-host / free-mail deny-lists) before anything is stored.
   let domain: string | null = null;
+  let roleAddress = false;
   try {
-    if (input.domain) domain = assertOwnableDomain(input.domain, input.method === "BUSINESS_EMAIL_DOMAIN" ? "email" : "claim").domain;
     if (input.method === "BUSINESS_EMAIL_DOMAIN") {
-      businessEmailDomain(input.businessEmail!, domain!);
-      if (deps.lookupMx) await assertHasMx(domain!, deps.lookupMx);
-    }
+      // m3b-spec 4.1: PSL + deny-list policy; the mail domain must itself be the registrable domain (no subdomain mailboxes).
+      const e = assertClaimableBusinessEmail(input.businessEmail!, input.domain);
+      domain = e.domain;
+      roleAddress = e.localClass === "role";
+      if (deps.lookupMx) await assertHasMx(domain, deps.lookupMx);
+    } else if (input.domain) domain = assertOwnableDomain(input.domain, "claim").domain;
   } catch (e) {
     if (e instanceof DomainNotAllowedError) throw new HttpError(422, "domain_not_allowed", `domain_not_allowed:${e.reason}`);
+    if (e instanceof EmailNotAllowedError) throw new HttpError(422, "email_not_allowed", `email_not_allowed:${e.reason}`);
     throw e;
   }
-  if (input.method === "BUSINESS_EMAIL_DOMAIN") throw new HttpError(501, "method_unavailable", "Business e-mail verification is not available yet");
+  const businessEmail = input.method === "BUSINESS_EMAIL_DOMAIN" ? input.businessEmail!.trim() : null;
 
   try {
     return await db.$transaction(async (tx) => {
@@ -60,6 +64,17 @@ export async function submitClaim(db: Db, actor: Actor, sellerId: string, input:
         tx.sellerOwnershipClaim.count({ where: { sellerId, createdAt: { gt: new Date(now.getTime() - DAY_MS) } } }),
       ]);
       if (open >= CLAIM_CONFIG.maxActivePerSeller || today >= CLAIM_CONFIG.maxSubmissionsPerSellerPerDay) throw new HttpError(429, "rate_limited", "Too many claims", { "Retry-After": "3600" });
+
+      if (businessEmail) {
+        // m3b-spec 4.2: the platform must not become a mail cannon. Per user 5/day, per target domain 3 per 7 days (all sellers), one open claim per address.
+        const [byUser, byDomain, sameAddress] = await Promise.all([
+          tx.sellerOwnershipClaim.count({ where: { submittedById: actor.id, method: "BUSINESS_EMAIL_DOMAIN", createdAt: { gt: new Date(now.getTime() - DAY_MS) } } }),
+          tx.sellerOwnershipClaim.count({ where: { domain, method: "BUSINESS_EMAIL_DOMAIN", createdAt: { gt: new Date(now.getTime() - 7 * DAY_MS) } } }),
+          tx.sellerOwnershipClaim.count({ where: { businessEmail, status: { in: ["PENDING", "CONTESTED"] } } }),
+        ]);
+        if (byUser >= 5 || byDomain >= 3) throw new HttpError(429, "rate_limited", "Too many business e-mail claims", { "Retry-After": "3600" });
+        if (sameAddress > 0) throw new HttpError(409, "claim_exists", "A claim for this address is already open");
+      }
 
       let reviewCount = 0;
       let productSellerId: string | null = null;
@@ -85,17 +100,20 @@ export async function submitClaim(db: Db, actor: Actor, sellerId: string, input:
           : null;
       const rival = incumbent ?? (domain ? await tx.sellerOwnershipClaim.findFirst({ where: { domain, status: { in: ["PENDING", "CONTESTED"] }, sellerId: { not: sellerId } }, select: { id: true } }) : null);
       const sameBrand = await tx.seller.findFirst({ where: { status: "VERIFIED", nameSkeleton: seller.nameSkeleton, id: { not: sellerId } }, select: { id: true } });
-      const req = reviewRequirements({
+      const req: ReturnType<typeof reviewRequirements> = reviewRequirements({
         scope: input.scope, method: input.method, brandHasExistingClaim: !!(rival || sameBrand || (productSellerId && productSellerId !== sellerId)),
         reviewCount, nameReviewFlag: seller.nameReviewFlag,
       });
 
+      // Role addresses (info@, sales@ ...) are often shared or forwarded: never auto-approved (C4).
+      if (roleAddress && !req.requiresHumanReview) { req.requiresHumanReview = true; req.reason = "ROLE_ADDRESS"; }
+      const isEmail = input.method === "BUSINESS_EMAIL_DOMAIN";
       const needsChallenge = input.method === "DNS_TXT" || input.method === "META_TAG" || input.method === "MARKETPLACE";
-      const challengeExpiresAt = needsChallenge ? new Date(now.getTime() + CLAIM_CONFIG.challengeTtlMs) : null;
+      const challengeExpiresAt = needsChallenge || isEmail ? new Date(now.getTime() + CLAIM_CONFIG.challengeTtlMs) : null;
       const challengeValue = needsChallenge ? generateChallenge() : null;
       const claim = await tx.sellerOwnershipClaim.create({
         data: {
-          sellerId, scope: input.scope, productId: input.productId ?? null, method: input.method, domain, challengeValue, challengeExpiresAt,
+          sellerId, scope: input.scope, productId: input.productId ?? null, method: input.method, domain, businessEmail, challengeValue, challengeExpiresAt,
           evidenceUrl: input.evidenceUrl ?? null, requiresHumanReview: req.requiresHumanReview, humanReviewReason: req.reason, requiredApprovals: req.requiredApprovals,
           conflictClaimId: incumbent?.id ?? null, activeKey, submittedById: actor.id,
           nextCheckAt: input.method === "DNS_TXT" || input.method === "META_TAG" ? now : null,
@@ -103,6 +121,15 @@ export async function submitClaim(db: Db, actor: Actor, sellerId: string, input:
         select: { id: true, status: true, method: true, scope: true, domain: true, challengeValue: true, challengeExpiresAt: true, requiresHumanReview: true },
       });
       await tx.outboxEvent.create({ data: { type: "claim.submitted", aggregateId: claim.id, payload: { claimId: claim.id } } });
+      if (businessEmail) {
+        // The token row carries the address and is bound to the submitting user. The worker mints and mails the raw token (hash only is stored); payloads never carry the address.
+        const tok = await tx.emailVerificationToken.create({
+          data: { userId: actor.id, purpose: "CLAIM_BUSINESS_EMAIL", email: businessEmail, claimId: claim.id, expiresAt: new Date(now.getTime() + EMAIL_TOKEN_TTL_MS) },
+          select: { id: true },
+        });
+        await tx.outboxEvent.create({ data: { type: "claim.business_email_token_requested", aggregateId: claim.id, payload: { claimId: claim.id, tokenId: tok.id } } });
+        await tx.auditLog.create({ data: { actorType: "USER", actorId: actor.id, action: "claim.email_token_issued", entityType: "SellerOwnershipClaim", entityId: claim.id, metadata: { claimId: claim.id, tokenId: tok.id } } });
+      }
       const meta = { claimId: claim.id, sellerId, scope: input.scope, method: input.method, requiresHumanReview: req.requiresHumanReview, requiredApprovals: req.requiredApprovals };
       assertAuditMetadataClean(meta);
       await tx.auditLog.create({ data: { actorType: "USER", actorId: actor.id, action: "claim.submitted", entityType: "SellerOwnershipClaim", entityId: claim.id, metadata: meta } });

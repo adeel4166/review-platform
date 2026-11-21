@@ -25,6 +25,7 @@ const ADMIN_ROUTES: AdminRoute[] = [
   { file: "claims/[id]/decision/route.ts", method: "POST", withId: true },
   { file: "sellers/[id]/suspend/route.ts", method: "POST", withId: true },
   { file: "sellers/[id]/unsuspend/route.ts", method: "POST", withId: true },
+  { file: "ownership-transfers/[id]/cancel/route.ts", method: "POST", withId: true },
   // Staff role management: SUPER_ADMIN only (ADR-0003, SEC-09e). Both handlers are covered.
   { file: "staff/[id]/roles/route.ts", method: "POST", withId: true, superOnly: true },
   { file: "staff/[id]/roles/route.ts", method: "DELETE", withId: true, superOnly: true },

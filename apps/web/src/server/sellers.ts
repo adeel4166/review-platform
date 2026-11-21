@@ -205,6 +205,19 @@ export async function revokeInvitation(db: Db, actor: Actor, invitationId: strin
  * Remove a member, or leave (target = actor). OWNER may remove anyone; any member may leave. The last OWNER can neither be
  * removed nor leave (409 last_owner), checked under a row lock so two concurrent removals cannot both succeed.
  */
+/** T8 (m3b-spec 3.2): an open ownership change whose initiator or target leaves, is removed or changes role is cancelled in the same transaction. */
+export async function cancelOpenTransfersFor(tx: Tx, sellerId: string, userId: string, now: Date) {
+  const open = await tx.sellerOwnershipTransfer.findMany({
+    where: { sellerId, status: { in: ["PENDING", "ACCEPTED"] }, OR: [{ initiatorId: userId }, { targetUserId: userId }] },
+    select: { id: true },
+  });
+  for (const t of open) {
+    await tx.sellerOwnershipTransfer.update({ where: { id: t.id }, data: { status: "CANCELLED", endReason: "CANCELLED_MEMBERSHIP_CHANGED", endedAt: now, openKey: null } });
+    await tx.outboxEvent.create({ data: { type: "seller.ownership_transfer_cancelled", aggregateId: t.id, payload: { transferId: t.id, status: "CANCELLED" } } });
+    await tx.auditLog.create({ data: { actorType: "SYSTEM", actorId: null, action: "seller.ownership_transfer.cancelled", entityType: "SellerOwnershipTransfer", entityId: t.id, metadata: { sellerId, endReason: "CANCELLED_MEMBERSHIP_CHANGED" } } });
+  }
+}
+
 export async function removeMember(db: Db, actor: Actor, sellerId: string, targetUserId: string, now = new Date()) {
   const leaving = targetUserId === actor.id;
   if (leaving) {
@@ -217,22 +230,32 @@ export async function removeMember(db: Db, actor: Actor, sellerId: string, targe
     await lockSeller(tx, sellerId);
     const target = await tx.sellerMember.findUnique({ where: { sellerId_userId: { sellerId, userId: targetUserId } }, select: { role: true } });
     if (!target) throw notFound();
+    // m3b-spec 3.1: an OWNER cannot remove another OWNER directly (the 72 h REMOVE_OWNER flow applies); leaving stays immediate.
+    if (target.role === "OWNER" && !leaving) throw new HttpError(409, "use_ownership_change", "Use an ownership change to remove an owner");
     if (target.role === "OWNER" && (await tx.sellerMember.count({ where: { sellerId, role: "OWNER" } })) <= 1) {
       throw new HttpError(409, "last_owner", "A seller must keep at least one owner");
     }
     await tx.sellerMember.delete({ where: { sellerId_userId: { sellerId, userId: targetUserId } } });
+    await cancelOpenTransfersFor(tx, sellerId, targetUserId, now);
     await audit(tx, actor, "seller.member.removed", "Seller", sellerId, { sellerId, userId: targetUserId, role: target.role, leaving });
     return { sellerId, userId: targetUserId, status: "removed" as const };
   });
 }
 
-/** AZ-007: staff suspension removes every seller permission for every member (enforced in requireSellerPermission). */
+/** T-04 (F-04, ADR-0003): a staff actor who is a member of the seller must not enforce on it. */
+async function assertNoConflictOfInterest(tx: Tx, sellerId: string, actorId: string) {
+  const m = await tx.sellerMember.findUnique({ where: { sellerId_userId: { sellerId, userId: actorId } }, select: { userId: true } });
+  if (m) throw new HttpError(403, "CONFLICT_OF_INTEREST", "You are a member of this seller");
+}
+
+/** AZ-007: staff suspension removes every seller permission for every member (enforced in requireSellerPermission). T-04: COI guard. */
 export async function suspendSeller(db: Db, actor: Actor, sellerId: string, input: z.infer<typeof sellerSuspendInput>, now = new Date()) {
   if (actor.role !== "admin" && actor.role !== "super_admin") throw new HttpError(403, "forbidden", "Admin access required");
   if (input.endsAt && input.endsAt <= now) throw new HttpError(400, "validation_error", "endsAt must be in the future");
   return db.$transaction(async (tx) => {
     await lockSeller(tx, sellerId);
     if (!(await tx.seller.findUnique({ where: { id: sellerId }, select: { id: true } }))) throw notFound();
+    await assertNoConflictOfInterest(tx, sellerId, actor.id);
     const a = await tx.enforcementAction.create({
       data: { type: "SELLER_SUSPENSION", subjectSellerId: sellerId, reasonCode: input.reasonCode, publicReason: input.publicReason, issuedById: actor.id, startsAt: now, endsAt: input.endsAt ?? null },
       select: { id: true },
@@ -243,10 +266,14 @@ export async function suspendSeller(db: Db, actor: Actor, sellerId: string, inpu
   });
 }
 
+/** T-04: COI guard plus a second staff actor: whoever issued an active suspension cannot lift it (403 second_actor_required). */
 export async function unsuspendSeller(db: Db, actor: Actor, sellerId: string, now = new Date()) {
   if (actor.role !== "admin" && actor.role !== "super_admin") throw new HttpError(403, "forbidden", "Admin access required");
   return db.$transaction(async (tx) => {
     await lockSeller(tx, sellerId);
+    await assertNoConflictOfInterest(tx, sellerId, actor.id);
+    const active = await tx.enforcementAction.findMany({ where: { subjectSellerId: sellerId, type: "SELLER_SUSPENSION", status: "ACTIVE" }, select: { issuedById: true } });
+    if (active.some((a) => a.issuedById === actor.id)) throw new HttpError(403, "second_actor_required", "A different staff member must lift this suspension");
     const r = await tx.enforcementAction.updateMany({
       where: { subjectSellerId: sellerId, type: "SELLER_SUSPENSION", status: "ACTIVE" },
       data: { status: "REVOKED", revokedAt: now, revokedById: actor.id },

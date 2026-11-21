@@ -26,7 +26,7 @@ function match(r: Row, w: Row = {}): boolean {
 const cp = (r: Row | undefined) => (r ? { ...r } : null); // reads return copies, like a real DB
 
 function makeDb() {
-  const t: Record<string, Row[]> = { user: [], seller: [], sellerMember: [], sellerInvitation: [], enforcementAction: [], sellerOwnershipClaim: [], auditLog: [], outboxEvent: [] };
+  const t: Record<string, Row[]> = { user: [], seller: [], sellerMember: [], sellerInvitation: [], enforcementAction: [], sellerOwnershipClaim: [], sellerOwnershipTransfer: [], auditLog: [], outboxEvent: [] };
   let n = 0;
   const table = (name: string, defaults: () => Row = () => ({})) => ({
     findUnique: async ({ where }: Row) => cp(t[name]!.find((r) => match(r, where))),
@@ -52,7 +52,7 @@ function makeDb() {
     user: table("user"), seller: table("seller", () => ({ status: "UNVERIFIED", closedAt: null })), sellerMember: table("sellerMember"),
     sellerInvitation: table("sellerInvitation", () => ({ acceptedAt: null, revokedAt: null })),
     enforcementAction: table("enforcementAction", () => ({ status: "ACTIVE" })),
-    sellerOwnershipClaim: table("sellerOwnershipClaim"), auditLog: table("auditLog"), outboxEvent: table("outboxEvent"),
+    sellerOwnershipClaim: table("sellerOwnershipClaim"), sellerOwnershipTransfer: table("sellerOwnershipTransfer"), auditLog: table("auditLog"), outboxEvent: table("outboxEvent"),
     $queryRaw: async () => [],
     $transaction: async (fn: (tx: unknown) => unknown) => fn(db),
   };
@@ -225,14 +225,26 @@ describe("createSeller (SEL-010) and suspension (AZ-007)", () => {
     expect(r.status).toBe("SUSPENDED");
     expect(await code(requireSellerPermission(h.db, actor("ownerA"), "seller.member.invite", "A", NOW))).toBe("403:SELLER_SUSPENDED");
     expect(await code(inviteMember(h.db, actor("ownerA"), "A", { email: "z@x.io", role: "MANAGER" }, NOW))).toBe("403:SELLER_SUSPENDED");
-    expect(((await unsuspendSeller(h.db, actor("adm", "admin"), "A", NOW)) as { status: string }).status).toBe("UNVERIFIED");
+    expect(await code(unsuspendSeller(h.db, actor("adm", "admin"), "A", NOW))).toBe("403:second_actor_required"); // T-04
+    expect(((await unsuspendSeller(h.db, actor("adm2", "admin"), "A", NOW)) as { status: string }).status).toBe("UNVERIFIED");
     expect(await code(requireSellerPermission(h.db, actor("ownerA"), "seller.member.invite", "A", NOW))).toBe("ok");
     expect(h.t.auditLog!.filter((l) => l.actorType === "STAFF").map((l) => l.action)).toEqual(
       expect.arrayContaining(["enforcement.issued", "seller.status_changed", "enforcement.revoked"]),
     );
   });
+  it("T-04: a staff actor who is a member of the seller cannot suspend or unsuspend it (CONFLICT_OF_INTEREST)", async () => {
+    h.t.sellerMember!.push({ sellerId: "A", userId: "staffMember", role: "RESPONDER" });
+    const staffMember = actor("staffMember", "admin");
+    expect(await code(suspendSeller(h.db, staffMember, "A", { reasonCode: "POLICY_X", publicReason: "v" }, NOW))).toBe("403:CONFLICT_OF_INTEREST");
+    expect(h.t.enforcementAction).toHaveLength(0);
+    await suspendSeller(h.db, actor("adm", "admin"), "A", { reasonCode: "POLICY_X", publicReason: "v" }, NOW);
+    expect(await code(unsuspendSeller(h.db, staffMember, "A", NOW))).toBe("403:CONFLICT_OF_INTEREST");
+    expect(h.t.enforcementAction![0]).toMatchObject({ status: "ACTIVE" });
+    // a member who is also not the issuer is still refused: COI comes first; a non-member second actor succeeds
+    expect(((await unsuspendSeller(h.db, actor("adm2", "admin"), "A", NOW)) as { status: string }).status).toBe("UNVERIFIED");
+  });
   it("SEL-011: status is VERIFIED only with a VERIFIED SELLER-scope claim of this seller; a PRODUCT claim or another seller's claim never verifies", async () => {
-    const verifyAs = async () => (await suspendSeller(h.db, actor("adm", "admin"), "A", { reasonCode: "TMP_CHECK", publicReason: "tmp" }, NOW), await unsuspendSeller(h.db, actor("adm", "admin"), "A", NOW)) as { status: string };
+    const verifyAs = async () => (await suspendSeller(h.db, actor("adm", "admin"), "A", { reasonCode: "TMP_CHECK", publicReason: "tmp" }, NOW), await unsuspendSeller(h.db, actor("adm2", "admin"), "A", NOW)) as { status: string };
     h.t.sellerOwnershipClaim!.push({ id: "c1", sellerId: "A", scope: "PRODUCT", status: "VERIFIED", verifiedAt: NOW, domain: null });
     h.t.sellerOwnershipClaim!.push({ id: "c2", sellerId: "B", scope: "SELLER", status: "VERIFIED", verifiedAt: NOW, domain: "b.com" });
     expect((await verifyAs()).status).toBe("UNVERIFIED");

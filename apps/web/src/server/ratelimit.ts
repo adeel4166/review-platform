@@ -73,3 +73,6 @@ export const limit2fa = (req: Request, kind: "attempt" | "enrol" | "regenerate" 
       ? [closed({ key: `2fa:acct:${userId}`, rule: rule(10, 15 * MIN) }), closed({ key: `2fa:ip:${ipOf(req)}`, rule: rule(30, 15 * MIN) })]
       : [closed({ key: `2fa:${kind}:${userId}`, rule: rule(kind === "enrol" ? 5 : 3, kind === "enrol" ? HOUR : DAY) })],
   );
+
+/** Unauthenticated one-click links (ownership-change cancel, claim-mail deny): 10 / min per IP, fail closed (m3b-spec 3.4, 4.4). */
+export const limitTokenLink = (req: Request) => enforce([closed({ key: `tokenlink:m:${ipOf(req)}`, rule: rule(10, MIN) })]);
