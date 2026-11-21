@@ -4,7 +4,7 @@ import { readyMediaUrls, type Storage } from "./media";
 import type { ReviewInput } from "./validation";
 
 const publicSelect = {
-  id: true, productId: true, rating: true, title: true, body: true, incentive: true,
+  id: true, productId: true, rating: true, title: true, body: true, incentive: true, verifiedBuyer: true,
   helpfulCount: true, notHelpfulCount: true, publishedAt: true, editedAt: true,
   author: { select: { handle: true, displayName: true } }, // never expose email
 } as const;
