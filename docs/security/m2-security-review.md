@@ -165,3 +165,13 @@ The reviewer role has no task-creation capability in this run, so these are prop
 
 No Critical **code** defect was found. The dependency advisories rated Critical (SEC-01) and the three High items should be
 fixed (or formally risk-accepted by the CEO) before launch. Recommendation: do not sign off M2 for public exposure until fix tasks 1 to 3 land.
+
+## Verification record (M2-13, task #42)
+
+| Item | Result | Evidence | Status |
+|---|---|---|---|
+| SEC-07(1): is `content-length` in `X-Amz-SignedHeaders` for presigned PUTs? | **Yes** for the presigner in this repo (`@aws-sdk/s3-request-presigner`, `PutObjectCommand` with `ContentLength`): signed headers are `content-length;host`. Changing the declared size changes the signature. | `packages/core/src/media-presign.test.ts` (SEC-013) | Closed for the SDK path. Runtime check against MinIO **not run** (see below). |
+| SEC-07(1) side finding | `content-type` is **not** signed (`X-Amz-SignedHeaders` has no `content-type`). Residual: a client can PUT a different type. The worker still validates the real type by magic bytes and re-encodes, so impact stays bounded. | same test; the test deliberately does not assert `content-type` | Open, Low. Decide whether to sign it or accept the worker check. |
+| SEC-07(1) MinIO runtime check | **Not run.** The QA sandbox has no Docker and nothing listens on `127.0.0.1:9000`. Procedure: `pnpm infra:up`, presign a PUT with `contentLength: N`, then PUT N+1 bytes with curl; the expected result is 403 `SignatureDoesNotMatch`. Repeat against R2 before launch. | n/a | **Pending** (needs Docker or an R2 test bucket). |
+| SEC-08(c): no test proves GPS/EXIF is gone from worker output | Covered. A GPS-tagged JPEG fixture produces variants with no EXIF segment, no WebP EXIF chunk, no XMP/IPTC and no camera or owner strings. | `apps/worker/src/media-exif.test.ts` (MED-039) | Closed. |
+| SEC-09(a): no admin route matrix | Covered. The unit matrix auto-discovers every `route.ts` under `/api/admin` and checks 401 (anonymous), 403 (non-admin) and a pass-through control (admin). The e2e matrix repeats the check over HTTP. | `apps/web/src/server/admin-authz.test.ts` (AZ-025), `apps/web/e2e/admin-authz.spec.ts` (E2E-012) | Closed at unit level. E2E runs in CI only. |

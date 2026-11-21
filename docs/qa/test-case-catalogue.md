@@ -176,6 +176,7 @@ from the `MediaFailureReason` enum. Cases marked **(§9.n)** rest on assumption 
 | MED-036 | I | M5 | P0 | Every image passes the hash-matching hook before promote. CI uses a stub; real provider pending L-17 | U-8 |
 | MED-037 | I | M5 | P0 | No public object before scan **and** moderation pass: promote refuses unless `READY`, scanned and moderation passed. DB CHECK `chk_media_public_bucket` rejects an insert that breaks the rule | §3, §5 |
 | MED-038 | S | M5 | P0 | No endpoint accepts a remote URL for media (no server-side fetch of user URLs) | U-10 |
+| MED-039 | I | M5 | P0 | GPS-tagged JPEG (phone photo) → `READY`; both variants have no EXIF segment, no WebP EXIF chunk, no XMP/IPTC and no camera or owner strings (`apps/worker/src/media-exif.test.ts`) | SEC-08(c), MED-002 |
 
 ## 7. Authorization (`AZ`)
 
@@ -207,6 +208,7 @@ Matrix: ADR-0003 §2 (35 permission rows × 9 role columns = 315 cells). Guards:
 | AZ-022 | I | M4 | P0 | Public repository functions never return `PENDING`, `HIDDEN`, `REJECTED`, `REMOVED`, `DELETED` content or private media. Missing and forbidden resources return the same 404 | §4 |
 | AZ-023 | I | M4 | P0 | User A cannot edit, delete or withdraw user B's review, proof or appeal by ID (`NOT_OWNER`), including guessed IDs | §2 |
 | AZ-024 | I | M6 | P0 | Four-eyes: ADMIN 2FA reset requires a second ADMIN or SUPER_ADMIN. Self-approval refused | §2 `user.manage` |
+| AZ-025 | U | M2 | P0 | Admin route matrix (SEC-09a): every `route.ts` under `/api/admin` is discovered and must refuse anonymous callers with 401 and signed-in non-admins with 403; an admin passes the guard (control). Table-driven (`apps/web/src/server/admin-authz.test.ts`) | SEC-09(a), ADR-0003 |
 | SCOPE-001 | U | M2 | P0 | No `message.*` permission granted to any role; no messaging routes or tables in the Phase 1 build | ADR-0003 §2, README |
 
 ## 8. Authentication and sessions (`AUT`)
@@ -261,6 +263,8 @@ Matrix: ADR-0003 §2 (35 permission rows × 9 role columns = 315 cells). Guards:
 | SEC-010 | I | M6 | P0 | Four-eyes on role grants and config (see CFG-004, AZ-015) | threat P-3, P-7 |
 | SEC-011 | E | M6 | P0 | Staff console: cross-site POST to a decide endpoint refused; step-up enforced for high-risk actions | threat P-8 |
 | SEC-012 | U | M6 | P1 | Anomaly rule: one moderator removing more than N reviews of one seller in a window → flagged (N set in config) | threat P-4 |
+| SEC-013 | U | M2 | P0 | Presigned PUT signs `content-length` (`X-Amz-SignedHeaders`); changing the declared size changes the signature (`packages/core/src/media-presign.test.ts`). Observed: `content-type` is not signed, see m2-security-review SEC-07 | SEC-07(1) |
+| SEC-014 | U | M2 | P0 | M2 regression pins (`apps/web/src/server/m2-regression.test.ts`): next-auth stays >= 5.0.0-beta.32; CI blocking high/critical audit gate present; anchors for the SEC-02/03/04/06/09/13 suites exist | SEC-01; M2-8..M2-12 |
 
 ## 11. Sellers and ownership (`SEL`)
 
@@ -337,6 +341,7 @@ Browser tests. Seeded data and server test clock where stated (strategy §3).
 | E2E-009 | E | M2 | P0 | Staff login requires TOTP; BAN action requires step-up within 10 min | ADR-0002 §4 |
 | E2E-010 | E | M4 | P0 | Post-review remove → media URL returns 404 after demote | §4.4 |
 | E2E-011 | E | M6 | P1 | Staff HOLD-lane decision completed by keyboard only | §6.1 |
+| E2E-012 | E | M2 | P0 | Over HTTP, every `/api/admin` route returns 401 to anonymous callers and 403 to a signed-in non-admin (`apps/web/e2e/admin-authz.spec.ts`) | SEC-09(a) |
 
 ## 16. Operations and launch readiness (`OPS`, M8)
 
@@ -450,16 +455,16 @@ draft, so their cases may change with the trust-score design (T-9).
 | AIF | 9 |
 | CFG | 5 |
 | TMR | 14 |
-| MED | 38 |
-| AZ and SCOPE | 25 (AZ-001 expands to 315 generated cells) |
+| MED | 39 |
+| AZ and SCOPE | 26 (AZ-001 expands to 315 generated cells) |
 | AUT | 13 |
 | PRV | 13 |
-| SEC | 12 |
+| SEC | 14 |
 | SEL | 13 |
 | OUT | 5 (plus 2 existing) |
 | A11Y | 10 |
 | TRS | 10 |
-| E2E | 11 |
+| E2E | 12 |
 | OPS | 6 |
 | INF | 4 (plus INF-001 existing) |
 
