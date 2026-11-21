@@ -17,6 +17,13 @@ export async function requireUser(): Promise<Actor> {
 /** Admin-only gate: 401 when signed out, 403 for non-admins. */
 export async function requireAdmin(): Promise<Actor> {
   const a = await requireUser();
-  if (a.role !== "admin") throw new HttpError(403, "forbidden", "Admin access required");
+  if (a.role !== "admin" && a.role !== "super_admin") throw new HttpError(403, "forbidden", "Admin access required");
+  return a;
+}
+
+/** SUPER_ADMIN-only gate (staff role management, ADR-0003 `role.grant.*`): 401 signed out, 403 for everyone else, ADMIN included. */
+export async function requireSuperAdmin(): Promise<Actor> {
+  const a = await requireUser();
+  if (a.role !== "super_admin") throw new HttpError(403, "forbidden", "Super admin access required");
   return a;
 }

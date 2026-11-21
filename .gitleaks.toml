@@ -1,0 +1,9 @@
+# Extends the default ruleset. Deliberately NO path allowlist for tests/fixtures: a secret planted there must fail CI.
+title = "review-platform gitleaks config"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Throwaway local-dev defaults documented in .env.example (explicitly not real secrets)"
+paths = ['''^\.env\.example$''']

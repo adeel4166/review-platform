@@ -11,7 +11,7 @@ vi.mock("@/server/db", () => ({ db: {} }));
 const ADMIN_DIR = fileURLToPath(new URL("../app/api/admin", import.meta.url));
 
 type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-interface AdminRoute { file: string; method: Method; withId: boolean }
+interface AdminRoute { file: string; method: Method; withId: boolean; superOnly?: boolean }
 
 /** Every /api/admin/* route handler. The discovery test below fails if a route file is missing from this table. */
 const ADMIN_ROUTES: AdminRoute[] = [
@@ -20,7 +20,12 @@ const ADMIN_ROUTES: AdminRoute[] = [
   { file: "moderation/[id]/route.ts", method: "GET", withId: true },
   { file: "moderation/[id]/approve/route.ts", method: "POST", withId: true },
   { file: "moderation/[id]/reject/route.ts", method: "POST", withId: true },
+  // Staff role management: SUPER_ADMIN only (ADR-0003, SEC-09e). Both handlers are covered.
+  { file: "staff/[id]/roles/route.ts", method: "POST", withId: true, superOnly: true },
+  { file: "staff/[id]/roles/route.ts", method: "DELETE", withId: true, superOnly: true },
 ];
+const ADMIN_TIER = ADMIN_ROUTES.filter((r) => !r.superOnly);
+const SUPER_ONLY = ADMIN_ROUTES.filter((r) => r.superOnly);
 
 function routeFiles(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
@@ -50,7 +55,7 @@ describe("admin authz matrix (SEC-09a)", () => {
 
   it("the matrix covers every route.ts under /api/admin", () => {
     const discovered = routeFiles(ADMIN_DIR).map((f) => relative(ADMIN_DIR, f).split("\\").join("/")).sort();
-    expect(discovered).toEqual(ADMIN_ROUTES.map((r) => r.file).sort());
+    expect(discovered).toEqual([...new Set(ADMIN_ROUTES.map((r) => r.file))].sort());
   });
 
   it.each(ADMIN_ROUTES)("AZ-025 $method /api/admin/$file: anonymous -> 401", async (route) => {
@@ -63,10 +68,39 @@ describe("admin authz matrix (SEC-09a)", () => {
     expect((await call(route)).status).toBe(403);
   });
 
-  it.each(ADMIN_ROUTES)("AZ-025 $method /api/admin/$file: admin passes the guard (control)", async (route) => {
+  it.each(ADMIN_TIER)("AZ-025 $method /api/admin/$file: admin passes the guard (control)", async (route) => {
     authMock.mockResolvedValue({ user: { id: "a1", role: "admin" } });
     const status = (await call(route)).status;
     // The DB is an empty stub, so the handler fails later; the point is that the guard let it through.
     expect([401, 403]).not.toContain(status);
+  });
+
+  it.each(ADMIN_TIER)("SEC-09e $method /api/admin/$file: super admin also passes the guard", async (route) => {
+    authMock.mockResolvedValue({ user: { id: "s1", role: "super_admin" } });
+    expect([401, 403]).not.toContain((await call(route)).status);
+  });
+
+  it.each(SUPER_ONLY)("SEC-09e $method /api/admin/$file: ADMIN is refused -> 403", async (route) => {
+    authMock.mockResolvedValue({ user: { id: "a1", role: "admin" } });
+    expect((await call(route)).status).toBe(403);
+  });
+
+  it.each(SUPER_ONLY)("SEC-09e $method /api/admin/$file: SUPER_ADMIN passes the guard (control)", async (route) => {
+    authMock.mockResolvedValue({ user: { id: "s1", role: "super_admin" } });
+    expect([401, 403]).not.toContain((await call(route)).status);
+  });
+});
+
+describe("roleFrom (ADR-0003 tier split)", () => {
+  it("maps staff rows to the highest admin tier", async () => {
+    vi.doMock("next-auth", () => ({ default: () => ({ handlers: {}, auth: () => null, signIn: null, signOut: null }) }));
+    vi.doMock("next-auth/providers/credentials", () => ({ default: () => ({}) }));
+    vi.doMock("@rp/db", () => ({ hashPassword: vi.fn(), verifyPassword: vi.fn() }));
+    vi.doUnmock("@/server/auth");
+    const { roleFrom } = await import("@/server/auth");
+    expect(roleFrom([])).toBe("user");
+    expect(roleFrom([{ role: "MODERATOR" }])).toBe("user");
+    expect(roleFrom([{ role: "ADMIN" }])).toBe("admin");
+    expect(roleFrom([{ role: "ADMIN" }, { role: "SUPER_ADMIN" }])).toBe("super_admin");
   });
 });

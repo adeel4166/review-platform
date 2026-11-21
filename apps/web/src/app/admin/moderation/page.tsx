@@ -9,7 +9,7 @@ export const metadata = { title: `${t("mod.title")} · ${t("app.name")}` };
 export default async function AdminModerationPage() {
   const session = await auth();
   if (!session?.user?.id) redirect("/login?callbackUrl=/admin/moderation");
-  if (session.user.role !== "admin") redirect("/"); // non-admins never see the dashboard; APIs also enforce requireAdmin
+  if (session.user.role !== "admin" && session.user.role !== "super_admin") redirect("/"); // non-admins never see the dashboard; APIs also enforce requireAdmin
   return (
     <main className="mx-auto max-w-content px-4 py-6">
       <ModerationDashboard />

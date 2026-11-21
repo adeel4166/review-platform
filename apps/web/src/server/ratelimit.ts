@@ -1,5 +1,5 @@
 import { Redis } from "ioredis";
-import { clientIp, consumeAll, loadRateLimitConfig, type RateLimitConfig, type RateLimitRedis, type RateRule } from "@rp/core";
+import { clientIp, consumeAll, loadRateLimitConfig, type RateLimitConfig, type RateLimitFailMode, type RateLimitRedis, type RateRule } from "@rp/core";
 import { HttpError } from "./http";
 
 let redis: RateLimitRedis | undefined;
@@ -8,7 +8,7 @@ let cfg: RateLimitConfig | undefined;
 export const rateConfig = () => (cfg ??= loadRateLimitConfig());
 
 function getRedis(): RateLimitRedis {
-  // Lazy: never connects at import/build time. Commands fail fast (no offline queue) so an outage fails open quickly.
+  // Lazy: never connects at import/build time. Commands fail fast (no offline queue) so an outage is detected quickly (login/register then fall back to the in-process limiter).
   return (redis ??= new Redis(process.env.REDIS_URL ?? "redis://127.0.0.1:6379", { lazyConnect: false, maxRetriesPerRequest: 1, enableOfflineQueue: false }) as unknown as RateLimitRedis);
 }
 
@@ -21,10 +21,13 @@ export function configureRateLimit(r: RateLimitRedis | undefined, c?: Partial<Ra
 export const ipOf = (req: Request) => clientIp(req.headers, rateConfig());
 
 const rule = (limit: number, windowSeconds: number): RateRule => ({ limit, windowSeconds });
+type Check = { key: string; rule: RateRule; mode?: RateLimitFailMode };
+/** Auth endpoints fail CLOSED (in-process fallback) on Redis errors; review/upload stay fail-open (R-1). */
+const closed = (c: Omit<Check, "mode">): Check => ({ ...c, mode: "closed" });
 const MIN = 60, HOUR = 3600, DAY = 86400;
 
 /** Throws 429 + Retry-After when any check is exceeded. */
-async function enforce(checks: { key: string; rule: RateRule }[]) {
+async function enforce(checks: Check[]) {
   if (!rateConfig().RATE_LIMIT_ENABLED) return;
   const d = await consumeAll(getRedis(), checks);
   if (!d.allowed) {
@@ -35,13 +38,13 @@ async function enforce(checks: { key: string; rule: RateRule }[]) {
 export const limitLogin = (req: Request, email: string) => {
   const c = rateConfig(), who = `${ipOf(req)}:${email.trim().toLowerCase()}`;
   return enforce([
-    { key: `login:m:${who}`, rule: rule(c.RATE_LOGIN_PER_MIN, MIN) },
-    { key: `login:h:${who}`, rule: rule(c.RATE_LOGIN_PER_HOUR, HOUR) },
+    closed({ key: `login:m:${who}`, rule: rule(c.RATE_LOGIN_PER_MIN, MIN) }),
+    closed({ key: `login:h:${who}`, rule: rule(c.RATE_LOGIN_PER_HOUR, HOUR) }),
   ]);
 };
 
 export const limitRegister = (req: Request) =>
-  enforce([{ key: `register:h:${ipOf(req)}`, rule: rule(rateConfig().RATE_REGISTER_PER_HOUR, HOUR) }]);
+  enforce([closed({ key: `register:h:${ipOf(req)}`, rule: rule(rateConfig().RATE_REGISTER_PER_HOUR, HOUR) })]);
 
 /** Review create and edit share the budget: both enqueue moderation work. */
 export const limitReviewWrite = (req: Request, userId: string) => {

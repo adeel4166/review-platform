@@ -251,3 +251,12 @@ Conditions / limits of this sign-off:
   browser, e2e authz matrix, Redis limiter under real load) were not executed here and rely on CI/QA.
 - It covers staging/internal M2 use. **Public launch** additionally requires SEC-09(d) (admin 2FA/short session), the R2 runtime check
   and the deployment items for M8.
+
+## M3-02 carry-over closure (task #45)
+
+| Item | Resolution |
+|---|---|
+| R-1 limiter fail mode | `consume(..., mode)` in `packages/core/src/rate-limit.ts`. Login and register use `"closed"`: on a Redis error they fall back to a per-process limiter (same limits), so attempts get 429 instead of unlimited. Review and upload stay `"open"`. Every error calls `setRateLimitErrorHook` (default: structured `ratelimit_backend_error_total` log line) for wiring to a metric or alert. Tests: `ratelimit.test.ts` "Redis down (R-1)". |
+| SEC-09(e) | `AppRole` now has `super_admin`; `requireSuperAdmin()` guards the new `/api/admin/staff/[id]/roles` (POST grant, DELETE revoke). ADMIN gets 403. Guards: no self-change, at least 2 SUPER_ADMINs remain. Matrix in `admin-authz.test.ts`. Step-up/2FA (ADR-0002) is still open. |
+| SEC-09(c) | `assertAuditMetadataClean` runs in `transitionCase` and staff-role audit writes; `audit-metadata.test.ts` also statically scans every `metadata:`/`meta:` literal in `apps/` and `packages/` for email, IP or name keys. |
+| SEC-12 gitleaks | `secret-scan` job in `.github/workflows/ci.yml` (full history, `.gitleaks.toml`, no allowlist for tests/fixtures). |
