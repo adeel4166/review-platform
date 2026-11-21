@@ -11,6 +11,8 @@
 This is the authoritative list of event types, jobs, payloads, job ids and retry policies for moderation and
 media. Seller-claim and proof jobs (`verification.*`) keep their definitions in ADR-0008 and moderation-pipeline
 §6.3. They follow the conventions in §1–§3. Ownership-check execution is split over `verification` → `verification-egress` → `verification-result` ([verification-egress.md](../security/verification-egress.md)).
+M3b additions (2FA alerts, ownership-change jobs, business-email MX lookup and token mail, seller-reply moderation) are
+listed in [m3b-spec.md §8](./m3b-spec.md#8-job-catalogue-additions) and follow the same conventions.
 
 ---
 
