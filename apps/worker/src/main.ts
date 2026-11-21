@@ -1,11 +1,19 @@
 import { Queue, Worker } from "bullmq";
 import { Redis } from "ioredis";
 import { prisma } from "@rp/db";
-import { loadEnv, type QueueName } from "@rp/core";
+import { loadEnv, type Env, type QueueName } from "@rp/core";
 import { processors } from "./processors";
 import { relayOnce, type OutboxStore } from "./outbox";
 
-const env = loadEnv();
+// Without infra config (e.g. a preview with no Redis/MySQL) idle instead of crashing next to the web app.
+let env: Env;
+try {
+  env = loadEnv();
+} catch (e) {
+  if (process.env.NODE_ENV === "production") throw e;
+  console.warn(JSON.stringify({ msg: "worker.disabled", reason: (e as Error).message, hint: "copy .env.example to .env and run `pnpm infra:up` to enable background jobs" }));
+  process.exit(0);
+}
 // BullMQ workers require maxRetriesPerRequest: null
 const connection = new Redis(env.REDIS_URL, { maxRetriesPerRequest: null });
 
