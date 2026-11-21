@@ -31,6 +31,9 @@ spec. Where the code does not exist yet, the case is the acceptance test for the
 | WEB-001 | U | M1 | P1 | `GET /api/health` returns 200 `{status:"ok"}` (`apps/web/src/health.test.ts`) | README |
 | DSN-001 | S | M1 | P0 | Token drift and WCAG contrast pass (`pnpm design:check`, in CI) | design/README.md |
 | INF-001 | S | M1 | P0 | `docker compose --profile init config` is valid (CI `compose-config` job) | README |
+| SMK-001 | S | M1 | P0 | Prisma schema is valid: `@rp/db` test script runs `prisma validate` (CI runs it after `db:generate`) | strategy §11 |
+| SMK-002 | U | M1 | P1 | Web shell smoke: root layout declares `<html lang="en">`; home page renders a `<main>` landmark with the `<h1>` (`apps/web/src/app/home.smoke.test.ts`) | strategy §11, WCAG 3.1.1 |
+| SMK-003 | U | M1 | P0 | Worker processors fail closed: valid moderation and media payloads resolve; malformed payloads or unknown media step reject; only moderation and media are registered (`apps/worker/src/processors.smoke.test.ts`) | moderation §7.3, processors.ts |
 
 ---
 
