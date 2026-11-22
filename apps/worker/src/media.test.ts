@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import sharp from "sharp";
 import { FakeObjectStore } from "@rp/core";
 import { processMedia, type MediaDb } from "./media";
+import { fakeScanner, testVerifier } from "./media/test-helpers";
 
 const buckets = { ingest: "ingest", private: "private" };
 
@@ -20,7 +21,7 @@ function setup(declaredMime = "image/jpeg") {
     },
   };
   const store = new FakeObjectStore();
-  return { asset, db, store, deps: { db, store, buckets } };
+  return { asset, db, store, deps: { db, store, buckets, scanner: fakeScanner(), verifier: testVerifier } };
 }
 
 /** A JPEG carrying EXIF (camera info + GPS), as a phone photo would. */
@@ -84,7 +85,7 @@ describe("processMedia", () => {
   it("fails when the uploaded object is missing", async () => {
     const { asset, deps } = setup();
     expect(await processMedia(deps, "a1")).toBe("FAILED");
-    expect(asset.failureReason).toBe("MISSING_OBJECT");
+    expect(asset.failureReason).toBe("NOT_CONFIRMED");
   });
 
   it("is idempotent: non-PROCESSING assets are skipped; storage errors throw for retry", async () => {

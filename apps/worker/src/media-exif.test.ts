@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import sharp from "sharp";
 import { FakeObjectStore } from "@rp/core";
 import { processMedia, type MediaDb } from "./media";
+import { fakeScanner, testVerifier } from "./media/test-helpers";
 
 // SEC-08(c) / MED-039: a GPS-tagged photo must come out of the worker with no EXIF, no GPS IFD and no APP1/EXIF chunk.
 const EXIF_HEADER = Buffer.from("Exif\0\0"); // JPEG APP1 payload marker
@@ -39,7 +40,7 @@ function setup() {
     },
   };
   const store = new FakeObjectStore();
-  return { asset, store, deps: { db, store, buckets: { ingest: "ingest", private: "private" } } };
+  return { asset, store, deps: { db, store, buckets: { ingest: "ingest", private: "private" }, scanner: fakeScanner(), verifier: testVerifier } };
 }
 
 describe("worker output carries no EXIF or GPS (SEC-08c)", () => {

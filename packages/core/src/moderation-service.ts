@@ -31,7 +31,8 @@ export interface ModerationTx {
     findFirst?(args: unknown): Promise<{ rating: number; title: string; body: string; incentive?: string } | null>;
   };
   /** Optional: media versions (m4-m5-spec 3.4). An asset not READY when its version is approved is detached in that version. */
-  mediaAsset?: { updateMany(args: unknown): Promise<{ count: number }> };
+  mediaAsset?: { updateMany(args: unknown): Promise<{ count: number }>; findMany?(args: unknown): Promise<{ id: string }[]> };
+  outboxEvent?: { create(args: unknown): Promise<unknown> };
   /** Only needed for SELLER_REPLY cases. */
   sellerReply?: {
     findUnique(args: unknown): Promise<{ id: string; authorId?: string; status: string; version: number } | null>;
@@ -183,6 +184,13 @@ export async function transitionCase(db: ModerationDb, input: TransitionInput): 
         where: { reviewId: c.reviewId, version: c.version },
         data: { status: input.to === "APPROVED" ? "APPROVED" : input.to === "REJECTED" ? "REJECTED" : "HELD" },
       });
+    }
+
+    // M5 (MED-037): only an approval can make media public. One promote request per READY asset visible in the approved version;
+    // `media.promote` re-reads the case itself, so a stale or duplicate event is a no-op.
+    if (input.to === "APPROVED" && !isReply) {
+      const visible = (await tx.mediaAsset?.findMany?.({ where: { reviewId: c.reviewId, status: "READY", bucket: "PRIVATE", attachedInVersion: { lte: c.version }, OR: [{ detachedInVersion: null }, { detachedInVersion: { gt: c.version } }] }, select: { id: true } })) ?? [];
+      for (const m of visible) await tx.outboxEvent?.create({ data: { type: "media.promote_requested", aggregateId: m.id, payload: { assetId: m.id, caseId: c.id } } });
     }
 
     const metadata = { caseId: c.id, version: c.version, from: c.state, to: input.to, reason: input.reason ?? null, ...input.meta };

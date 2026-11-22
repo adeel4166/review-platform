@@ -379,9 +379,21 @@ model MediaAsset {
   attachedInVersion Int?
   /// First version that no longer shows it.
   detachedInVersion Int?
+  /// M5 pipeline (m4-m5-spec 7-10). `bucket` says where the bytes live; PUBLIC only after scan + sanitise + moderation (MED-037).
+  kind              MediaKind   @default(IMAGE)
+  bucket            MediaBucket @default(INGEST)
+  sha256            String?     @db.VarChar(64)
+  virusScannedAt    DateTime?
+  metadataStripped  Boolean     @default(false)
+  moderationClearedAt DateTime?
+  promotedAt        DateTime?
+  /// Video only: transcoded MP4 and its poster frame (same bucket as thumbKey/mediumKey).
+  videoKey          String?     @db.VarChar(255)
+  posterKey         String?     @db.VarChar(255)
   createdAt         DateTime    @default(now())
   updatedAt         DateTime    @updatedAt
 
+  logs MediaProcessingLog[]
   owner  User   @relation("MediaOwner", fields: [ownerId], references: [id], onDelete: Restrict)
   review Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
 
@@ -389,6 +401,43 @@ model MediaAsset {
   @@index([ownerId, createdAt])
   @@index([status, createdAt])
   @@map("media_assets")
+}
+
+enum MediaKind {
+  IMAGE
+  VIDEO
+}
+
+enum MediaBucket {
+  INGEST
+  PRIVATE
+  PUBLIC
+}
+
+/// One row per pipeline step. Scan rows carry the ClamAV engine and signature version (INF-003, MED-041). Never holds file names or threat names shown to users.
+model MediaProcessingLog {
+  id               String   @id @default(cuid())
+  assetId          String
+  step             String   @db.VarChar(32)
+  outcome          String   @db.VarChar(32)
+  engineVersion    String?  @db.VarChar(64)
+  signatureVersion String?  @db.VarChar(32)
+  detail           Json?
+  createdAt        DateTime @default(now())
+
+  asset MediaAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@index([assetId, createdAt])
+  @@map("media_processing_logs")
+}
+
+/// sha256 of files that must never be accepted again (MED-016).
+model BannedMediaHash {
+  sha256    String   @id @db.VarChar(64)
+  reason    String   @db.VarChar(64)
+  createdAt DateTime @default(now())
+
+  @@map("banned_media_hashes")
 }
 
 enum EmailTokenPurpose {
