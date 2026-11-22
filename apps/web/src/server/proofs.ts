@@ -168,8 +168,15 @@ async function assertNoCoi(tx: Db, actor: Actor, review: { authorId: string; pro
   }
 }
 
-export async function getProofDetail(db: Db, st: Storage, actor: Actor, proofId: string) {
+/** Break-glass reason bounds (QA-M4-01). Mirrors BREAK_GLASS_MIN in the admin UI; the server is the authority. */
+export const ACCESS_REASON_MIN = 10;
+export const ACCESS_REASON_MAX = 200;
+
+export async function getProofDetail(db: Db, st: Storage, actor: Actor, proofId: string, accessReason?: string | null) {
   staff(actor);
+  // QA-M4-01: the reason is required and validated here (not only in the UI). It is stored in the audit row of this view.
+  const reason = (accessReason ?? "").trim();
+  if (reason.length < ACCESS_REASON_MIN || reason.length > ACCESS_REASON_MAX) throw new HttpError(400, "reason_required", "reason_required");
   const p = await db.purchaseProof.findUnique({
     where: { id: proofId },
     select: {
@@ -182,7 +189,7 @@ export async function getProofDetail(db: Db, st: Storage, actor: Actor, proofId:
   await assertNoCoi(db, actor, p.review);
   // Redacted derivatives only. 300 s signed URLs; every view is audited (R-2). No route returns an original.
   const files = await Promise.all(p.files.filter((f) => f.isRedacted && f.status === "READY").map(async (f) => ({ id: f.id, pageCount: f.pageCount, url: await st.store.presignGet(st.buckets.private, f.storageKey, Math.min(300, MEDIA_GET_TTL_SECONDS)) })));
-  await db.auditLog.create({ data: { actorType: "STAFF", actorId: actor.id, action: "proof.view_redacted", entityType: "PurchaseProof", entityId: proofId, metadata: { fileCount: files.length } } });
+  await db.auditLog.create({ data: { actorType: "STAFF", actorId: actor.id, action: "proof.view_redacted", entityType: "PurchaseProof", entityId: proofId, metadata: { fileCount: files.length, accessReason: reason } } });
   const { files: _drop, review, ...rest } = p; void _drop;
   return { ...rest, reviewId: review.id, productName: review.product?.name ?? null, files };
 }

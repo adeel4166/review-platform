@@ -41,17 +41,36 @@ async function authorise(db: Db, userId: string, reviewId: string, now: Date) {
   return { review: review!, newAccount: user?.createdAt ? isNewAccount(user.createdAt, now) : true };
 }
 
-/** PUT: set or switch a vote. Counter updates are relative increments in the same transaction (VOT-003). */
+function isUniqueViolation(e: unknown): boolean {
+  return typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002";
+}
+
+/**
+ * PUT: set or switch a vote. Counter updates are relative increments in the same transaction (VOT-003).
+ * SEC-M4-02: the previous vote is (re-)read INSIDE the transaction and the row change is conditional on it, so two concurrent
+ * identical PUTs apply the counter delta once (the loser is a no-op) and a concurrent first vote is not a 500.
+ */
 export async function putVote(db: Db, userId: string, reviewId: string, value: VoteValue, ctx: VoteCtx = {}): Promise<VoteResult> {
   const now = ctx.now ?? new Date();
   const { review, newAccount } = await authorise(db, userId, reviewId, now);
-  const prev = await db.reviewVote.findUnique({ where: { reviewId_userId: { reviewId, userId } }, select: { value: true } });
-  if (prev?.value === value) return { value, helpfulCount: review.helpfulCount, notHelpfulCount: review.notHelpfulCount };
+  const pre = await db.reviewVote.findUnique({ where: { reviewId_userId: { reviewId, userId } }, select: { value: true } });
+  if (pre?.value === value) return { value, helpfulCount: review.helpfulCount, notHelpfulCount: review.notHelpfulCount };
   await ctx.charge?.({ newAccount });
   return db.$transaction(async (tx) => {
+    const current = async (v: VoteValue | null): Promise<VoteResult> => {
+      const r = await tx.review.findUniqueOrThrow({ where: { id: reviewId }, select: { helpfulCount: true, notHelpfulCount: true } });
+      return { value: v, ...r };
+    };
+    const prev = await tx.reviewVote.findUnique({ where: { reviewId_userId: { reviewId, userId } }, select: { value: true } });
+    if (prev?.value === value) return current(value); // a concurrent identical PUT already applied
+    if (prev) {
+      const res = await tx.reviewVote.updateMany({ where: { reviewId, userId, value: prev.value }, data: { value, ipHash: ctx.ipHash ?? null } });
+      if (res.count !== 1) return current(null); // lost a race with another switch or retract: apply nothing
+    } else {
+      try { await tx.reviewVote.create({ data: { reviewId, userId, value, ipHash: ctx.ipHash ?? null } }); }
+      catch (e) { if (isUniqueViolation(e)) return current(null); throw e; } // concurrent first vote
+    }
     const d = voteDelta(prev?.value ?? null, value);
-    if (prev) await tx.reviewVote.update({ where: { reviewId_userId: { reviewId, userId } }, data: { value, ipHash: ctx.ipHash ?? null } });
-    else await tx.reviewVote.create({ data: { reviewId, userId, value, ipHash: ctx.ipHash ?? null } });
     const r = await tx.review.update({ where: { id: reviewId }, data: { helpfulCount: { increment: d.h }, notHelpfulCount: { increment: d.n } }, select: { helpfulCount: true, notHelpfulCount: true } });
     return { value, ...r };
   });

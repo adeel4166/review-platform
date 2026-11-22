@@ -2,7 +2,7 @@ import type { Job } from "bullmq";
 import { QUEUES, createMailProvider, createS3Store, loadEnv, mediaBuckets, mediaJobSchema, moderationJobSchema, type QueueName } from "@rp/core";
 import { prisma } from "@rp/db";
 import { assertNoAutoVerify, createModerationProvider, parseOrderRefKeys } from "@rp/core";
-import { sendAccountExistsEmail, sendClaimBusinessEmail, type ClaimEmailDeps, sendSellerInvitationEmail, sendVerificationEmail, type EmailDb, type EmailDbInvitations } from "./email";
+import { sendAccountExistsEmail, sendSecurityAlertEmail, type SecurityAlertDb, sendClaimBusinessEmail, type ClaimEmailDeps, sendSellerInvitationEmail, sendVerificationEmail, type EmailDb, type EmailDbInvitations } from "./email";
 import { reminderDelayMs, sendTransferCancelLinks, type TransferNotifyDb } from "./ownership-transfer-email";
 import { markMediaFailed, processMedia, type MediaDb } from "./media";
 import { createClamd } from "./media/clamd";
@@ -98,7 +98,8 @@ export const processors: Partial<Record<QueueName, Processor>> = {
       console.log(JSON.stringify({ msg: "notification.done", jobId: job.id, type: job.name, outcome }));
       return;
     }
-    if (job.name === "user.email_verification_requested" && data.tokenId) outcome = await sendVerificationEmail(d, data.tokenId, key);
+    if (job.name === "auth.security_alert") outcome = await sendSecurityAlertEmail({ db: prisma as unknown as SecurityAlertDb, mail: getMail() }, (job.data ?? {}) as { userId?: string; kind?: string; remaining?: number }, key); // SEC-M3B-01
+    else if (job.name === "user.email_verification_requested" && data.tokenId) outcome = await sendVerificationEmail(d, data.tokenId, key);
     else if (job.name === "user.registration_conflict" && data.userId) outcome = await sendAccountExistsEmail(d, data.userId, key);
     else if (job.name === "seller.invitation_created" && data.invitationId) outcome = await sendSellerInvitationEmail(d, data.invitationId, key);
     else if (job.name === "claim.business_email_token_requested" && data.tokenId) outcome = await sendClaimBusinessEmail(d as unknown as ClaimEmailDeps, data.tokenId, key);

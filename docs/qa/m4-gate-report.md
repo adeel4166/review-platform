@@ -107,3 +107,4 @@ pnpm --filter @rp/core exec vitest run src/m4.test.ts
 ## History
 
 - **task #71 (M4-05, this report):** FAIL. 37 of 44 P0 PASS, 5 GAP, 2 NOT RUN (live DB), E2E NOT RUN. 17 gate tests added. QA-M4-01 (P1) opened.
+- **task #75 (close-out):** QA-M4-01 fixed (`getProofDetail` requires `X-Access-Reason`, 10-200 chars, stored in the audit row; the `it.fails` pin is a plain `it`). QA-M4-02 named tests added: REV-007, SEL-013 (`apps/web/src/server/m4.test.ts`), RPT-005 and PRV-007 (`apps/worker/src/m4-close.test.ts`). RPT-005 exposed a gap, fixed: the removal email now carries the reason category as well as the public reason. QA-M4-03 / PRV-023: no-network probe added in `apps/worker/src/m4-close.test.ts`; the OCR adapter is not ready, so `failClosedRedactor` stays wired. VOT-003, RPT-004 and E2E remain CI-only (live MySQL).

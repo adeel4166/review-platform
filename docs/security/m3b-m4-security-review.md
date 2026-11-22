@@ -354,3 +354,7 @@ Slack tokens) over tracked files: no hits. `.env` files were not read.
 Static review only. Not exercised: real S3/R2 behaviour (presigned PUT length enforcement, lifecycle rules), real SMTP and Redis
 failure modes, multi-instance deployment effects on the in-process limiter fallback, the production wiring of the proof redactor
 and extractor (`getProofDeps`), and any code not present in the tree (OCR adapter, PDF rasteriser).
+
+## 8. Close-out (task #75)
+
+Fixed: SEC-M3B-01 (worker consumer `sendSecurityAlertEmail`, template `security_alert`), SEC-M4-01 (no default key, `assertIpHashKey` at web and worker boot, `IP_HASH_KEY` in `.env.example`), SEC-M4-02, SEC-M4-03, SEC-M4-04, SEC-M3B-02 (`>= 3` trigger, row-locked count-then-insert). Still deferred: SEC-M3B-03, -04, -05, SEC-M4-05 to -10 (not in scope of #75).

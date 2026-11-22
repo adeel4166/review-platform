@@ -105,3 +105,26 @@ export async function sendClaimBusinessEmail(d: ClaimEmailDeps, tokenId: string,
   await d.db.emailVerificationToken.updateMany({ where: { id: row.id }, data: { sentAt: now } });
   return "SENT";
 }
+
+/** Fixed copy per alert kind (SEC-M3B-01). Unknown kinds are not mailed. No code, secret, IP or token is ever included. */
+export const SECURITY_ALERT_COPY: Record<string, { headline: string; detail: string }> = {
+  SECOND_FACTOR_FAILURES: { headline: "Failed two-factor sign-in attempts", detail: "There were several failed attempts to enter a two-factor code after your password was accepted." },
+  RECOVERY_CODE_USED: { headline: "A recovery code was used to sign in", detail: "One of your two-factor recovery codes was used. Each code works only once." },
+  STAFF_RECOVERY_USED: { headline: "A recovery code was used on a staff account", detail: "A two-factor recovery code was used to sign in to your staff account." },
+  TWO_FACTOR_ENABLED: { headline: "Two-factor authentication was turned on", detail: "Two-factor authentication was enabled on your account." },
+  TWO_FACTOR_REPLACED: { headline: "Your two-factor authenticator was replaced", detail: "The authenticator app linked to your account was replaced." },
+  TWO_FACTOR_DISABLED: { headline: "Two-factor authentication was turned off", detail: "Two-factor authentication was disabled on your account." },
+};
+
+export interface SecurityAlertDb { user: { findUnique(args: unknown): Promise<{ email: string; status?: string } | null> } }
+
+/** notifications `auth.security_alert` {userId, kind, remaining?}: one fixed-text mail to the account address. Skips unknown kinds and inactive accounts. */
+export async function sendSecurityAlertEmail(d: { db: SecurityAlertDb; mail: MailProvider; baseUrl?: string }, payload: { userId?: string; kind?: string; remaining?: number }, jobKey: string): Promise<EmailOutcome> {
+  const copy = payload.kind ? SECURITY_ALERT_COPY[payload.kind] : undefined;
+  if (!payload.userId || !copy) return "SKIPPED";
+  const u = await d.db.user.findUnique({ where: { id: payload.userId }, select: { email: true, status: true } });
+  if (!u || (u.status ?? "ACTIVE") !== "ACTIVE") return "SKIPPED";
+  const detail = payload.kind === "RECOVERY_CODE_USED" && Number.isInteger(payload.remaining) ? `${copy.detail} Unused recovery codes left: ${payload.remaining}.` : copy.detail;
+  await d.mail.send(renderMail("security_alert", u.email, { url: `${d.baseUrl ?? appUrl()}/account`, headline: copy.headline, detail }), { idempotencyKey: jobKey });
+  return "SENT";
+}

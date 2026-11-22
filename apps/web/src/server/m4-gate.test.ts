@@ -103,9 +103,8 @@ describe("PRV-023 redaction runs without network (static pin)", () => {
 });
 
 describe("break-glass (proof view)", () => {
-  // QA-M4-01 (P1): pinned defect. The admin UI collects a reason and sends X-Access-Reason, but the server ignores it.
-  // It flips to a failing test when fixed; then convert to a plain `it`.
-  it.fails("the admin proof detail route reads the access reason server-side and audits the view", () => {
+  // QA-M4-01 (P1): fixed. getProofDetail requires and validates the reason and stores it in the audit row (behaviour test in m4.test.ts).
+  it("QA-M4-01: the admin proof detail route reads the access reason server-side and audits the view", () => {
     const route = read("apps/web/src/app/api/admin/proofs/[id]/route.ts");
     expect(route + read("apps/web/src/server/proofs.ts")).toMatch(/x-access-reason|accessReason/i);
   });

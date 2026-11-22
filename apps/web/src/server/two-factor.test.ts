@@ -348,4 +348,10 @@ describe("AUT-022: SECOND_FACTOR_FAILURES alert", () => {
     }
     expect(alerts()).toHaveLength(1);
   });
+  it("SEC-M3B-02: parallel wrong codes across sessions still raise exactly one alert", async () => {
+    enrolled();
+    const sids = [await pendingSession(), await pendingSession(), await pendingSession()];
+    await Promise.all(sids.flatMap((sid) => [1, 2, 3, 4].map(() => err(verifySecondFactor(db, deps(), { sid, userId: "u1", code: "000000", kind: "TOTP" })))));
+    expect(alerts()).toHaveLength(1);
+  });
 });

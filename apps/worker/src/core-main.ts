@@ -1,7 +1,7 @@
 import { Queue, Worker } from "bullmq";
 import { Redis } from "ioredis";
 import { prisma } from "@rp/db";
-import { MEDIA_PUT_TTL_SECONDS, QUEUES, loadEnv, mediaJobSchema, moderationJobSchema, type Env, type QueueName } from "@rp/core";
+import { assertIpHashKey, MEDIA_PUT_TTL_SECONDS, QUEUES, loadEnv, mediaJobSchema, moderationJobSchema, type Env, type QueueName } from "@rp/core";
 import { expireStaleUploads } from "./media";
 import { reconcilePublication } from "./media/publish";
 import { startMediaHealth } from "./media/health";
@@ -11,6 +11,8 @@ import { sweepDueChecks, sweepExpiry, sweepGrace, type SweepStore } from "./veri
 import { nullOldIpHashes, reconcileVoteCounts, sweepProofs } from "./proofs";
 import { getProofDeps } from "./processors";
 import { relayOnce, type OutboxStore } from "./outbox";
+
+assertIpHashKey(); // SEC-M4-01: no default key; refuse to start without IP_HASH_KEY
 
 // Without infra config (e.g. a preview with no Redis/MySQL) idle instead of crashing next to the web app.
 let env: Env;

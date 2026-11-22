@@ -130,12 +130,18 @@ export async function verifySecondFactor(db: TfDb, deps: TfDeps, o: { sid: strin
   const after = await db.userSession.findUnique({ where: { id: o.sid }, select: { twoFactorFailures: true } });
   const failures = after?.twoFactorFailures ?? MAX_SESSION_FAILURES;
   await audit(db, o.userId, "auth.2fa.failed", { method: o.kind, sessionFailures: failures });
-  if (failures === 3) {
-    // AUT-022: one SECOND_FACTOR_FAILURES alert per ACCOUNT per hour, however many pending sessions reach their 3rd failure.
-    const recent = await db.outboxEvent.count({
-      where: { type: "auth.security_alert", aggregateId: o.userId, createdAt: { gt: new Date(now.getTime() - 60 * 60 * 1000) }, payload: { path: "$.kind", equals: "SECOND_FACTOR_FAILURES" } },
+  if (failures >= 3) {
+    // AUT-022 / SEC-M3B-02: one SECOND_FACTOR_FAILURES alert per ACCOUNT per hour, however many pending sessions reach their 3rd failure.
+    // `>= 3` (not `=== 3`) so parallel guesses that skip the exact count still trigger it; the dedupe is atomic: a row lock on the
+    // user serialises the count-then-insert, so two parallel requests cannot both see "none in the last hour".
+    await db.$transaction(async (t) => {
+      const tx = t as unknown as Tx;
+      await tx.user.updateMany({ where: { id: o.userId }, data: { updatedAt: now } }); // takes the InnoDB row lock until commit
+      const recent = await tx.outboxEvent.count({
+        where: { type: "auth.security_alert", aggregateId: o.userId, createdAt: { gt: new Date(now.getTime() - 60 * 60 * 1000) }, payload: { path: "$.kind", equals: "SECOND_FACTOR_FAILURES" } },
+      });
+      if (recent === 0) await tx.outboxEvent.create({ data: { type: "auth.security_alert", aggregateId: o.userId, createdAt: now, payload: { userId: o.userId, kind: "SECOND_FACTOR_FAILURES" } } });
     });
-    if (recent === 0) await db.outboxEvent.create({ data: { type: "auth.security_alert", aggregateId: o.userId, createdAt: now, payload: { userId: o.userId, kind: "SECOND_FACTOR_FAILURES" } } });
   }
   if (failures >= MAX_SESSION_FAILURES) {
     await revokeSession(db, o.sid, "second_factor_failed", now);

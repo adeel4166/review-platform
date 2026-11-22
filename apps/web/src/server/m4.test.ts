@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { moderationJobSchema } from "@rp/core";
+import { FakeModerationDb, moderationJobSchema, transitionCase, type ModerationDb } from "@rp/core";
 import { HttpError } from "./http";
 import { createReview, editOwnReview, listRevisions, deleteOwnReview } from "./reviews";
 import { deleteVote, putVote } from "./votes";
-import { createReport, dismissReports, removeReportedContent } from "./reports";
+import { createReport, dismissReports, rejectReport, removeReportedContent } from "./reports";
 import { createProof, decideProof, getProofDetail, revokeVerifiedLabel, submitProof } from "./proofs";
 import { decideCase } from "./moderation";
-import { makeFakeDb } from "./m4-fake-db";
+import { makeFakeDb, matchRow } from "./m4-fake-db";
+import { reviewEditInput } from "./validation";
 import type { Actor } from "./session";
 
 const NOW = new Date("2026-12-01T12:00:00Z");
@@ -233,10 +234,10 @@ describe("proofs (PRV-014..018)", () => {
     h.t.purchaseProofFile!.push({ id: "fo", proofId: "pp", isRedacted: false, status: "READY", storageKey: "proof/fo/orig" }, { id: "fr", proofId: "pp", isRedacted: true, status: "READY", storageKey: "proof/fo/redacted.png", pageCount: 1 });
     const signed: string[] = [];
     const st = { store: { presignGet: async (_b: string, k: string) => { signed.push(k); return `https://signed/${k}`; } }, buckets: { ingest: "i", private: "p" } } as never;
-    const d = await getProofDetail(h.db, st, staff("mod"), "pp");
+    const d = await getProofDetail(h.db, st, staff("mod"), "pp", "Checking the receipt for ticket 123");
     expect(signed).toEqual(["proof/fo/redacted.png"]);
     expect(d.files).toHaveLength(1);
-    expect(h.t.auditLog!.at(-1)).toMatchObject({ action: "proof.view_redacted", metadata: { fileCount: 1 } });
+    expect(h.t.auditLog!.at(-1)).toMatchObject({ action: "proof.view_redacted", metadata: { fileCount: 1, accessReason: "Checking the receipt for ticket 123" } });
   });
   it("PRV-013: revocation clears the label, leaves the proof row, writes enforcement + email event", async () => {
     pending();
@@ -246,5 +247,122 @@ describe("proofs (PRV-014..018)", () => {
     expect(h.t.purchaseProof![0]!.status).toBe("VERIFIED");
     expect(h.t.enforcementAction!.at(-1)).toMatchObject({ type: "VERIFIED_LABEL_REVOKED", subjectReviewId: "r1" });
     expect(h.t.outboxEvent!.at(-1)!.type).toBe("review.verified_label_revoked");
+  });
+});
+
+// ---- Close-out pack (task #75): QA-M4-01/02, SEC-M4-02/03/04 ----
+
+describe("QA-M4-01 break-glass reason is enforced server-side", () => {
+  const st = () => ({ store: { presignGet: async (_b: string, k: string) => `https://signed/${k}` }, buckets: { ingest: "i", private: "p" } }) as never;
+  const seed = () => { h.t.purchaseProof!.push({ id: "pp", reviewId: "r1", status: "PENDING", method: "RECEIPT_UPLOAD", filesReadyAt: NOW }); };
+  it("QA-M4-01: a missing, blank, short or over-long reason is 400 reason_required and writes no audit row", async () => {
+    seed();
+    for (const r of [undefined, null, "", "   ", "too short", "x".repeat(201)]) expect(await code(getProofDetail(h.db, st(), staff("mod"), "pp", r))).toBe("400:reason_required");
+    expect(h.t.auditLog).toHaveLength(0);
+  });
+  it("QA-M4-01: a valid reason is stored (trimmed) in the audit row of the view", async () => {
+    seed();
+    await getProofDetail(h.db, st(), staff("mod"), "pp", "  Verifying the order number  ");
+    expect(h.t.auditLog!.at(-1)).toMatchObject({ action: "proof.view_redacted", metadata: { accessReason: "Verifying the order number" } });
+  });
+});
+
+describe("REV-007 media per revision at approval", () => {
+  it("REV-007: an asset that is not READY at approval is detached and never promoted; an added asset stays non-public until approval", async () => {
+    const f = new FakeModerationDb();
+    const r = f.addReview({ status: "PUBLISHED", currentVersion: 2, publishedVersion: 1, title: "Old" });
+    f.revisions.length = 0;
+    f.revisions.push({ reviewId: r.id, version: 1, status: "APPROVED" }, { reviewId: r.id, version: 2, status: "PENDING", rating: 4, title: "New", body: "New body of the review text.", incentive: "NONE" });
+    const c = f.addCase(r.id as string, "AI_REVIEW", 2); c.trigger = "EDIT";
+    const assets: Record<string, unknown>[] = [
+      { id: "old", reviewId: r.id, status: "READY", bucket: "PRIVATE", attachedInVersion: 1, detachedInVersion: null },
+      { id: "addedReady", reviewId: r.id, status: "READY", bucket: "PRIVATE", attachedInVersion: 2, detachedInVersion: null },
+      { id: "addedBusy", reviewId: r.id, status: "PROCESSING", bucket: "PRIVATE", attachedInVersion: 2, detachedInVersion: null },
+    ];
+    const events: { type: string; payload: { assetId: string } }[] = [];
+    Object.assign(f, {
+      mediaAsset: {
+        updateMany: async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => { const hit = assets.filter((a) => matchRow(a, where)); hit.forEach((a) => Object.assign(a, data)); return { count: hit.length }; },
+        findMany: async ({ where }: { where: Record<string, unknown> }) => assets.filter((a) => matchRow(a, where)).map((a) => ({ id: a.id as string })),
+      },
+      outboxEvent: { create: async ({ data }: { data: (typeof events)[number] }) => { events.push(data); return {}; } },
+    });
+    // Before approval: nothing is promoted and the staged assets are still in the private bucket.
+    expect(events).toHaveLength(0);
+    expect(assets.filter((a) => a.attachedInVersion === 2).every((a) => a.bucket === "PRIVATE")).toBe(true);
+    await transitionCase(f as unknown as ModerationDb, { caseId: c.id, to: "APPROVED", actor: { type: "AI", provider: "t" } });
+    expect(assets.find((a) => a.id === "addedBusy")!.detachedInVersion).toBe(2); // detached: it can never become public later
+    expect(assets.find((a) => a.id === "addedReady")!.detachedInVersion).toBeNull();
+    expect(events.filter((e) => e.type === "media.promote_requested").map((e) => e.payload.assetId).sort()).toEqual(["addedReady", "old"]);
+  });
+  it("REV-007: an edit that adds an asset leaves it staged (attachedInVersion set, still PRIVATE, no promote event)", async () => {
+    h.t.mediaAsset!.push({ id: "m2", reviewId: "r1", ownerId: "author", status: "READY", bucket: "PRIVATE", attachedInVersion: null, detachedInVersion: null });
+    await editOwnReview(h.db, "author", "r1", { expectedVersion: 1, addMediaIds: ["m2"] });
+    expect(h.t.mediaAsset![0]).toMatchObject({ attachedInVersion: 2, bucket: "PRIVATE" });
+    expect(h.t.outboxEvent!.some((e) => e.type === "media.promote_requested")).toBe(false);
+  });
+});
+
+describe("SEL-013 incentive is re-validated on edit", () => {
+  it("SEL-013: an unknown incentive is rejected by the route schema and by the service; a valid change goes to the revision, not the live row", async () => {
+    expect(reviewEditInput.safeParse({ expectedVersion: 1, incentive: "BRIBE" }).success).toBe(false);
+    expect(await code(editOwnReview(h.db, "author", "r1", { expectedVersion: 1, incentive: "BRIBE" as never }))).toBe("400:invalid_incentive");
+    expect(h.t.reviewRevision!.find((x) => x.version === 2)).toBeUndefined();
+    await editOwnReview(h.db, "author", "r1", { expectedVersion: 1, incentive: "FREE_PRODUCT" });
+    expect(h.t.reviewRevision!.find((x) => x.version === 2)).toMatchObject({ incentive: "FREE_PRODUCT" });
+    expect(h.t.review![0]!.incentive).toBe("NONE"); // live row unchanged until approval
+  });
+  it("SEL-013: an edit that does not mention the incentive carries the current one into the new revision", async () => {
+    h.t.review![0]!.incentive = "DISCOUNT";
+    await editOwnReview(h.db, "author", "r1", { expectedVersion: 1, title: "x" });
+    expect(h.t.reviewRevision!.find((x) => x.version === 2)).toMatchObject({ incentive: "DISCOUNT" });
+  });
+});
+
+describe("SEC-M4-02 vote race", () => {
+  it("SEC-M4-02: concurrent identical switches apply the counter delta once; counters equal the vote rows", async () => {
+    await putVote(h.db, "voter", "r1", "HELPFUL");
+    await Promise.all([putVote(h.db, "voter", "r1", "NOT_HELPFUL"), putVote(h.db, "voter", "r1", "NOT_HELPFUL"), putVote(h.db, "voter", "r1", "NOT_HELPFUL")]);
+    expect(h.t.review![0]).toMatchObject({ helpfulCount: 0, notHelpfulCount: 1 });
+    expect(h.t.reviewVote).toHaveLength(1);
+  });
+  it("SEC-M4-02: concurrent first votes do not double count (the loser hits the primary key and is a no-op, not a 500)", async () => {
+    const vote = (h.db as unknown as { reviewVote: { create: (a: { data: { reviewId: string; userId: string } }) => Promise<unknown> } }).reviewVote;
+    const create = vote.create;
+    vote.create = async (a) => { if (h.t.reviewVote!.some((v) => v.reviewId === a.data.reviewId && v.userId === a.data.userId)) throw Object.assign(new Error("unique"), { code: "P2002" }); return create(a); }; // PK (reviewId, userId)
+    await Promise.all([putVote(h.db, "voter", "r1", "HELPFUL"), putVote(h.db, "voter", "r1", "HELPFUL")]);
+    expect(h.t.review![0]).toMatchObject({ helpfulCount: 1, notHelpfulCount: 0 });
+  });
+});
+
+describe("SEC-M4-03 staff revision history needs the 2FA gate", () => {
+  it("SEC-M4-03: an admin without an enrolled and verified second factor gets 403 TWO_FACTOR_REQUIRED; the author is unaffected", async () => {
+    for (const twoFactor of [undefined, { enrolled: true, verified: false }, { enrolled: false, verified: false }]) {
+      expect(await code(listRevisions(h.db, { id: "mod", role: "admin", twoFactor } as Actor, "r1"))).toBe("403:TWO_FACTOR_REQUIRED");
+    }
+    expect(await listRevisions(h.db, staff("mod"), "r1")).toHaveLength(1);
+    expect(await listRevisions(h.db, { id: "author", role: "user" } as Actor, "r1")).toHaveLength(1);
+  });
+});
+
+describe("SEC-M4-04 rejectReport guards", () => {
+  const open = async () => { await createReport(h.db, "voter", { reviewId: "r1" }, { reason: "SPAM" }, { now: NOW }); return h.t.report![0]!.id as string; };
+  it("SEC-M4-04: the review's author and a member of the reviewed seller get 403 CONFLICT_OF_INTEREST and the report stays OPEN", async () => {
+    const id = await open();
+    h.t.sellerMember!.push({ sellerId: "S1", userId: "mod2" });
+    expect(await code(rejectReport(h.db, staff("author"), id, NOW))).toBe("403:CONFLICT_OF_INTEREST");
+    expect(await code(rejectReport(h.db, staff("mod2"), id, NOW))).toBe("403:CONFLICT_OF_INTEREST");
+    expect(h.t.report![0]!.status).toBe("OPEN");
+    expect(h.t.moderationCase![0]!.reportCount).toBe(1);
+  });
+  it("SEC-M4-04: a closed case is 409 invalid_transition; an open case decrements the counters once", async () => {
+    const id = await open();
+    h.t.moderationCase![0]!.state = "APPROVED";
+    expect(await code(rejectReport(h.db, staff("mod"), id, NOW))).toBe("409:invalid_transition");
+    h.t.moderationCase![0]!.state = "NEEDS_HUMAN";
+    await rejectReport(h.db, staff("mod"), id, NOW);
+    expect(h.t.report![0]!.status).toBe("REJECTED");
+    expect(h.t.moderationCase![0]!.reportCount).toBe(0);
+    expect(await code(rejectReport(h.db, staff("mod"), id, NOW))).toBe("409:invalid_transition");
   });
 });

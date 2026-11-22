@@ -12,7 +12,22 @@ export const openReportKey = (target: { reviewId?: string | null; sellerReplyId?
   target.reviewId ? `R:${target.reviewId}` : `S:${target.sellerReplyId}`;
 
 import { createHmac } from "node:crypto";
-/** Keyed hash of a client IP (never the raw address). The key comes from `IP_HASH_KEY`; a dev default keeps tests deterministic. */
-export function hashIp(ip: string, key = process.env.IP_HASH_KEY ?? "dev-ip-hash-key"): string {
+export const IP_HASH_KEY_MIN_LENGTH = 32;
+
+/** The key must be set and non-trivial; there is NO default (SEC-M4-01): a public default would make stored ipHash values reversible. */
+export function ipHashKey(env: Record<string, string | undefined> = process.env): string {
+  const k = env.IP_HASH_KEY;
+  if (!k || k.trim().length < IP_HASH_KEY_MIN_LENGTH) throw new Error(`IP_HASH_KEY must be set (at least ${IP_HASH_KEY_MIN_LENGTH} characters)`);
+  return k;
+}
+
+/** Boot-time assertion (web instrumentation and worker start). Skipped only under NODE_ENV=test. Never prints the value. */
+export function assertIpHashKey(env: Record<string, string | undefined> = process.env): void {
+  if (env.NODE_ENV === "test") return;
+  ipHashKey(env);
+}
+
+/** Keyed hash of a client IP (never the raw address). The key comes from `IP_HASH_KEY`; a missing key throws. */
+export function hashIp(ip: string, key: string = ipHashKey()): string {
   return createHmac("sha256", key).update(ip).digest("hex");
 }
