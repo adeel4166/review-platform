@@ -55,7 +55,7 @@ describe("PRV-012 account erasure", () => {
     const req = w.t.erasureRequest![0]!;
     expect(req.completedAt).toBeInstanceOf(Date);
     expect(Object.keys(req.steps as object).sort()).toEqual(["anonymise", "ipHash", "media", "notifications", "proofs", "sessions", "social"]);
-    expect((await createLedgerReader(w.store, "ledger").read("2027-03-01")).length).toBe(7);
+    expect((await createLedgerReader(w.store, "ledger", w.clock).read("2027-03-01")).length).toBe(7);
   });
   it("is idempotent and resumable: completed requests are a no-op", async () => {
     const w = await world();

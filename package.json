@@ -12,6 +12,7 @@
     "dev": "pnpm --parallel --filter @rp/web --filter @rp/worker dev",
     "db:generate": "pnpm --filter @rp/db generate",
     "db:push": "pnpm --filter @rp/db push",
+    "db:seed:demo": "pnpm --filter @rp/db seed:demo",
     "lint": "eslint .",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",

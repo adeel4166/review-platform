@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { FakeObjectStore } from "@rp/core";
 import { demoteMedia, promoteMedia, reconcilePublication, PUBLIC_HEADERS, type PublishDb } from "./media/publish";
@@ -129,5 +131,52 @@ describe("reconcilePublication (safety net for events that never arrived)", () =
     expect(t.asset.bucket).toBe("PRIVATE");
     expect(keys(t.store, "public/")).toEqual([]);
     expect(await reconcilePublication(t.deps)).toEqual({ demoted: 0, promoted: 0 }); // removed review is not re-promoted
+  });
+});
+
+describe("MED-028 promote: sha256 verified, public objects are never overwritten", () => {
+  const sha = (b: Buffer | string) => createHash("sha256").update(b).digest("hex");
+  it("the public copy is byte-identical (sha256) to the private source", async () => {
+    const t = setup();
+    expect(await promoteMedia(t.deps, "a1", "c1")).toBe("PROMOTED");
+    expect(sha(t.store.objects.get("public/m/a1/thumb.webp")!)).toBe(sha("T"));
+    expect(sha(t.store.objects.get("public/m/a1/medium.webp")!)).toBe(sha("M"));
+  });
+  it("an existing public object with DIFFERENT bytes is not overwritten: promotion throws, nothing else leaks, DB stays PRIVATE", async () => {
+    const t = setup();
+    t.store.objects.set("public/m/a1/medium.webp", Buffer.from("EVIL"));
+    await expect(promoteMedia(t.deps, "a1", "c1")).rejects.toThrow(/no-overwrite/);
+    expect(t.store.objects.get("public/m/a1/medium.webp")!.toString()).toBe("EVIL"); // untouched
+    expect(keys(t.store, "public/")).toEqual(["public/m/a1/medium.webp"]); // the thumb we wrote was rolled back, the pre-existing object kept
+    expect(t.asset.bucket).toBe("PRIVATE");
+  });
+  it("an existing public object with identical bytes (crash retry) is reused without a second put", async () => {
+    const t = setup();
+    t.store.objects.set("public/m/a1/thumb.webp", Buffer.from("T"));
+    t.store.meta.set("public/m/a1/thumb.webp", { contentType: "image/webp", headers: PUBLIC_HEADERS });
+    expect(await promoteMedia(t.deps, "a1", "c1")).toBe("PROMOTED");
+    expect(t.asset.bucket).toBe("PUBLIC");
+  });
+  it("a copy whose read-back hash differs aborts and removes what this call wrote", async () => {
+    const t = setup();
+    const realPut = t.store.put.bind(t.store);
+    t.store.put = async (b, k, body, ct, h) => realPut(b, k, Buffer.concat([body, Buffer.from("!")]), ct, h); // corrupting store
+    await expect(promoteMedia(t.deps, "a1", "c1")).rejects.toThrow(/sha256 mismatch/);
+    expect(keys(t.store, "public/")).toEqual([]);
+    expect(t.asset.bucket).toBe("PRIVATE");
+  });
+});
+
+describe("QA-M5-12: infra/cdn/media-headers.json", () => {
+  const cfg = JSON.parse(readFileSync(new URL("../../../infra/cdn/media-headers.json", import.meta.url), "utf8")) as { match: { pathPrefix: string }; headers: Record<string, string> };
+  it("sends nosniff and a sandboxing CSP for the public media prefix", () => {
+    expect(cfg.match.pathPrefix).toBe("/m/");
+    expect(cfg.headers["X-Content-Type-Options"]).toBe("nosniff");
+    expect(cfg.headers["Content-Security-Policy"]).toMatch(/(^|;\s*)sandbox(\s*;|$)/);
+    expect(cfg.headers["Content-Security-Policy"]).toContain("default-src 'none'");
+  });
+  it("agrees with the object headers the worker writes (cache + inline)", () => {
+    expect(cfg.headers["Cache-Control"]).toBe(PUBLIC_HEADERS.cacheControl);
+    expect(cfg.headers["Content-Disposition"]).toBe(PUBLIC_HEADERS.contentDisposition);
   });
 });

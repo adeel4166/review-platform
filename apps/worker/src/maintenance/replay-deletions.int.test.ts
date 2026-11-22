@@ -32,14 +32,14 @@ describe("OPS-001 restore then re-delete: no resurrection", () => {
     expect(restored.t.purchaseProof![0]!.filesPurgedAt).toBeNull();
     await store.put("private", "proof/f1", Buffer.from("stale"), "image/png");
 
-    const r = await replayDeletions({ db: restored.db, store, reader: createLedgerReader(store, "ledger"), clock }, "2027-03-01");
+    const r = await replayDeletions({ db: restored.db, store, reader: createLedgerReader(store, "ledger", clock), clock }, "2027-03-01");
     expect(r).toMatchObject({ failed: 0, replayed: 4 });
     for (const [b, k] of [["private", "proof/f1"], ["private", "proof/f2"], ["ingest", "in/proof/f1"], ["ingest", "in/proof/f2"]] as const) expect(await store.head(b, k)).toBeNull();
     expect(restored.t.purchaseProof![0]!.filesPurgedAt).toBeInstanceOf(Date);
     expect(restored.t.purchaseProof![0]!.originalPurgedAt).toBeInstanceOf(Date);
     expect(restored.t.purchaseProofFile!.every((f) => f.status === "PURGED")).toBe(true);
     // idempotent
-    expect(await replayDeletions({ db: restored.db, store, reader: createLedgerReader(store, "ledger"), clock }, "2027-03-01")).toMatchObject({ failed: 0 });
+    expect(await replayDeletions({ db: restored.db, store, reader: createLedgerReader(store, "ledger", clock), clock }, "2027-03-01")).toMatchObject({ failed: 0 });
   });
   it("reports a key whose deletion cannot be verified and leaves its row untouched", async () => {
     const store = new FakeObjectStore(); const clock = new FakeClock("2027-03-01T00:00:00Z");
@@ -48,7 +48,7 @@ describe("OPS-001 restore then re-delete: no resurrection", () => {
     await store.put("private", "proof/f1", Buffer.from("x"), "image/png");
     store.delete = async () => undefined; // storage refuses
     const h = seed();
-    const r = await replayDeletions({ db: h.db, store, reader: createLedgerReader(store, "ledger"), clock }, "2027-03-01");
+    const r = await replayDeletions({ db: h.db, store, reader: createLedgerReader(store, "ledger", clock), clock }, "2027-03-01");
     expect(r.failed).toBe(1);
     expect(h.t.purchaseProofFile![0]!.status).toBe("READY");
   });

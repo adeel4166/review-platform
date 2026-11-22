@@ -23,6 +23,16 @@ chk "worker image ships poppler + exiftool + ffmpeg" 'poppler-utils ffmpeg libim
 chk "worker image runs non-root" '^USER rpworker' infra/docker/worker.Dockerfile
 chk "sandbox required by default in the image" 'MEDIA_SANDBOX_REQUIRED=true' infra/docker/worker.Dockerfile
 chk "egress iptables policy denies RFC1918 + metadata" '169\.254\.0\.0/16' infra/egress/egress-policy.sh
+# SEC-FIN-02: ledger + audit archive provisioning, required in compose, names in the env example.
+chk "minio-init creates object-locked rp-ledger and rp-audit-archive" 'mc mb -p --with-lock local/rp-ledger local/rp-audit-archive' $F
+chk "ledger writer / reader / audit policies attached" 'rp-ledger-w --user' $F
+chk "ledger reader policy attached" 'rp-ledger-r --user' $F
+chk "audit archive policy attached" 'rp-audit-w --user' $F
+chk "worker-core requires ARCHIVE_DATABASE_URL" 'ARCHIVE_DATABASE_URL: \$\{ARCHIVE_DATABASE_URL:\?\}' $F
+chk "worker-core requires the ledger write credential" 'S3_LEDGER_ACCESS_KEY_ID: \$\{S3_LEDGER_ACCESS_KEY_ID:\?\}' $F
+chk "worker-core requires the audit archive bucket" 'S3_BUCKET_AUDIT_ARCHIVE: \$\{S3_BUCKET_AUDIT_ARCHIVE:\?\}' $F
+chk "env example names ARCHIVE_DATABASE_URL" '^ARCHIVE_DATABASE_URL=' .env.production.example
+chk "ledger policy is write-only (no GetObject/Delete)" '"s3:PutObject"' infra/minio/policies/rp-ledger-w.json
 # No literal secrets: every ${VAR} reference must be required (:?) in the prod compose for credentials.
 if grep -Eq '(PASSWORD|SECRET|API_KEY|_KEY): [^$"]' $F; then echo "FAIL: literal secret value in $F"; fail=1; else echo "ok:   no literal secrets in $F"; fi
 exit $fail

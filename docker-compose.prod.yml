@@ -70,6 +70,16 @@ services:
       RP_MEDIA_SECRET: ${RP_MEDIA_SECRET:?}
       RP_WEB_KEY: ${RP_WEB_KEY:?}
       RP_WEB_SECRET: ${RP_WEB_SECRET:?}
+      # SEC-FIN-02: deletion ledger (write-only + read-only users) and audit archive (write-only user), both object-locked buckets.
+      S3_LEDGER_ACCESS_KEY_ID: ${S3_LEDGER_ACCESS_KEY_ID:?}
+      S3_LEDGER_SECRET_ACCESS_KEY: ${S3_LEDGER_SECRET_ACCESS_KEY:?}
+      S3_LEDGER_READ_ACCESS_KEY_ID: ${S3_LEDGER_READ_ACCESS_KEY_ID:?}
+      S3_LEDGER_READ_SECRET_ACCESS_KEY: ${S3_LEDGER_READ_SECRET_ACCESS_KEY:?}
+      S3_AUDIT_ARCHIVE_ACCESS_KEY_ID: ${S3_AUDIT_ARCHIVE_ACCESS_KEY_ID:?}
+      S3_AUDIT_ARCHIVE_SECRET_ACCESS_KEY: ${S3_AUDIT_ARCHIVE_SECRET_ACCESS_KEY:?}
+      S3_BUCKET_LEDGER: ${S3_BUCKET_LEDGER:?}
+      S3_BUCKET_AUDIT_ARCHIVE: ${S3_BUCKET_AUDIT_ARCHIVE:?}
+      LEDGER_RETENTION_DAYS: ${LEDGER_RETENTION_DAYS:-400}
     volumes: ["./infra/minio/policies:/policies:ro"]
     networks: [internal]
     entrypoint: ["/bin/sh", "-c"]
@@ -80,10 +90,19 @@ services:
         mc mb -p local/rp-ingest local/rp-private local/rp-public
         mc anonymous set none local/rp-ingest; mc anonymous set none local/rp-private; mc anonymous set download local/rp-public
         (mc ilm rule ls local/rp-ingest 2>/dev/null | grep -q Expiry || mc ilm rule add --expire-days 1 local/rp-ingest)
-        for r in core media web; do mc admin policy create local rp-$$r /policies/rp-$$r.json; done
+        # SEC-FIN-02: object-locked (WORM) ledger + audit archive. Bucket names must match the policy files (rp-ledger, rp-audit-archive); object lock can only be set at creation.
+        [ "$$S3_BUCKET_LEDGER" = rp-ledger ] && [ "$$S3_BUCKET_AUDIT_ARCHIVE" = rp-audit-archive ] || { echo "S3_BUCKET_LEDGER/S3_BUCKET_AUDIT_ARCHIVE must be rp-ledger/rp-audit-archive"; exit 1; }
+        mc mb -p --with-lock local/rp-ledger local/rp-audit-archive
+        mc anonymous set none local/rp-ledger; mc anonymous set none local/rp-audit-archive
+        mc retention set --default GOVERNANCE "$${LEDGER_RETENTION_DAYS}d" local/rp-ledger
+        mc retention set --default GOVERNANCE "$${LEDGER_RETENTION_DAYS}d" local/rp-audit-archive
+        for r in core media web ledger-w ledger-r audit-w; do mc admin policy create local rp-$$r /policies/rp-$$r.json; done
         mc admin user add local "$$RP_CORE_KEY" "$$RP_CORE_SECRET";   mc admin policy attach local rp-core  --user "$$RP_CORE_KEY"
         mc admin user add local "$$RP_MEDIA_KEY" "$$RP_MEDIA_SECRET"; mc admin policy attach local rp-media --user "$$RP_MEDIA_KEY"
         mc admin user add local "$$RP_WEB_KEY" "$$RP_WEB_SECRET";     mc admin policy attach local rp-web   --user "$$RP_WEB_KEY"
+        mc admin user add local "$$S3_LEDGER_ACCESS_KEY_ID" "$$S3_LEDGER_SECRET_ACCESS_KEY";           mc admin policy attach local rp-ledger-w --user "$$S3_LEDGER_ACCESS_KEY_ID"
+        mc admin user add local "$$S3_LEDGER_READ_ACCESS_KEY_ID" "$$S3_LEDGER_READ_SECRET_ACCESS_KEY"; mc admin policy attach local rp-ledger-r --user "$$S3_LEDGER_READ_ACCESS_KEY_ID"
+        mc admin user add local "$$S3_AUDIT_ARCHIVE_ACCESS_KEY_ID" "$$S3_AUDIT_ARCHIVE_SECRET_ACCESS_KEY"; mc admin policy attach local rp-audit-w --user "$$S3_AUDIT_ARCHIVE_ACCESS_KEY_ID"
         echo minio ready
 
   clamav:
@@ -115,8 +134,19 @@ services:
       S3_BUCKET_PRIVATE: rp-private
       S3_BUCKET_PUBLIC: rp-public
       S3_BUCKET_LEDGER: ${S3_BUCKET_LEDGER:?}
+      S3_BUCKET_AUDIT_ARCHIVE: ${S3_BUCKET_AUDIT_ARCHIVE:?}
+      # SEC-FIN-02: retention (maintenance.retention / audit-export) and account.erase need these; the jobs throw in production without the ledger.
+      S3_LEDGER_ACCESS_KEY_ID: ${S3_LEDGER_ACCESS_KEY_ID:?}
+      S3_LEDGER_SECRET_ACCESS_KEY: ${S3_LEDGER_SECRET_ACCESS_KEY:?}
+      S3_LEDGER_READ_ACCESS_KEY_ID: ${S3_LEDGER_READ_ACCESS_KEY_ID:?}
+      S3_LEDGER_READ_SECRET_ACCESS_KEY: ${S3_LEDGER_READ_SECRET_ACCESS_KEY:?}
+      S3_AUDIT_ARCHIVE_ACCESS_KEY_ID: ${S3_AUDIT_ARCHIVE_ACCESS_KEY_ID:?}
+      S3_AUDIT_ARCHIVE_SECRET_ACCESS_KEY: ${S3_AUDIT_ARCHIVE_SECRET_ACCESS_KEY:?}
+      ARCHIVE_DATABASE_URL: ${ARCHIVE_DATABASE_URL:?}
       MODERATION_PROVIDER: ${MODERATION_PROVIDER:?}
       MODERATION_API_KEY: ${MODERATION_API_KEY:?}
+      MODERATION_MODEL: ${MODERATION_MODEL:-claude-haiku-5-5}
+      MODERATION_DAILY_CAP: ${MODERATION_DAILY_CAP:-20000}
       IP_HASH_KEY: ${IP_HASH_KEY:?}
       AUTH_SECRET: ${AUTH_SECRET:?}
       TOTP_ENC_KEYS: ${TOTP_ENC_KEYS:?}

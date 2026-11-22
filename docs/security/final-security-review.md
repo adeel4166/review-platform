@@ -131,3 +131,14 @@ bucket, media worker without AI, SMTP or auth secrets, fixed egress subnet with 
 - [ ] OPS-005 external pen test complete, zero open S1/S2, retest letter attached ([pack](./pentest-scope-pack.md))
 - [ ] DevOps evidence: INSERT-only grant on `audit_logs` and `moderation_decisions`, egress policy applied, object lock on `rp-ledger` and `rp-audit-archive`
 - [ ] Re-run `pnpm audit --prod`, gitleaks, `pnpm qa` and the CI integration job on the release commit
+
+## 8. Closure of the P1 launch blockers (task #89, LIVE-01)
+
+| ID | Status | Evidence (file:line) |
+|---|---|---|
+| SEC-FIN-01 | **Closed in code** (live-model OPS-009 run still open, see [ops-009-stub-run.md](./ops-009-stub-run.md)) | `packages/core/src/moderation-provider.ts:57` (`anthropicProviderCall`, key only in `x-api-key`), `:127-139` (`createModerationProvider` selects by `MODERATION_PROVIDER`, requires `MODERATION_API_KEY`, still refuses mock/unset in production); `apps/worker/src/moderation/live.ts:15` (all 13 categories, no single-score mapping), `:27` (daily cap next to the breaker); tests `packages/core/src/ai/live-provider.test.ts`, `apps/worker/src/live01.test.ts` |
+| SEC-FIN-02 | **Closed in config** | `docker-compose.prod.yml:95` (object-locked `rp-ledger` + `rp-audit-archive`), `:145` (`ARCHIVE_DATABASE_URL:?`), ledger/audit users and `infra/minio/policies/rp-ledger-w.json`, `rp-ledger-r.json`, `rp-audit-w.json`; `.env.production.example` (names only); `scripts/prod-config-check.sh`; `apps/worker/src/m8-jobs.ts` (`RET-AUDIT` logs a `security.alert` when unconfigured in production); test `apps/worker/src/live01.test.ts` (compose section). The INSERT-only DB grant is still a DevOps step |
+| SEC-FIN-03 | **Closed** | `packages/core/src/retention/ledger.ts:32` (`ledgerDays`), `:42` (`createLedgerReader`: per-day `YYYY-MM-DD/` prefix, paginated, throws `LedgerListingTruncatedError` at the ceiling `:26`); test `packages/core/src/retention/ledger.test.ts` |
+| QA-M5-12 | **Closed** | `infra/cdn/media-headers.json` (nosniff, CSP sandbox) read by `apps/worker/src/media-publish.test.ts`; MED-028 sha256 + no-overwrite in `apps/worker/src/media/publish.ts:93` with tests in the same file |
+
+Launch gate checklist items "SEC-FIN-01/02/03 fixed" can be ticked on this evidence; the live OPS-009 run, OPS-005 and DevOps evidence remain.
