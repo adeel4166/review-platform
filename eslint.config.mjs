@@ -15,5 +15,5 @@ export default tseslint.config(
       ], paths: ["node:http", "node:https", "http", "https", "undici", "node:dns", "node:dns/promises", "dns", "dns/promises"].map((name) => ({ name, message: "Outbound HTTP/DNS belongs in the verification worker (ADR-0015)." })) }],
     },
   },
-  { files: ["**/*.mjs"], languageOptions: { globals: { process: "readonly", console: "readonly" } } },
+  { files: ["**/*.mjs"], languageOptions: { globals: { process: "readonly", console: "readonly", fetch: "readonly", URL: "readonly", Headers: "readonly", Request: "readonly", Response: "readonly", setTimeout: "readonly", clearTimeout: "readonly" } } },
 );

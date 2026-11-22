@@ -107,7 +107,7 @@ export async function createTransfer(db: Db, actor: Actor, sellerId: string, inp
       if (el === "no_2fa") throw new HttpError(409, "target_two_factor_required", "The target must enable two-factor authentication first");
     }
     if (await tx.sellerOwnershipTransfer.findFirst({ where: { sellerId, status: { in: [...OPEN] } }, select: { id: true } })) {
-      throw new HttpError(409, "transfer_open", "An ownership change is already in progress");
+      throw new HttpError(409, "ownership_change_pending", "An ownership change is already in progress");
     }
     if ((await tx.sellerOwnershipTransfer.count({ where: { sellerId, createdAt: { gt: new Date(now.getTime() - 7 * DAY_MS) } } })) >= OWNERSHIP_CHANGE.maxPerSellerPer7Days) {
       throw new HttpError(429, "rate_limited", "Too many ownership changes", { "Retry-After": "3600" });

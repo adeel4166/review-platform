@@ -5,6 +5,16 @@ export type MailTemplateId = "verify_account" | "account_exists" | "seller_invit
 
 export interface RenderedMail { to: string; subject: string; text: string; html: string }
 
+/** Headers on every automated message (m3b-spec, SEL-036): marks mail as machine-generated so auto-responders do not reply. */
+export function buildMailHeaders(idempotencyKey: string): Record<string, string> {
+  return { "Auto-Submitted": "auto-generated", "X-Idempotency-Key": idempotencyKey };
+}
+
+/** The exact message handed to the SMTP transport. */
+export function buildMessage(from: string, mail: RenderedMail, idempotencyKey: string) {
+  return { from, to: mail.to, subject: mail.subject, text: mail.text, html: mail.html, headers: buildMailHeaders(idempotencyKey) };
+}
+
 export class MailTransientError extends Error {}
 
 export interface MailProvider {
@@ -68,7 +78,7 @@ export class SmtpMailProvider implements MailProvider {
   }
   async send(mail: RenderedMail, opts: { idempotencyKey: string }) {
     try {
-      const info = await this.transport.sendMail({ from: this.from, to: mail.to, subject: mail.subject, text: mail.text, html: mail.html, headers: { "X-Idempotency-Key": opts.idempotencyKey } });
+      const info = await this.transport.sendMail(buildMessage(this.from, mail, opts.idempotencyKey));
       return { providerMessageId: String(info.messageId) };
     } catch (e) {
       throw new MailTransientError(e instanceof Error ? e.message.slice(0, 200) : "smtp error");

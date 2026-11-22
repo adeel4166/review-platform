@@ -87,12 +87,13 @@ describe("create guards (SEL-006)", () => {
     expect(await code(createTransfer(w.db, actor("A"), "S", { kind: "ADD_OWNER", targetUserId: "A2" }, NOW))).toBe("409:target_already_owner");
     expect(await code(createTransfer(w.db, actor("A"), "S", { kind: "ADD_OWNER", targetUserId: "A" }, NOW))).toBe("400:validation_error");
   });
-  it("creates PENDING with the 72 h delay, cancel-token rows for every OWNER and the target, one open change per seller", async () => {
+  it("SEL-021: creates PENDING with the 72 h delay, cancel-token rows for every OWNER and the target; MANAGER -> FORBIDDEN_ROLE; a second open change -> ownership_change_pending", async () => {
     const r = (await createTransfer(w.db, actor("A"), "S", { kind: "TRANSFER", targetUserId: "B", initiatorOutcome: "BECOME_MANAGER" }, NOW)) as { id: string; executeAfter: Date };
     expect(r.executeAfter.getTime() - NOW.getTime()).toBe(OWNERSHIP_CHANGE.delayMs);
     expect(w.t.sellerTransferCancelToken!.map((x) => x.recipientId).sort()).toEqual(["A", "A2", "B"]);
     expect(w.t.outboxEvent!.map((e) => e.type)).toContain("seller.ownership_transfer_requested");
-    expect(await code(createTransfer(w.db, actor("A"), "S", { kind: "ADD_OWNER", targetUserId: "R" }, NOW))).toBe("409:transfer_open");
+    expect(await code(createTransfer(w.db, actor("B"), "S", { kind: "ADD_OWNER", targetUserId: "R" }, NOW))).toBe("403:FORBIDDEN_ROLE");
+    expect(await code(createTransfer(w.db, actor("A"), "S", { kind: "ADD_OWNER", targetUserId: "R" }, NOW))).toBe("409:ownership_change_pending");
     for (const l of w.t.auditLog!) expect(findPiiAuditKeys(l.metadata)).toEqual([]);
     expect(role(w, "B")).toBe("MANAGER"); // nothing changes at request time
   });
