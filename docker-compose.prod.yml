@@ -1,0 +1,179 @@
+# Production topology (M8-02). The web app (`next start`) and MySQL are external (managed DB, platform-managed web runtime): this file runs
+# Redis (ACL), MinIO (policies + least-privilege users) or points at R2, ClamAV, and the three worker groups from one hardened image.
+# Every secret is an environment variable NAME below; `docker compose --env-file <secret-managed file> -f docker-compose.prod.yml up -d`.
+# Compose fails fast (`:?`) on any missing required variable.
+x-worker: &worker
+  image: rp-worker:${RP_IMAGE_TAG:-latest}
+  build: { context: ., dockerfile: infra/docker/worker.Dockerfile }
+  restart: unless-stopped
+  read_only: true
+  tmpfs: ["/tmp:size=512m,mode=1777"]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  depends_on:
+    redis: { condition: service_healthy }
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # ACL is rendered at start from env into tmpfs (no password in the repo or the image); `default` is NOT nopass in production.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        printf '%s\n' \
+          "user default on >$$REDIS_DEFAULT_PASSWORD ~* &* +@all" \
+          "user verif-egress on >$$REDIS_VERIF_EGRESS_PASSWORD ~bull:verification-egress:* ~bull:verification-result:* &* +@all -@admin -@dangerous +@scripting +info +client|setname +client|setinfo +client|id" \
+          > /tmp/users.acl
+        exec redis-server --appendonly yes --maxmemory-policy noeviction --aclfile /tmp/users.acl --protected-mode yes
+    environment:
+      REDIS_DEFAULT_PASSWORD: ${REDIS_DEFAULT_PASSWORD:?}
+      REDIS_VERIF_EGRESS_PASSWORD: ${REDIS_VERIF_EGRESS_PASSWORD:?}
+    tmpfs: ["/tmp:size=1m,mode=1777"]
+    volumes: ["redis-data:/data"]
+    networks: [internal, egress]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --user default --pass \"$$REDIS_DEFAULT_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", "127.0.0.1:9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?}
+      MINIO_API_CORS_ALLOW_ORIGIN: ${APP_URL:?} # app origin only, never "*" (T-08)
+    volumes: ["minio-data:/data"]
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Buckets, 24h ingest lifecycle, anonymous read on rp-public only, and one user per role bound to infra/minio/policies/*.json.
+  minio-init:
+    image: minio/mc:latest
+    profiles: ["init"]
+    restart: "no"
+    depends_on:
+      minio: { condition: service_healthy }
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?}
+      RP_CORE_KEY: ${RP_CORE_KEY:?}
+      RP_CORE_SECRET: ${RP_CORE_SECRET:?}
+      RP_MEDIA_KEY: ${RP_MEDIA_KEY:?}
+      RP_MEDIA_SECRET: ${RP_MEDIA_SECRET:?}
+      RP_WEB_KEY: ${RP_WEB_KEY:?}
+      RP_WEB_SECRET: ${RP_WEB_SECRET:?}
+    volumes: ["./infra/minio/policies:/policies:ro"]
+    networks: [internal]
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+        mc mb -p local/rp-ingest local/rp-private local/rp-public
+        mc anonymous set none local/rp-ingest; mc anonymous set none local/rp-private; mc anonymous set download local/rp-public
+        (mc ilm rule ls local/rp-ingest 2>/dev/null | grep -q Expiry || mc ilm rule add --expire-days 1 local/rp-ingest)
+        for r in core media web; do mc admin policy create local rp-$$r /policies/rp-$$r.json; done
+        mc admin user add local "$$RP_CORE_KEY" "$$RP_CORE_SECRET";   mc admin policy attach local rp-core  --user "$$RP_CORE_KEY"
+        mc admin user add local "$$RP_MEDIA_KEY" "$$RP_MEDIA_SECRET"; mc admin policy attach local rp-media --user "$$RP_MEDIA_KEY"
+        mc admin user add local "$$RP_WEB_KEY" "$$RP_WEB_SECRET";     mc admin policy attach local rp-web   --user "$$RP_WEB_KEY"
+        echo minio ready
+
+  clamav:
+    image: clamav/clamav:1.4
+    restart: unless-stopped
+    volumes:
+      - ./infra/clamav/clamd.conf:/etc/clamav/clamd.conf:ro
+      - clamav-db:/var/lib/clamav
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/clamdcheck.sh"]
+      interval: 30s
+      retries: 20
+
+  # Core group: moderation, outbox, mail, retention/erasure. Holds the AI key. MODERATION_PROVIDER mock/unset => exit 1 (fail closed).
+  worker-core:
+    <<: *worker
+    environment:
+      WORKER_GROUPS: core
+      NODE_ENV: production
+      MEDIA_SANDBOX_REQUIRED: "true"
+      DATABASE_URL: ${DATABASE_URL:?}
+      REDIS_URL: redis://default:${REDIS_DEFAULT_PASSWORD:?}@redis:6379
+      S3_ENDPOINT: http://minio:9000
+      S3_FORCE_PATH_STYLE: "true"
+      S3_ACCESS_KEY_ID: ${RP_CORE_KEY:?}
+      S3_SECRET_ACCESS_KEY: ${RP_CORE_SECRET:?}
+      S3_BUCKET_INGEST: rp-ingest
+      S3_BUCKET_PRIVATE: rp-private
+      S3_BUCKET_PUBLIC: rp-public
+      S3_BUCKET_LEDGER: ${S3_BUCKET_LEDGER:?}
+      MODERATION_PROVIDER: ${MODERATION_PROVIDER:?}
+      MODERATION_API_KEY: ${MODERATION_API_KEY:?}
+      IP_HASH_KEY: ${IP_HASH_KEY:?}
+      AUTH_SECRET: ${AUTH_SECRET:?}
+      TOTP_ENC_KEYS: ${TOTP_ENC_KEYS:?}
+      TOTP_ENC_ACTIVE_KEY_ID: ${TOTP_ENC_ACTIVE_KEY_ID:?}
+      RECOVERY_CODE_PEPPERS: ${RECOVERY_CODE_PEPPERS:?}
+      RECOVERY_CODE_ACTIVE_KEY_ID: ${RECOVERY_CODE_ACTIVE_KEY_ID:?}
+      SMTP_URL: ${SMTP_URL:?}
+      MAIL_FROM: ${MAIL_FROM:?}
+      APP_URL: ${APP_URL:?}
+    networks: [internal]
+
+  # Media group (untrusted parsers): no AI key, SMTP or auth/2FA secrets (assertMediaEnv). bwrap needs unprivileged user namespaces,
+  # which Docker's default seccomp profile blocks; the startup self-test exits 1 if the sandbox cannot be proven, so this fails closed.
+  worker-media:
+    <<: *worker
+    security_opt: ["no-new-privileges:true", "seccomp=unconfined"]
+    depends_on:
+      redis: { condition: service_healthy }
+      clamav: { condition: service_healthy }
+    environment:
+      WORKER_GROUPS: media
+      NODE_ENV: production
+      MEDIA_SANDBOX_REQUIRED: "true"
+      MEDIA_EXIFTOOL_REQUIRED: "true"
+      DATABASE_URL: ${DATABASE_URL:?}
+      REDIS_URL: redis://default:${REDIS_DEFAULT_PASSWORD:?}@redis:6379
+      S3_ENDPOINT: http://minio:9000
+      S3_FORCE_PATH_STYLE: "true"
+      S3_ACCESS_KEY_ID: ${RP_MEDIA_KEY:?}
+      S3_SECRET_ACCESS_KEY: ${RP_MEDIA_SECRET:?}
+      S3_BUCKET_INGEST: rp-ingest
+      S3_BUCKET_PRIVATE: rp-private
+      S3_BUCKET_PUBLIC: rp-public
+      IP_HASH_KEY: ${IP_HASH_KEY:?}
+      CLAMD_HOST: clamav
+      CLAMD_PORT: "3310"
+      MEDIA_PUBLIC_BASE_URL: ${MEDIA_PUBLIC_BASE_URL:?}
+      WORKER_HEALTH_PORT: "8081"
+    networks: [internal]
+
+  # Verification egress: fetches attacker-controlled URLs. Only REDIS_URL (ACL user limited to its queues) + VERIFY_DNS_SERVERS.
+  # Host policy: infra/egress/egress-policy.sh with EGRESS_SUBNET=172.28.0.0/24 (APPLY=1 as root); it is part of the deploy checklist.
+  verification-egress:
+    <<: *worker
+    environment:
+      WORKER_GROUPS: verification-egress
+      NODE_ENV: production
+      REDIS_URL: redis://verif-egress:${REDIS_VERIF_EGRESS_PASSWORD:?}@redis:6379
+      VERIFY_DNS_SERVERS: ${VERIFY_DNS_SERVERS:?}
+    networks: [egress]
+
+networks:
+  internal: {}
+  egress:
+    ipam: { config: [{ subnet: 172.28.0.0/24 }] }
+
+volumes:
+  clamav-db:
+  redis-data:
+  minio-data:
