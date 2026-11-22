@@ -5,6 +5,7 @@ import { t, type MessageKey } from "@/i18n/en";
 import { ApiError, api } from "@/lib/upload";
 import { rejectionKey } from "@/lib/review-form";
 import { secondaryBtn } from "../seller/ui";
+import { QueueEmpty, QueueError, QueueLoading } from "./QueueStates";
 
 export interface QueueMedia { id: string; reviewId: string; kind: "IMAGE" | "VIDEO"; failureReason: string | null; createdAt: string; retryable: boolean }
 
@@ -50,9 +51,9 @@ export function MediaQueue() {
       <p role={msg?.ok === false ? "alert" : "status"} className={`mt-3 ${msg?.ok === false ? "text-danger" : ""}`}>{msg?.text ?? ""}</p>
       <div aria-busy={items === null && !failed} className="mt-3">
         {failed ? (
-          <p role="alert">{t("admin.media.error")} <button type="button" className={secondaryBtn} onClick={load}>{t("admin.media.retry")}</button></p>
-        ) : items === null ? <p>{t("admin.media.loading")}</p>
-        : items.length === 0 ? <p>{t("admin.media.empty")}</p> : (
+          <QueueError>{t("admin.media.error")} <button type="button" className={secondaryBtn} onClick={load}>{t("admin.media.retry")}</button></QueueError>
+        ) : items === null ? <QueueLoading label={t("admin.media.loading")} />
+        : items.length === 0 ? <QueueEmpty message={t("admin.media.empty")} /> : (
           <div className="overflow-x-auto" role="region" aria-label={t("admin.media.caption")} tabIndex={0}>
             <table className="w-full text-left">
               <caption className="sr-only">{t("admin.media.caption")}</caption>

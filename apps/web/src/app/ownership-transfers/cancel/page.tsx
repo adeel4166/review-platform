@@ -9,10 +9,12 @@ export default async function CancelByLinkPage({ searchParams }: { searchParams:
   const raw = (await searchParams).token;
   return (
     <main className="mx-auto max-w-md px-4 py-10">
+      <div className="rounded-lg border border-border bg-surface p-5 shadow-sm sm:p-6">
       <h1 className="text-2xl font-semibold">{t("own.link.title")}</h1>
       <p className="mt-2">{t("own.link.lead")}</p>
       <TokenAction urlToken={typeof raw === "string" ? raw : ""} endpoint="/api/ownership-transfers/cancel-by-link"
         labels={{ confirm: "own.link.confirm", done: "own.link.done", invalid: "own.link.invalid" }} />
+    </div>
     </main>
   );
 }

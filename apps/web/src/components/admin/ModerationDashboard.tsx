@@ -10,6 +10,8 @@ import { api } from "@/lib/upload";
 import { AuditLog } from "./AuditLog";
 import { CaseDetailLoader } from "./CaseDetail";
 import { QueueList } from "./QueueList";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Skeleton, SkeletonRegion } from "@/components/ui/Skeleton";
 
 const input = "mt-1 block min-h-target w-full rounded-md border border-border-strong bg-surface px-3";
 
@@ -88,7 +90,7 @@ export function ModerationDashboard({ viewerId }: { viewerId?: string } = {}) {
 
       {tab === "audit" ? <AuditLog refreshKey={auditKey} /> : (
         <>
-          <form className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-4" onSubmit={(e) => e.preventDefault()}>
+          <form className="mt-2 grid gap-3 rounded-lg border border-border bg-surface p-3 sm:grid-cols-2 lg:grid-cols-5" onSubmit={(e) => e.preventDefault()}>
             <div>
               <label htmlFor="f-subject" className="text-sm font-medium">{t("mod.subject.label")}</label>
               <select id="f-subject" className={input} value={filters.subjectType} onChange={(e) => set({ subjectType: e.target.value as Filters["subjectType"], hasMedia: "any" })}>
@@ -117,11 +119,13 @@ export function ModerationDashboard({ viewerId }: { viewerId?: string } = {}) {
             </div>
           </form>
 
-          {failed ? <p role="alert" className="mt-4">{t("mod.loadError")} <button type="button" className="text-link underline" onClick={load}>{t("mod.retry")}</button></p>
-            : !data ? <p role="status" className="mt-4">{t("mod.loading")}</p> : (
+          {failed ? <div role="alert" className="mt-4 rounded-lg bg-danger-bg p-3 text-danger">{t("staff.queue.error")} <button type="button" className="min-h-target font-semibold underline" onClick={load}>{t("mod.retry")}</button></div>
+            : !data ? <SkeletonRegion className="mt-4 space-y-2">{Array.from({ length: 8 }, (_, i) => <Skeleton key={i} className="h-10 w-full" />)}</SkeletonRegion> : data.total === 0 && data.items.length === 0 ? (
+              <div className="mt-4"><EmptyState title={t("staff.queue.clear.title")} description={t("staff.queue.clear.body")} level={2} /></div>
+            ) : (
               <>
                 <p className="mt-3 text-text-muted">{t("mod.count", { total: data.total })}</p>
-                <div className="mt-2 grid gap-6 lg:grid-cols-2">
+                <div className="mt-2 grid gap-6 xl:grid-cols-[minmax(0,1fr)_28rem]">
                   <div ref={listRef}><QueueList now={now} items={data.items} selectedId={openId} onOpen={(id) => { setNotice(""); setOpenId(id); }} /></div>
                   {openId && <CaseDetailLoader viewerId={viewerId} id={openId} onDecided={onDecided} onConflict={() => { setOpenId(null); load(); }} onClose={() => setOpenId(null)} />}
                 </div>

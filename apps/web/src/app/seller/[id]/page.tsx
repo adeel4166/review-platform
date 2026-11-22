@@ -8,6 +8,8 @@ import { SellerVerifiedBadge } from "@/components/seller/SellerVerifiedBadge";
 import { OwnershipPanel } from "@/components/seller/OwnershipPanel";
 import { TeamPanel } from "@/components/seller/TeamPanel";
 import { formatDate } from "@/components/seller/ui";
+import { SectionCard, VerificationStatusCard } from "@/components/seller/SellerCards";
+import { Badge } from "@/components/ui/Badge";
 import { t } from "@/i18n/en";
 
 export const dynamic = "force-dynamic";
@@ -24,17 +26,17 @@ export default async function SellerDashboardPage({ params }: { params: Promise<
   const verified = seller.status === "VERIFIED" && !!seller.verifiedDomain;
   return (
     <main className="mx-auto max-w-content px-4 py-6">
-      <h1 className="text-2xl font-semibold">{seller.name}</h1>
+      <h1 className="break-words text-2xl font-semibold">{seller.name}</h1>
       <div className="mt-2 flex flex-wrap items-center gap-3">
         {verified && <SellerVerifiedBadge domain={seller.verifiedDomain!} />}
-        <span>{t("seller.dash.status", { status: seller.status })}</span>
+        <Badge variant={seller.status === "VERIFIED" ? "success" : "neutral"}>{t("seller.dash.status", { status: seller.status })}</Badge>
         <Link className="text-link underline" href={`/sellers/${seller.slug}`}>{t("seller.dash.viewPublic")}</Link>
       </div>
       <DashboardNav sellerId={seller.id} current="overview" />
 
-      <section aria-labelledby="att-h" className="mt-6">
-        <h2 id="att-h" className="text-xl font-semibold">{t("seller.dash.attention")}</h2>
-        <ul className="mt-2 space-y-2">
+      <VerificationStatusCard sellerId={seller.id} verified={verified} inProgress={open} canManage={d.canManage} />
+      <SectionCard id="att-h" title={t("seller.dash.attention")}>
+        <ul className="mt-3 space-y-2">
           {!verified && d.canManage && !open && (
             <li><span aria-hidden="true">⚠ </span>{t("seller.dash.attention.verify")} <Link className="text-link underline" href={`/seller/${seller.id}/verification`}>{t("seller.dash.attention.verifyAction")}</Link></li>
           )}
@@ -44,7 +46,7 @@ export default async function SellerDashboardPage({ params }: { params: Promise<
           ))}
           {(verified || !d.canManage) && !open && !d.claims.some((c) => c.status === "VERIFIED") && <li>{t("seller.dash.attention.none")}</li>}
         </ul>
-      </section>
+      </SectionCard>
 
       <TeamPanel sellerId={seller.id} selfId={d.selfId} canInvite={d.canManage} canRemove={d.canRemove} members={d.members}
         invitations={d.invitations.map((i) => ({ id: i.id, email: i.email, role: i.role, expiresAt: i.expiresAt.toISOString() }))} />

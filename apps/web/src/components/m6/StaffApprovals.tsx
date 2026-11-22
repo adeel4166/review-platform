@@ -6,6 +6,7 @@ import { ApiError, api } from "@/lib/upload";
 import { StepUpFields, stepUp } from "../account/StepUpFields";
 import { field, primaryBtn, secondaryBtn } from "../seller/ui";
 import { dateText } from "./format";
+import { QueueEmpty, QueueLoading } from "../admin/QueueStates";
 
 export interface PendingApproval { id: string; kind: string; requestedById: string; targetKey: string; expiresAt: string; createdAt: string }
 export function approvalErrorKey(e: unknown): MessageKey {
@@ -46,7 +47,7 @@ export function StaffApprovals({ staffId }: { staffId: string }) {
         <button type="submit" className={secondaryBtn}>{t("ap4.request")}</button>
       </form>
       <h2 className="mt-6 text-lg font-semibold">{t("ap4.pending")}</h2>
-      {!items ? <p role="status">{t("mod.loading")}</p> : items.length === 0 ? <p>{t("ap4.empty")}</p> : (
+      {!items ? <QueueLoading label={t("mod.loading")} /> : items.length === 0 ? <QueueEmpty message={t("ap4.empty")} /> : (
         <ul className="mt-2 space-y-3">
           {items.map((r) => (
             <li key={r.id} className="rounded-lg border border-border bg-surface p-3" data-testid="approval-row">
