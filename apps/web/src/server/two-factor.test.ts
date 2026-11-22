@@ -308,3 +308,44 @@ describe("session lifetimes (AUT-027) and password reset", () => {
     expect(offenders).toEqual([]);
   });
 });
+
+// ---- M3b gate (task #63): AUT-013 canaries, AUT-022 alert ----
+describe("AUT-013: canaries never reach console output", () => {
+  it("TOTP secret, code, recovery code and session ids are not written to the console by verify, failure or recovery flows", async () => {
+    const spies = (["log", "info", "warn", "error", "debug"] as const).map((m) => vi.spyOn(console, m).mockImplementation(() => undefined));
+    try {
+      const secret = enrolled();
+      const codes = (await addRecoveryCodes()) ?? [];
+      const sid = await pendingSession();
+      const ok = await verifySecondFactor(db, deps(), { sid, userId: "u1", code: codeAt(secret), kind: "TOTP" });
+      const sid2 = await pendingSession();
+      await err(verifySecondFactor(db, deps(), { sid: sid2, userId: "u1", code: "000000", kind: "TOTP" }));
+      const sid3 = await pendingSession();
+      await verifySecondFactor(db, deps(), { sid: sid3, userId: "u1", code: codes[0]!, kind: "RECOVERY_CODE" });
+      const logged = JSON.stringify(spies.map((s) => s.mock.calls));
+      for (const canary of [secret.toString("base64"), secret.toString("hex"), codeAt(secret), codes[0]!, ok.sid]) expect(logged).not.toContain(canary);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+});
+
+describe("AUT-022: SECOND_FACTOR_FAILURES alert", () => {
+  const alerts = () => f.state.outboxEvent.filter((e) => (e as { payload?: { kind?: string } }).payload?.kind === "SECOND_FACTOR_FAILURES");
+  it("three failures on one pending session after the password raise exactly one SECOND_FACTOR_FAILURES alert", async () => {
+    enrolled();
+    const sid = await pendingSession();
+    for (let i = 0; i < 3; i++) await err(verifySecondFactor(db, deps(), { sid, userId: "u1", code: "000000", kind: "TOTP" }));
+    expect(alerts()).toHaveLength(1);
+    await err(verifySecondFactor(db, deps(), { sid, userId: "u1", code: "000000", kind: "TOTP" }));
+    expect(alerts()).toHaveLength(1);
+  });
+  it.fails("AUT-022: the alert is limited to one per account per hour, not one per session (QA-M3B-06, known defect)", async () => {
+    enrolled();
+    for (let s = 0; s < 2; s++) {
+      const sid = await pendingSession();
+      for (let i = 0; i < 3; i++) await err(verifySecondFactor(db, deps(), { sid, userId: "u1", code: "000000", kind: "TOTP" }));
+    }
+    expect(alerts()).toHaveLength(1);
+  });
+});

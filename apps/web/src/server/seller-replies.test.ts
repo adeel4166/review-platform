@@ -264,3 +264,18 @@ describe("public rendering rule (RPL-006) and staff removal", () => {
     expect(JSON.stringify(h.t.auditLog)).not.toContain("Thank you");
   });
 });
+
+// ---- M3b gate (task #63): RPL-003 grace row, RPL-011 parent rules ----
+describe("RPL-003 grace row and RPL-011 parent rules", () => {
+  it("in claim grace the seller is still VERIFIED (grace is not a seller status), so replies are allowed", async () => {
+    h.t.seller![0]!.status = "VERIFIED";
+    expect(await code(createReply(h.db, actor("ownerA"), "rA", body, { now: NOW }))).toBe("ok");
+  });
+  it("RPL-011 (static): chk_case_subject and RESTRICT foreign keys to reviews are declared (live delete refusal: NOT RUN, needs MySQL)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const sr = readFileSync(new URL("../../../../packages/db/prisma/migrations/20261213000000_seller_replies/migration.sql", import.meta.url), "utf8");
+    expect(sr).toContain("ADD CONSTRAINT `chk_case_subject` CHECK (((`subjectType` = 'REVIEW') = (`reviewId` IS NOT NULL)) AND ((`subjectType` = 'SELLER_REPLY') = (`sellerReplyId` IS NOT NULL)))");
+    expect(sr).toContain("ADD CONSTRAINT `moderation_cases_reviewId_fkey` FOREIGN KEY (`reviewId`) REFERENCES `reviews`(`id`) ON DELETE RESTRICT");
+    expect(sr).toContain("ADD CONSTRAINT `seller_replies_reviewId_fkey` FOREIGN KEY (`reviewId`) REFERENCES `reviews`(`id`) ON DELETE RESTRICT");
+  });
+});
