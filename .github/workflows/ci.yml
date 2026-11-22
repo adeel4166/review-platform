@@ -156,3 +156,121 @@ jobs:
       - run: cp .env.example .env
       - run: docker compose up -d --wait minio && docker compose --profile init run --rm minio-init
       - run: bash scripts/t08-minio-check.sh
+
+  mysql-int:
+    # QA-M6-04: the *.int.test.ts suites (MOD-020/021, TMR-014 skew, VOT-003, RPT-004, retention/erasure) plus the real-MySQL
+    # schema guarantees (apps/worker/src/mysql-schema.int.test.ts, enabled by RP_INT_MYSQL=1) against a migrated MySQL 8.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci-root-only
+          MYSQL_DATABASE: ci
+          MYSQL_USER: app
+          MYSQL_PASSWORD: app
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pci-root-only --silent"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    env:
+      # Throwaway CI values only. The app user needs DDL rights for `migrate deploy` (shadow DB is not used by deploy).
+      DATABASE_URL: mysql://root:ci-root-only@127.0.0.1:3306/ci
+      RP_INT_MYSQL: "1"
+      IP_HASH_KEY: ci-only-ip-hash-key-0123456789abcdef0123456789
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:generate
+      - name: Apply all migrations to real MySQL
+        run: pnpm --filter @rp/db migrate:deploy
+      - name: Integration suites (*.int.test.ts) against MySQL
+        run: |
+          pnpm --filter @rp/core exec vitest run src/retention/rules.int.test.ts
+          pnpm --filter @rp/worker exec vitest run int.test
+          pnpm --filter @rp/web exec vitest run src/server/m6.int.test.ts
+
+  ops003:
+    # OPS-003: the production web build and worker sources must contain no test-only hooks.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: mysql://app:app@127.0.0.1:3306/ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:generate
+      - run: pnpm --filter @rp/web build
+      # The worker runs from source via tsx (its `build` is a typecheck, no dist/), so the built artefact to scan is the web output.
+      - name: ops003 scan (web .next)
+        run: node scripts/ops003-no-test-hooks.mjs apps/web/.next
+      - name: ops003 self-check (a planted hook must fail the scan)
+        run: |
+          mkdir -p /tmp/ops003-bad && echo 'x-test-now' > /tmp/ops003-bad/a.js
+          if node scripts/ops003-no-test-hooks.mjs /tmp/ops003-bad; then echo "scan missed a planted hook"; exit 1; fi
+
+  prod-config:
+    # Production compose must render, keep the hardening (clamav, redis ACL, egress network, sandbox image) and the worker
+    # image must build with bwrap + prlimit and exit 1 without a real MODERATION_PROVIDER.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Render production compose with names-only placeholders
+        run: |
+          cp .env.production.example .env.prod.ci
+          docker compose -f docker-compose.prod.yml --env-file .env.prod.ci --profile init config -q
+      - name: Static checks of the production compose
+        run: bash scripts/prod-config-check.sh
+      - name: Build worker image (bwrap, prlimit, poppler, exiftool)
+        run: docker build -f infra/docker/worker.Dockerfile -t rp-worker:ci .
+      - name: Worker image has the sandbox prerequisites
+        run: docker run --rm --entrypoint sh rp-worker:ci -c 'command -v bwrap && command -v prlimit && command -v pdftoppm && command -v exiftool && command -v ffmpeg'
+      - name: Worker refuses to start with MODERATION_PROVIDER unset (fail closed)
+        run: |
+          set +e
+          docker run --rm -e NODE_ENV=production -e IP_HASH_KEY=ci-only-ip-hash-key-0123456789abcdef0123456789 \
+            -e DATABASE_URL=mysql://u:p@127.0.0.1:1/x -e REDIS_URL=redis://127.0.0.1:1 -e S3_ENDPOINT=http://127.0.0.1:1 \
+            -e S3_ACCESS_KEY_ID=a -e S3_SECRET_ACCESS_KEY=b -e S3_BUCKET_INGEST=i -e S3_BUCKET_PRIVATE=p -e S3_BUCKET_PUBLIC=u \
+            rp-worker:ci
+          rc=$?; echo "exit=$rc"; [ "$rc" = 1 ]
+
+  staging-smoke:
+    # Same smoke as scripts/preview-up.sh step 4, run against a production `next start` of this commit (no deploy).
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: mysql://app:app@127.0.0.1:3306/ci
+      PREVIEW_USE_CWD: "1"
+      PREVIEW_PORT: "5101"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: bash scripts/preview-up.sh
+      - name: Record smoke evidence
+        if: always()
+        run: |
+          node scripts/preview-smoke.mjs "http://127.0.0.1:5101" | tee smoke-evidence.txt || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: staging-smoke
+          path: |
+            smoke-evidence.txt
+            .preview.log
+          if-no-files-found: ignore

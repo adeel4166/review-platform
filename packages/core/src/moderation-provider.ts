@@ -70,3 +70,11 @@ export function createModerationProvider(env: { MODERATION_PROVIDER?: string; MO
   // No real provider is wired yet; fail loudly rather than silently approving.
   throw new Error(`Unsupported MODERATION_PROVIDER "${name}"`);
 }
+
+/**
+ * M8-02 startup check (fail closed): called at worker boot so a production process with MODERATION_PROVIDER unset, `mock` or
+ * unsupported never starts, instead of failing on the first moderation job. Returns the provider name; throws with names only.
+ */
+export function assertModerationProviderConfigured(env: { MODERATION_PROVIDER?: string; MODERATION_API_KEY?: string; NODE_ENV?: string }): string {
+  return createModerationProvider(env).name;
+}

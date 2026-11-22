@@ -1,7 +1,7 @@
 import { Queue, Worker } from "bullmq";
 import { Redis } from "ioredis";
 import { prisma } from "@rp/db";
-import { assertIpHashKey, MEDIA_PUT_TTL_SECONDS, QUEUES, loadEnv, mediaJobSchema, moderationJobSchema, type Env, type QueueName, systemClock } from "@rp/core";
+import { assertIpHashKey, assertModerationProviderConfigured, MEDIA_PUT_TTL_SECONDS, QUEUES, loadEnv, mediaJobSchema, moderationJobSchema, type Env, type QueueName, systemClock } from "@rp/core";
 import { expireStaleUploads } from "./media";
 import { sweepQuarantine } from "./media/quarantine";
 import { assertMediaSandbox } from "./media/sandbox";
@@ -24,6 +24,13 @@ try {
   if (process.env.NODE_ENV === "production") throw e;
   console.warn(JSON.stringify({ msg: "worker.disabled", reason: (e as Error).message, hint: "copy .env.example to .env and run `pnpm infra:up` to enable background jobs" }));
   process.exit(0);
+}
+// M8-02: fail closed when MODERATION_PROVIDER is unset/mock/unsupported in production (names only in the log).
+try {
+  console.log(JSON.stringify({ msg: "moderation.provider", provider: assertModerationProviderConfigured({ MODERATION_PROVIDER: process.env.MODERATION_PROVIDER, MODERATION_API_KEY: process.env.MODERATION_API_KEY, NODE_ENV: process.env.NODE_ENV }) }));
+} catch (e) {
+  console.error(JSON.stringify({ msg: "worker.startup.refused", err: (e as Error).message }));
+  process.exit(1);
 }
 // MED-047: parser sandbox self-test. With MEDIA_SANDBOX_REQUIRED (default in production/CI) a missing bwrap or reachable network exits 1.
 try {
