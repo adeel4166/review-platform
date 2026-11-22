@@ -39,6 +39,9 @@ const ADMIN_ROUTES: AdminRoute[] = [
   { file: "proofs/[id]/route.ts", method: "GET", withId: true },
   { file: "proofs/[id]/decide/route.ts", method: "POST", withId: true },
   { file: "reviews/[id]/verified-label/revoke/route.ts", method: "POST", withId: true },
+  // M5-02: flagged / quarantined media
+  { file: "media/route.ts", method: "GET", withId: false },
+  { file: "media/[id]/decide/route.ts", method: "POST", withId: true },
   // Staff role management: SUPER_ADMIN only (ADR-0003, SEC-09e). Both handlers are covered.
   { file: "staff/[id]/roles/route.ts", method: "POST", withId: true, superOnly: true },
   { file: "staff/[id]/roles/route.ts", method: "DELETE", withId: true, superOnly: true },

@@ -132,3 +132,19 @@ describe("upload quota (SEC-03)", () => {
     expect(q.ownerId).toBe("u1");
   });
 });
+
+describe("readyMediaUrls video (M5-02)", () => {
+  it("returns the transcoded rendition and poster for public videos, skips videos without a rendition", async () => {
+    const { db, m, st } = setup();
+    const base = { reviewId: "r1", createdAt: new Date(), width: 720, height: 1280, thumbKey: "t", mediumKey: "m", attachedInVersion: 1, detachedInVersion: null, review: { publishedAt: new Date(), publishedVersion: 1 } };
+    m.mediaAsset.findMany.mockResolvedValue([
+      { ...base, id: "v1", kind: "VIDEO", videoKey: "m/v1/video.mp4", posterKey: "m/v1/poster.webp" },
+      { ...base, id: "v2", kind: "VIDEO", videoKey: null, posterKey: null },
+      { ...base, id: "i1", kind: "IMAGE", videoKey: null, posterKey: null },
+    ]);
+    const out = (await readyMediaUrls(db, st, ["r1"])).get("r1")!;
+    expect(out.map((i) => i.id)).toEqual(["v1", "i1"]);
+    expect(out[0]).toMatchObject({ kind: "VIDEO", videoUrl: "https://cdn.example/m/v1/video.mp4", posterUrl: "https://cdn.example/m/v1/poster.webp" });
+    expect(out[1]!.videoUrl).toBeNull();
+  });
+});

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { t, type MessageKey } from "@/i18n/en";
 import { ApiError, api } from "@/lib/upload";
+import { MediaStatusList } from "./MediaStatusList";
 import { ProofPanel, type OwnProof } from "./ProofPanel";
 import { field, primaryBtn, secondaryBtn } from "./seller/ui";
 
@@ -77,6 +78,7 @@ export function OwnReviewActions({ reviewId, rating, title, body, own, level = 4
         </div>
       )}
       <ProofPanel Heading={H2} reviewId={reviewId} verified={own.verified} initial={own.proofs} consentVersion={own.consentVersion} />
+      <MediaStatusList reviewId={reviewId} level={level === 3 ? 4 : 5} />
     </section>
   );
 }

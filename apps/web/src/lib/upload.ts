@@ -27,3 +27,17 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) throw new ApiError(res.status, body?.error?.code ?? "error");
   return body as T;
 }
+
+/** Reads a video's duration (seconds) from its metadata for the pre-check only; resolves null if the browser cannot tell. */
+export function readVideoDuration(file: Blob, timeoutMs = 4000): Promise<number | null> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const v = document.createElement("video");
+    const done = (d: number | null) => { clearTimeout(timer); URL.revokeObjectURL(url); v.removeAttribute("src"); resolve(d); };
+    const timer = setTimeout(() => done(null), timeoutMs);
+    v.preload = "metadata";
+    v.onloadedmetadata = () => done(Number.isFinite(v.duration) ? v.duration : null);
+    v.onerror = () => done(null);
+    v.src = url;
+  });
+}

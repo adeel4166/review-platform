@@ -5,6 +5,12 @@ import { VerifiedBadge } from "./VerifiedBadge";
 import { ReviewVote, type VoteValue } from "./ReviewVote";
 import { ReportDialog } from "./ReportDialog";
 
+/** Only items already promoted to the public bucket reach this type; pending/rejected media never leave the server. */
+export interface PublicMedia {
+  id: string; width: number | null; height: number | null; thumbUrl: string; mediumUrl: string;
+  kind?: "IMAGE" | "VIDEO"; videoUrl?: string | null; posterUrl?: string | null;
+}
+
 export interface PublicReview {
   id: string;
   rating: number;
@@ -23,7 +29,7 @@ export interface PublicReview {
   author: { handle: string; displayName: string };
   /** Published reply of the product's verified seller (server decides; never carries author identity). */
   reply?: { body: string; seller: { name: string; slug: string }; publishedAt: string | Date | null; editedAt: string | Date | null } | null;
-  media: { id: string; width: number | null; height: number | null; thumbUrl: string; mediumUrl: string }[];
+  media: PublicMedia[];
 }
 
 export interface ViewerCtx { signedIn: boolean; loginHref: string }
@@ -44,11 +50,20 @@ export function ReviewCard({ review: r, replyBox, ownBox, viewer }: { review: Pu
       {r.incentive && r.incentive !== "NONE" && <p className="mt-2 text-sm text-text-muted">{t("review.incentive")}</p>}
       {r.media.length > 0 && (
         <ul aria-label={t("review.gallery")} className="mt-3 flex flex-wrap gap-2">
-          {r.media.map((m, i) => (
+          {r.media.map((m, i) => m.kind === "VIDEO" && m.videoUrl ? (
+            <li key={m.id} className="w-full max-w-md">
+              {/* Transcoded MP4 rendition; no autoplay, controls are native (keyboard operable), metadata only until played. */}
+              <video controls preload="none" playsInline poster={m.posterUrl ?? m.thumbUrl} aria-label={t("media.video.label", { n: i + 1, title: r.title })}
+                width={m.width ?? undefined} height={m.height ?? undefined} className="h-auto w-full rounded-md bg-bg-subtle">
+                <source src={m.videoUrl} type="video/mp4" />
+                {t("media.video.fallback")}
+              </video>
+            </li>
+          ) : (
             <li key={m.id}>
-              {/* Opens the medium variant; signed URLs are short-lived, so no next/image optimisation. */}
+              {/* Responsive variants (256 w thumbnail, 1024 w medium); the link opens the medium rendition. Public CDN URLs, no signed GET. */}
               <a href={m.mediumUrl} target="_blank" rel="noopener noreferrer" className="block rounded-md focus-visible:outline">
-                <img src={m.thumbUrl} alt={t("review.photoAlt", { n: i + 1, title: r.title })} loading="lazy" width={96} height={96} className="h-24 w-24 rounded-md object-cover" />
+                <img src={m.thumbUrl} srcSet={`${m.thumbUrl} 256w, ${m.mediumUrl} 1024w`} sizes="(min-width: 640px) 192px, 96px" alt={t("review.photoAlt", { n: i + 1, title: r.title })} loading="lazy" decoding="async" width={96} height={96} className="h-24 w-24 rounded-md object-cover sm:h-48 sm:w-48" />
               </a>
             </li>
           ))}

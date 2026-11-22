@@ -178,3 +178,6 @@ export const proofDecisionInput = z.object({
   note: z.string().trim().max(500).optional(),
 }).strict();
 export const labelRevokeInput = z.object({ reasonCode: z.string().trim().min(1).max(64), publicReason: z.string().trim().min(1).max(2000) }).strict();
+
+/** Staff decision on a flagged/quarantined media asset (M5-02). `approve` = retry processing, `reject` = close and purge. */
+export const mediaDecisionInput = z.object({ decision: z.enum(["approve", "reject"]) }).strict();

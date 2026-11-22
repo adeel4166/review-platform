@@ -24,7 +24,7 @@ function assertPendingForMedia(status: string) {
 }
 
 const publicUrl = (st: Storage, key: string) => `${(st.publicBaseUrl ?? "").replace(/\/$/, "")}/${key}`;
-const ownSelect = { id: true, reviewId: true, status: true, failureReason: true, width: true, height: true, createdAt: true } as const;
+const ownSelect = { id: true, reviewId: true, kind: true, status: true, failureReason: true, width: true, height: true, createdAt: true } as const;
 
 /**
  * Issues a presigned PUT for one image. Type/size are validated by uploadSlotInput; ownership and the per-review
@@ -89,11 +89,11 @@ export async function listOwnMedia(db: Db, userId: string, reviewId: string) {
  * CHECK ties to scan + sanitise + moderation clearance) are returned: no signed GET for public readers (MED-037).
  */
 export async function readyMediaUrls(db: Db, st: Storage, reviewIds: string[]) {
-  const out = new Map<string, { id: string; width: number | null; height: number | null; thumbUrl: string; mediumUrl: string }[]>();
+  const out = new Map<string, { id: string; kind: "IMAGE" | "VIDEO"; width: number | null; height: number | null; thumbUrl: string; mediumUrl: string; videoUrl: string | null; posterUrl: string | null }[]>();
   if (!reviewIds.length) return out;
   const rows = await db.mediaAsset.findMany({
     where: { reviewId: { in: reviewIds }, status: "READY", bucket: "PUBLIC", thumbKey: { not: null }, mediumKey: { not: null }, review: { status: "PUBLISHED" } },
-    select: { id: true, reviewId: true, createdAt: true, width: true, height: true, thumbKey: true, mediumKey: true, attachedInVersion: true, detachedInVersion: true, review: { select: { publishedAt: true, publishedVersion: true } } },
+    select: { id: true, reviewId: true, kind: true, createdAt: true, width: true, height: true, thumbKey: true, mediumKey: true, videoKey: true, posterKey: true, attachedInVersion: true, detachedInVersion: true, review: { select: { publishedAt: true, publishedVersion: true } } },
     orderBy: { createdAt: "asc" },
   });
   for (const r of rows) {
@@ -101,8 +101,11 @@ export async function readyMediaUrls(db: Db, st: Storage, reviewIds: string[]) {
     // attachedInVersion <= v AND (detachedInVersion IS NULL OR detachedInVersion > v). NULL attached = staged, never public.
     const v = r.review.publishedVersion;
     if (v == null || r.attachedInVersion == null || r.attachedInVersion > v || (r.detachedInVersion != null && r.detachedInVersion <= v)) continue;
+    if (r.kind === "VIDEO" && !r.videoKey) continue; // a video without its transcoded rendition is not displayable
     const item = {
-      id: r.id, width: r.width, height: r.height,
+      id: r.id, kind: r.kind, width: r.width, height: r.height,
+      videoUrl: r.kind === "VIDEO" ? publicUrl(st, r.videoKey!) : null,
+      posterUrl: r.posterKey ? publicUrl(st, r.posterKey) : null,
       thumbUrl: publicUrl(st, r.thumbKey!),
       mediumUrl: publicUrl(st, r.mediumKey!),
     };
