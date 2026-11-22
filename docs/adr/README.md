@@ -35,6 +35,8 @@ We record significant architecture decisions as ADRs (lightweight Michael Nygard
 | [0019](./0019-two-factor-sessions-on-authjs.md) | 2FA, step-up and revocable sessions on the Auth.js baseline (amends ADR-0002) | Proposed | 2026-11-21 |
 | [0020](./0020-seller-ownership-changes.md) | Seller ownership changes as one delayed, two-party flow (refines ADR-0017) | Proposed | 2026-11-21 |
 | [0021](./0021-seller-reply-content-policy.md) | Seller replies: plain text, no links, server-state visibility, shared moderation | Proposed | 2026-11-21 |
+| [0022](./0022-in-house-proof-redaction.md) | Proof redaction runs in-house in the `media` group; only redacted pages reach an AI provider | Proposed | 2026-11-22 |
+| [0023](./0023-ingest-least-privilege-and-publication-gate.md) | Confirm without `HEAD`, and a database-enforced publication gate (amends ADR-0006 / ADR-0012) | Proposed | 2026-11-22 |
 
 ### Task #24 coverage map (stack, storage, worker, verified buyer, i18n)
 
@@ -77,3 +79,14 @@ We record significant architecture decisions as ADRs (lightweight Michael Nygard
 | `BUSINESS_EMAIL_DOMAIN` flow (O-2): PSL private = shared, deny-lists, role addresses, session-bound link | [m3b-spec §4](../architecture/m3b-spec.md#4-business_email_domain-claims-o-2) (within ADR-0014) |
 | Seller replies (F-5, P-2): link policy, no contact details, plain text, limits, moderation reuse, `SELLER_REPLY_RESTRICTION` | [0021](./0021-seller-reply-content-policy.md), [m3b-spec §5](../architecture/m3b-spec.md#5-seller-replies-f-5-p-2-adr-0021) |
 | Prisma diff, job catalogue additions, error codes, test ids | [m3b-spec §6–§10](../architecture/m3b-spec.md#6-schema-changes) |
+
+### Task #67 coverage map (M4 + M5: votes, edits, reports, verified buyer proof, media pipeline)
+
+| Required topic | Where |
+|---|---|
+| Votes: limits, self-vote ban, anti-abuse | [m4-m5-spec §2](../architecture/m4-m5-spec.md#2-helpful-votes-f-2-sec-009-az-012) |
+| Review edits with revision history | [m4-m5-spec §3](../architecture/m4-m5-spec.md#3-review-edits-and-revision-history-mod-019-moderation-lifecycle-42) |
+| Review reporting (reviews and seller replies) | [m4-m5-spec §4](../architecture/m4-m5-spec.md#4-reporting-reviews-and-seller-replies) |
+| Verified Buyer proof: upload, redaction, retention, decision states, label rules | [0008](./0008-verified-buyer-approach.md), [0022](./0022-in-house-proof-redaction.md), [m4-m5-spec §5](../architecture/m4-m5-spec.md#5-verified-buyer-proof-adr-0008-prv-) |
+| Upload slots, ClamAV, sanitise/exiftool, transcode, promotion, MED-037, INF-002/003 | [0023](./0023-ingest-least-privilege-and-publication-gate.md), [m4-m5-spec §6–§11](../architecture/m4-m5-spec.md#6-media-limits-slots-and-confirm-m5) |
+| Prisma deltas, job catalogue entries, error codes, limits, test ids | [m4-m5-spec §12–§16](../architecture/m4-m5-spec.md#12-schema-changes-prisma-deltas) |

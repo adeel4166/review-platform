@@ -13,6 +13,10 @@ media. Seller-claim and proof jobs (`verification.*`) keep their definitions in 
 §6.3. They follow the conventions in §1–§3. Ownership-check execution is split over `verification` → `verification-egress` → `verification-result` ([verification-egress.md](../security/verification-egress.md)).
 M3b additions (2FA alerts, ownership-change jobs, business-email MX lookup and token mail, seller-reply moderation) are
 listed in [m3b-spec.md §8](./m3b-spec.md#8-job-catalogue-additions) and follow the same conventions.
+M4/M5 additions and changes (fixed `review.submitted` payload, `review.edited`, `media.redact`, `verification.assess-proof`,
+proof events, promote/demote/purge payloads, `security.alert` kinds) are listed in
+[m4-m5-spec.md §16](./m4-m5-spec.md#16-job-catalogue-additions). Where they differ from §2 and §4 here (no
+`media.processed` event in M5, `media.promote` keyed by `caseId`), the spec wins.
 
 ---
 
