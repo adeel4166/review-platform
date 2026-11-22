@@ -23,7 +23,7 @@ git checkout main
 ## 4. Set the three settings (the key is never written to disk)
 ```bash
 export STAGING_HOST=203.0.113.10          # the PUBLIC IP (curl -4 ifconfig.me shows it)
-export MODERATION_PROVIDER=anthropic
+export MODERATION_PROVIDER=anthropic          # or: gemini (free Google AI Studio key, aistudio.google.com/apikey)
 read -rs MODERATION_API_KEY && export MODERATION_API_KEY    # paste the key, press Enter (nothing is shown on screen)
 ```
 These live only in this terminal session. Run step 5 in the same session. (To avoid the key appearing in shell history, do not type it as `export KEY=...`; use `read -rs` as above.)

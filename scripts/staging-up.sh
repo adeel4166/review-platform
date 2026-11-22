@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # LIVE-05: one-command staging on a Docker host (docker-compose.staging.yml). Run from a clean checkout:
-#   MODERATION_PROVIDER=anthropic MODERATION_API_KEY=<from your secret store> scripts/staging-up.sh        # preflight, build, up, migrate, seed, smoke
+#   MODERATION_PROVIDER=anthropic|gemini MODERATION_API_KEY=<from your secret store> scripts/staging-up.sh        # preflight, build, up, migrate, seed, smoke
 #   scripts/staging-up.sh down | stop | reseed | smoke | logs [service] | status
 # Secrets: generated once into $STAGING_ENV_FILE (default .env.staging, mode 600, gitignored). Only variable NAMES are ever printed.
 # MODERATION_PROVIDER / MODERATION_API_KEY are never generated or written: export them (or put them in the env file yourself).
@@ -52,8 +52,8 @@ command -v openssl >/dev/null || die "openssl not found"
 mod="$(getv MODERATION_PROVIDER)"
 [ -n "$mod" ] || die "MODERATION_PROVIDER is not set: refusing to start (set a real provider, e.g. anthropic)"
 [ "$mod" != "mock" ] || die "MODERATION_PROVIDER=mock is refused on staging (real provider required)"
-[ "$mod" = "anthropic" ] || die "MODERATION_PROVIDER has an unsupported value (supported: anthropic)"
-[ -n "$(getv MODERATION_API_KEY)" ] || die "MODERATION_API_KEY is not set: required for MODERATION_PROVIDER=anthropic"
+case "$mod" in anthropic|gemini) ;; *) die "MODERATION_PROVIDER has an unsupported value (supported: anthropic, gemini)" ;; esac
+[ -n "$(getv MODERATION_API_KEY)" ] || die "MODERATION_API_KEY is not set: required for MODERATION_PROVIDER=$mod"
 
 # Host checks (fail closed, names only): public STAGING_HOST, Docker + Compose v2, >= 4 GB RAM, free ports, user namespaces.
 ports=("${WEB_PORT:-$(getv WEB_PORT)}" "${MINIO_PORT:-$(getv MINIO_PORT)}"); ports[0]="${ports[0]:-3000}"; ports[1]="${ports[1]:-9000}"; [ "$tls" = 1 ] && ports+=(80 443)

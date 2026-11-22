@@ -75,6 +75,43 @@ export function anthropicProviderCall(apiKey: string, model: string, transport: 
   };
 }
 
+export const GEMINI_URL_BASE = "https://generativelanguage.googleapis.com/v1beta/models/";
+/** Google's rolling alias for the current Flash-Lite model (on the AI Studio free tier); override with MODERATION_MODEL. */
+export const DEFAULT_GEMINI_MODEL = "gemini-flash-lite-latest";
+const GEMINI_SAFETY_OFF = ["HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH", "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT"]
+  .map((category) => ({ category, threshold: "BLOCK_NONE" }));
+
+/**
+ * Google Gemini (AI Studio) adapter, same contract as the Anthropic one. The key goes only into the `x-goog-api-key` header, never the URL.
+ * Gemini's own safety filters are relaxed so abusive reviews can be scored instead of blocked; a blocked/empty answer is still `schema` -> UNSURE.
+ */
+export function geminiProviderCall(apiKey: string, model: string, transport: HttpTransport = fetchTransport): ProviderCall {
+  if (!/^[A-Za-z0-9._-]+$/.test(model)) throw new Error("MODERATION_MODEL has an invalid value for MODERATION_PROVIDER=gemini");
+  return async ({ system, user, timeoutMs }) => {
+    const res = await transport({
+      url: `${GEMINI_URL_BASE}${model}:generateContent`,
+      headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
+      body: JSON.stringify({
+        ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
+        contents: [{ role: "user", parts: [{ text: user }] }],
+        generationConfig: { temperature: 0, maxOutputTokens: 2048, responseMimeType: "application/json" },
+        safetySettings: GEMINI_SAFETY_OFF,
+      }),
+      timeoutMs,
+    });
+    if (res.status === 429) throw new ProviderError("http_429", res.retryAfterSeconds ? res.retryAfterSeconds * 1000 : undefined);
+    if (res.status >= 500) throw new ProviderError("http_5xx");
+    if (res.status < 200 || res.status >= 300) throw new ProviderError("network");
+    let text = "";
+    try {
+      const body = JSON.parse(res.text) as { candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] } }[] };
+      text = (body.candidates?.[0]?.content?.parts ?? []).filter((p) => typeof p?.text === "string" && !p.thought).map((p) => p.text).join("");
+    } catch { return ""; }
+    const fenced = /^\s*```(?:json)?\s*([\s\S]*?)\s*```\s*$/.exec(text);
+    return fenced ? fenced[1] : text;
+  };
+}
+
 /** Legacy single-score view of a scores-only result: the worst category, with high confidence only when every category was scored. */
 const legacyAssess = (call: ProviderCall) => async ({ title, body, rating }: ModerationInput): Promise<ModerationAssessment> => {
   const r = parseProviderResponse(await call({ system: "", user: JSON.stringify({ task: "classify", contentType: "REVIEW", content: { title, body, rating } }), timeoutMs: 20_000 }));
@@ -134,6 +171,11 @@ export function createModerationProvider(env: { MODERATION_PROVIDER?: string; MO
   if (name === "anthropic") {
     if (!env.MODERATION_API_KEY) throw new Error("MODERATION_API_KEY is required for MODERATION_PROVIDER=anthropic"); // names only, never a value
     const call = anthropicProviderCall(env.MODERATION_API_KEY, env.MODERATION_MODEL || DEFAULT_MODERATION_MODEL, transport);
+    return { name, call, assess: legacyAssess(call) };
+  }
+  if (name === "gemini") {
+    if (!env.MODERATION_API_KEY) throw new Error("MODERATION_API_KEY is required for MODERATION_PROVIDER=gemini"); // names only, never a value
+    const call = geminiProviderCall(env.MODERATION_API_KEY, env.MODERATION_MODEL || DEFAULT_GEMINI_MODEL, transport);
     return { name, call, assess: legacyAssess(call) };
   }
   // Unknown provider: fail loudly rather than silently approving.

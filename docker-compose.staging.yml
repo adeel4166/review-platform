@@ -244,7 +244,7 @@ services:
       ARCHIVE_DATABASE_URL: mysql://app:${MYSQL_APP_PASSWORD:?}@mysql:3306/review_platform
       MODERATION_PROVIDER: ${MODERATION_PROVIDER:?}
       MODERATION_API_KEY: ${MODERATION_API_KEY:?}
-      MODERATION_MODEL: ${MODERATION_MODEL:-claude-haiku-5-5}
+      MODERATION_MODEL: ${MODERATION_MODEL:-} # empty = provider default (claude-haiku-5-5 / gemini-flash-lite-latest)
       MODERATION_DAILY_CAP: ${MODERATION_DAILY_CAP:-2000}
       IP_HASH_KEY: ${IP_HASH_KEY:?}
       AUTH_SECRET: ${AUTH_SECRET:?}
