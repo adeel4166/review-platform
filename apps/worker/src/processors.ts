@@ -22,7 +22,7 @@ export type Processor = (job: Job, token?: string) => Promise<void>;
 
 let providerCall: ReturnType<typeof liveProviderCall> | undefined;
 /** SEC-M6-02: createModerationProvider (inside liveProviderCall) refuses mock/unset when NODE_ENV=production. */
-const getProviderCall = () => (providerCall ??= liveProviderCall({ MODERATION_PROVIDER: process.env.MODERATION_PROVIDER, MODERATION_API_KEY: process.env.MODERATION_API_KEY, NODE_ENV: process.env.NODE_ENV }));
+const getProviderCall = () => (providerCall ??= liveProviderCall({ MODERATION_PROVIDER: process.env.MODERATION_PROVIDER, MODERATION_API_KEY: process.env.MODERATION_API_KEY, MODERATION_MODEL: process.env.MODERATION_MODEL, NODE_ENV: process.env.NODE_ENV }));
 let storage: { store: ReturnType<typeof createS3Store>; buckets: ReturnType<typeof mediaBuckets> } | undefined;
 export const getMediaDeps = () => {
   if (!storage) {

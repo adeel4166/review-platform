@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { publicKey, type ObjectStore, systemClock } from "@rp/core";
 
 /** `CdnPurger` (m4-m5-spec 10.2): production = Cloudflare zone purge; dev/CI = a recording fake. */
@@ -51,6 +52,7 @@ const privateKeyOf = (id: string, name: string) => `variants/${id}/${name}`;
 /** MED-034: type from our table, long immutable cache, inline, no file name. nosniff + CSP sandbox are CDN response-header rules. */
 export const PUBLIC_HEADERS = { cacheControl: "public, max-age=31536000, immutable", contentDisposition: "inline" } as const;
 
+const sha256 = (b: Buffer) => createHash("sha256").update(b).digest("hex");
 const wrote = (d: PublishDeps, assetId: string, step: string, outcome: string, detail?: Record<string, unknown>) =>
   d.db.mediaProcessingLog?.create({ data: { assetId, step, outcome, ...(detail ? { detail } : {}) } }).catch(() => undefined) ?? Promise.resolve();
 
@@ -74,6 +76,7 @@ export async function promoteMedia(d: PublishDeps, assetId: string, caseId: stri
   const why = promotable(a, c);
   if (why) { await wrote(d, a.id, "PROMOTE", "SKIPPED", { why }); return "SKIPPED"; }
   const next: Record<string, string> = {};
+  const written: string[] = [];
   try {
     for (const f of keyFields) {
       const src = a[f];
@@ -82,18 +85,29 @@ export async function promoteMedia(d: PublishDeps, assetId: string, caseId: stri
       const body = await d.store.get(d.buckets.private, src, 60 * 1024 * 1024);
       if (!body) throw new Error("private object missing");
       const dest = publicKey(a.id, name);
-      await d.store.put(d.buckets.public, dest, body, TYPE[name]!, PUBLIC_HEADERS);
-      if (!(await d.store.head(d.buckets.public, dest))) throw new Error("public copy not visible");
+      // MED-028: never overwrite a public object (it may be cached with an immutable header). An identical existing copy (retry after a crash) is reused;
+      // different bytes under the same key abort the promotion. Objects written by this call are tracked in `written` so a failure only removes our own.
+      const existing = await d.store.get(d.buckets.public, dest, 60 * 1024 * 1024);
+      const want = sha256(body);
+      if (existing) {
+        if (sha256(existing) !== want) throw new Error("public object exists with different content (no-overwrite)");
+      } else {
+        await d.store.put(d.buckets.public, dest, body, TYPE[name]!, PUBLIC_HEADERS);
+        written.push(dest);
+      }
+      const copy = await d.store.get(d.buckets.public, dest, 60 * 1024 * 1024);
+      if (!copy) throw new Error("public copy not visible");
+      if (sha256(copy) !== want) throw new Error("public copy sha256 mismatch");
       next[f] = dest;
     }
   } catch (e) {
-    for (const k of Object.values(next)) await d.store.delete(d.buckets.public, k).catch(() => undefined); // never leave a half-public asset
+    for (const k of written) await d.store.delete(d.buckets.public, k).catch(() => undefined); // never leave a half-public asset
     throw e; // BullMQ retries; the final failure raises PROMOTE_FAILED
   }
   const now = (d.now ?? (() => systemClock.now()))();
   const res = await d.db.mediaAsset.updateMany({ where: { id: a.id, status: "READY", bucket: "PRIVATE" }, data: { bucket: "PUBLIC", promotedAt: now, moderationClearedAt: now, ...next } });
   if (res.count !== 1) {
-    for (const k of Object.values(next)) await d.store.delete(d.buckets.public, k).catch(() => undefined);
+    for (const k of written) await d.store.delete(d.buckets.public, k).catch(() => undefined);
     return "SKIPPED";
   }
   for (const f of keyFields) if (a[f]) await d.store.delete(d.buckets.private, a[f]!).catch(() => undefined);

@@ -56,7 +56,10 @@ export function retentionHandlers(): RuleHandlers {
     },
     "RET-AUDIT": async (ids) => {
       const store = s3("S3_AUDIT_ARCHIVE"), bucket = process.env.S3_BUCKET_AUDIT_ARCHIVE, url = process.env.ARCHIVE_DATABASE_URL;
-      if (!store || !bucket || !url) return 0; // not configured: rows stay online (never deleted without an archive)
+      if (!store || !bucket || !url) { // not configured: rows stay online (never deleted without an archive), but never silently (SEC-FIN-02, P-6)
+        if (process.env.NODE_ENV === "production") console.error(JSON.stringify({ msg: "security.alert", kind: "AUDIT_ARCHIVE_UNCONFIGURED", missing: [!store && "S3_AUDIT_ARCHIVE_*", !bucket && "S3_BUCKET_AUDIT_ARCHIVE", !url && "ARCHIVE_DATABASE_URL"].filter(Boolean) }));
+        return 0;
+      }
       const archiveDb = new PrismaClient({ datasources: { db: { url } } });
       try { return await archiveAuditRows({ db, archiveDb, store, bucket, clock: systemClock }, ids.map((i) => BigInt(i)) as never); } finally { await archiveDb.$disconnect(); }
     },
@@ -73,7 +76,7 @@ export async function runM8Job(name: string, data: Record<string, unknown>): Pro
       const store = s3("S3_LEDGER_READ"), bucket = process.env.S3_BUCKET_LEDGER;
       if (!store || !bucket) throw new Error("ledger reader is not configured");
       const m = getMediaDeps();
-      return replayDeletions({ db, store: m.store, reader: createLedgerReader(store, bucket), clock: systemClock }, String(data.since));
+      return replayDeletions({ db, store: m.store, reader: createLedgerReader(store, bucket, systemClock), clock: systemClock }, String(data.since));
     }
     case "security.totp-reencrypt": return reencryptTotp({ db, ring: parseKeyRing(process.env.TOTP_ENC_KEYS, process.env.TOTP_ENC_ACTIVE_KEY_ID) });
     default: return "SKIPPED";
