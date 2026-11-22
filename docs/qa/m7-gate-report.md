@@ -59,3 +59,20 @@ Both P0s (SEC-M6-01, SEC-M6-02) are **OPEN**; see [m6-gate-report.md](./m6-gate-
 1. Wire the M7 entry points (QA-M7-01) and fix QA-M6-01/02; remove `.fails` from the matching tests in `apps/web/src/server/m6-gate.test.ts`.
 2. Add a live-path burst test (worker + DB) and the TRS-009 browser test.
 3. Re-run this gate.
+
+---
+
+## Re-gate (task #88, FINAL GATE)
+
+`pnpm qa` exit 0, no `.fails` left.
+
+| Item | Status | Evidence |
+|---|---|---|
+| QA-M7-01 wiring | **CLOSED in code** | `core-main.ts:121-143` schedules vote-freeze, product-burst, decay; assess uses DB burst ports |
+| QA-M7-02 MALWARE_UPLOAD | CLOSED | `apps/worker/src/media.ts:34` |
+| TRS-001..004, TRS-008 | PASS (unit) | `packages/core/src/trust/trust.test.ts` |
+| TRS-009 | PASS (unit) | `notifications.test.ts:15`; browser test still absent (QA-M7-03, P2) |
+| SCOPE-001 | PASS | `apps/web/src/scope.test.ts:18` |
+| Burst routing against MySQL | **NOT RUN here** | `trust/burst.int.test.ts` in CI `mysql-int` |
+
+**Verdict: PASS-pending-CI** (same limitation as M6: the int result is not available to this run, so it is not a clean PASS).

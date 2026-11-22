@@ -124,3 +124,28 @@ pnpm --filter @rp/worker exec vitest run src/m5-gate.test.ts src/media-pipeline.
 
 - **task #76 (this report):** FAIL. 7 P0 defects open, 7 gate tests added.
 - **task #84 (CLOSE-02):** QA-M5-01..07 and SEC-M5-01/02/03 closed by code and named tests in `apps/worker/src/close02.test.ts` (MED-035/036/043/047/024/046, INF-008, SEC-M5-02/03), `packages/core/src/media-presign.test.ts` (MED-025), and `apps/worker/src/moderation/assess.int.test.ts` (MED-030, MED-012 parent UNSURE; BANNED_HASH now counts like MALWARE). Real bwrap isolation is **NOT RUN** here (bwrap is not installed in this sandbox); the wrapper argv, self-test and fail-closed paths are asserted with injected runners. Re-run the gate to flip the verdict.
+
+---
+
+## Re-gate (task #88, FINAL GATE, after CLOSE-02 / M8)
+
+| | |
+|---|---|
+| **Evidence run** | `pnpm qa` exit 0 (core 594, web 854 + 1 todo, worker 326 pass / 6 skipped = `mysql-schema.int`); `pnpm --filter @rp/web build` exit 0; `node scripts/ops003-no-test-hooks.mjs apps/web/.next` ok. `DATABASE_URL` = CI placeholder |
+| **it.fails** | `grep -rn "\.fails"` over apps, packages, test: **zero**. The two hits for "it.fails" text earlier were prose only. Converted and passing |
+
+**Verdict: FAIL (2 P0 cases still without a named assertion).**
+
+| Prior defect | Status | Named test |
+|---|---|---|
+| QA-M5-01 (MED-035, MED-047) | CLOSED | `close02.test.ts:56-137` |
+| QA-M5-02 (MED-036) | CLOSED | `close02.test.ts:150` |
+| QA-M5-03 (MED-043) | CLOSED | `close02.test.ts:175` |
+| QA-M5-04 (MED-030) | CLOSED in code; test is `assess.int.test.ts:39` (MySQL, **not run locally**, see CI `mysql-int`) | |
+| QA-M5-05 (MED-024/046) | CLOSED | `close02.test.ts:194-233` |
+| QA-M5-06 (MED-025) | CLOSED | `media-presign.test.ts:26` |
+| QA-M5-07 (INF-008) | CLOSED | `close02.test.ts:256-266` |
+| QA-M5-08 / QA-M7-02 (MALWARE_UPLOAD) | CLOSED in code (`media.ts:34`) |  |
+| **QA-M5-12 (MED-034, MED-028)** | **OPEN, P0 cases** | MED-034: `nosniff` and `CSP: sandbox` still exist only as a comment, `apps/worker/src/media/publish.ts:51`; `infra/cdn/media-headers.json` still does not exist. MED-028: no test that promote copies the derivative with equal sha256 or that an ingest key cannot be overwritten (`media-publish.test.ts:42` asserts headers and DB flip only) |
+| QA-M5-11 (INF-002 runtime, real clamd) | PARTIAL | `scripts/inf002-bucket-check.sh` and the `clamav` profile still have no CI job (`.github/workflows/ci.yml`) |
+| QA-M5-09, QA-M5-10 | P1/P2, not gating | not re-verified |

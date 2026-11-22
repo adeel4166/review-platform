@@ -87,3 +87,20 @@ These tests are `it.fails`: green while the defect is open, **red as soon as the
 1. Fix QA-M6-01 and QA-M6-02 as specified in the SEC review; remove `.fails` from the matching tests; they must pass.
 2. Run CI job `e2e` and attach the result for `E2E-002..005`, `E2E-008`, `A11Y-004`.
 3. Re-run this gate.
+
+---
+
+## Re-gate (task #88, FINAL GATE)
+
+`pnpm qa` exit 0. No `.fails` remain anywhere; `m6-gate.test.ts` assertions for SEC-M6-01/02 are plain `it` and pass.
+
+| Defect | Status | Evidence |
+|---|---|---|
+| QA-M6-01 (= SEC-M6-01) | **CLOSED** | `apps/web/src/app/api/admin/staff/[id]/roles/route.ts:4,17` calls `requestRoleGrant`; `m6-gate.test.ts` |
+| QA-M6-02 (= SEC-M6-02) | **CLOSED in code** | `moderation-provider.ts:65` refuses mock/unset in production; `processors.ts:69-71` runs `runAssess`; worker boot check `core-main.ts:30` |
+| QA-M6-03 | CLOSED | `approvals.ts:131` emits `TWO_FACTOR_RESET` |
+| QA-M6-04 | **Job exists, result not available** | CI job `mysql-int` (`ci.yml:160`) runs `assess.int`, `sweep.int`, `m6.int`. Not runnable in this sandbox (no MySQL, no docker, no `gh`); `assess.int` and `sweep.int` are skipped locally |
+
+NOT RUN here: `E2E-002..005`, `E2E-008`, `A11Y-004` (CI `e2e`), AIF-008 and SEC-008 against a live provider (none exists, SEC-FIN-01).
+
+**Verdict: FAIL for the final gate** only because the CI-side int and e2e results cannot be attached by this run. No open P0 defect is known in code. **PASS-pending-CI.**
