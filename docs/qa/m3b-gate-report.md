@@ -235,6 +235,8 @@ Pass criteria: (1) N+1 bytes rejected; (2) N bytes accepted; (3) the CORS respon
 | Bucket CORS | **NOT RUN, unverified** | No CORS in repo config. Needs runtime or console check |
 | 24 h lifecycle | **FAIL (static)** | Not in `minio-init`. QA-M3B-02 |
 
+**Update (task #62):** QA-M3B-02 is fixed in config: `minio-init` adds a 1-day expiry rule on `rp-ingest` (idempotent) and the `minio` service sets `MINIO_API_CORS_ALLOW_ORIGIN` to `APP_URL` (default `http://localhost:3000`, no wildcard). R2 settings: [ingest-bucket-hardening.md](../security/ingest-bucket-hardening.md). The runbook is scripted as `scripts/t08-minio-check.sh` and runs in CI job `t08-minio`. **Runtime results are still NOT RUN:** the DevOps sandbox has no Docker, so no MinIO was started. Record the CI/host output here once run.
+
 T-08 is therefore **not closed**. The gate cannot pass until the runtime check runs and QA-M3B-02 is fixed.
 
 ## 6. Gaps and risks
@@ -256,5 +258,5 @@ pnpm coverage
 pnpm --filter @rp/web exec vitest run src/server/two-factor-gate.test.ts src/server/ownership-transfers.test.ts src/server/seller-replies.test.ts
 pnpm --filter @rp/worker exec vitest run src/groups.test.ts src/verification/checks.test.ts
 pnpm --filter @rp/core exec vitest run src/domain-policy.test.ts src/reply-policy.test.ts
-# T-08: follow §5.3 on a host with Docker. Not runnable in the QA sandbox.
+# T-08: `pnpm infra:up && bash scripts/t08-minio-check.sh` on a host with Docker (also CI job t08-minio).
 ```

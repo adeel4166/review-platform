@@ -44,6 +44,9 @@ services:
     environment:
       MINIO_ROOT_USER: minio_local
       MINIO_ROOT_PASSWORD: minio_local_secret
+      # T-08/SEC-07(3): MinIO OSS has no per-bucket CORS API; CORS is a server-wide setting. App origin only, never "*".
+      # Browser PUTs to presigned URLs need only this origin. R2 equivalent: docs/security/ingest-bucket-hardening.md.
+      MINIO_API_CORS_ALLOW_ORIGIN: ${APP_URL:-http://localhost:3000}
     ports: ["127.0.0.1:9000:9000", "127.0.0.1:9001:9001"]
     volumes: ["minio-data:/data"]
     healthcheck:
@@ -63,6 +66,7 @@ services:
       mc alias set local http://minio:9000 minio_local minio_local_secret &&
       mc mb -p local/rp-ingest local/rp-private local/rp-public &&
       mc anonymous set download local/rp-public &&
+      (mc ilm rule ls local/rp-ingest 2>/dev/null | grep -q 'Expiry' || mc ilm rule add --expire-days 1 local/rp-ingest) &&
       echo buckets ready"
 
   # T-01: isolated verification-egress worker (ADR-0015). Fetches attacker-controlled URLs, so it holds NO DATABASE_URL/S3_*/SMTP_URL:
