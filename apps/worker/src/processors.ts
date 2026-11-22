@@ -5,6 +5,9 @@ import { assertNoAutoVerify, createModerationProvider, parseOrderRefKeys } from 
 import { sendAccountExistsEmail, sendClaimBusinessEmail, type ClaimEmailDeps, sendSellerInvitationEmail, sendVerificationEmail, type EmailDb, type EmailDbInvitations } from "./email";
 import { reminderDelayMs, sendTransferCancelLinks, type TransferNotifyDb } from "./ownership-transfer-email";
 import { markMediaFailed, processMedia, type MediaDb } from "./media";
+import { createClamd } from "./media/clamd";
+import { defaultVerifier } from "./media/verify";
+import { demoteMedia, promoteMedia, type PublishDb, type CdnPurger } from "./media/publish";
 import { assessProof, failClosedRedactor, finalizeProof, processProofFile, purgeProofFiles, sendProofNotice, type AssessDeps, type ProofDeps } from "./proofs";
 import { applyClaimObservation, prepareClaimCheck, type CheckStore, type EgressResult } from "./verification/checks";
 import { sendClaimNotice, type NotifyDb } from "./verification/notify";
@@ -20,7 +23,18 @@ export const getMediaDeps = () => {
     const env = loadEnv(); // storage credentials come from env only
     storage = { store: createS3Store(env), buckets: mediaBuckets(env) };
   }
-  return { db: prisma as unknown as MediaDb, ...storage };
+  return { db: prisma as unknown as MediaDb, ...storage, scanner: getScanner(), verifier: defaultVerifier(process.env.MEDIA_EXIFTOOL_REQUIRED === "true"), alert: securityAlert };
+};
+let scanner: ReturnType<typeof createClamd> | undefined;
+export const getScanner = () => (scanner ??= createClamd({ host: process.env.CLAMD_HOST ?? "127.0.0.1", port: Number(process.env.CLAMD_PORT ?? 3310) }));
+/** security-channel alert: structured log line the platform's log shipper routes; never carries file content or user data. */
+export const securityAlert = (kind: string, detail: Record<string, unknown>) => console.error(JSON.stringify({ msg: "security.alert", channel: "security-channel", kind, ...detail }));
+// CDN purge is wired by DevOps (CDN_PURGE_TOKEN); until configured it logs the URLs so a demote never silently skips the purge.
+const logPurger: CdnPurger = { purgeUrls: async (urls) => { console.log(JSON.stringify({ msg: "cdn.purge", count: urls.length })); } };
+export const getPublishDeps = () => {
+  const m = getMediaDeps();
+  const env = loadEnv();
+  return { db: prisma as unknown as PublishDb, store: m.store, buckets: { private: m.buckets.private, public: env.S3_BUCKET_PUBLIC }, cdn: logPurger, publicBaseUrl: process.env.MEDIA_PUBLIC_BASE_URL ?? "", alert: securityAlert };
 };
 export { markMediaFailed };
 
@@ -60,6 +74,12 @@ export const processors: Partial<Record<QueueName, Processor>> = {
       else if (job.name === "proof.submitted" && data.proofId) outcome = await finalizeProof(d.db, data.proofId, new Date());
       else if (job.name === "proof.purge_requested" && data.proofId) outcome = await purgeProofFiles(d, data.proofId, "PROOF_ORIGINAL");
       console.log(JSON.stringify({ msg: "proof.media.done", jobId: job.id, type: job.name, outcome })); // ids and outcome only
+      return;
+    }
+    if (job.name === "media.promote_requested" || job.name === "media.demote_requested") {
+      const x = (job.data ?? {}) as { assetId?: string; caseId?: string; reason?: string };
+      const r = !x.assetId ? "SKIPPED" : job.name === "media.promote_requested" ? (x.caseId ? await promoteMedia(getPublishDeps(), x.assetId, x.caseId) : "SKIPPED") : await demoteMedia(getPublishDeps(), x.assetId, x.reason ?? "UNSPECIFIED");
+      console.log(JSON.stringify({ msg: "media.publish.done", jobId: job.id, type: job.name, outcome: r }));
       return;
     }
     const p = mediaJobSchema.parse(job.data);

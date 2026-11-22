@@ -3,7 +3,9 @@ import { Redis } from "ioredis";
 import { prisma } from "@rp/db";
 import { MEDIA_PUT_TTL_SECONDS, QUEUES, loadEnv, mediaJobSchema, moderationJobSchema, type Env, type QueueName } from "@rp/core";
 import { expireStaleUploads } from "./media";
-import { getMediaDeps, markMediaFailed, processors, setEgressQueue, setNotificationsQueue } from "./processors";
+import { reconcilePublication } from "./media/publish";
+import { startMediaHealth } from "./media/health";
+import { getMediaDeps, getPublishDeps, getScanner, securityAlert, markMediaFailed, processors, setEgressQueue, setNotificationsQueue } from "./processors";
 import { MODERATION_JOB_OPTIONS, escalateDeadLetter, isFinalFailure, type WorkerDb } from "./moderation";
 import { sweepDueChecks, sweepExpiry, sweepGrace, type SweepStore } from "./verification/checks";
 import { nullOldIpHashes, reconcileVoteCounts, sweepProofs } from "./proofs";
@@ -47,7 +49,7 @@ const workers = Object.entries(processors).map(([name, fn]) => {
     if (name === QUEUES.media && job && isFinalFailure(job)) {
       // Retries exhausted (e.g. storage outage): surface FAILED on the asset instead of leaving it PROCESSING.
       const m = mediaJobSchema.safeParse(job.data);
-      if (m.success) markMediaFailed(getMediaDeps(), m.data.assetId, "PROCESSING_ERROR").catch((e: Error) => console.error(JSON.stringify({ msg: "media.fail.mark.error", jobId: job.id, err: e.message })));
+      if (m.success) markMediaFailed(getMediaDeps(), m.data.assetId, err.name === "ScannerUnavailable" ? "SCAN_UNAVAILABLE" : "PROCESSING_ERROR").catch((e: Error) => console.error(JSON.stringify({ msg: "media.fail.mark.error", jobId: job.id, err: e.message })));
     }
     if (name !== QUEUES.moderation || !job || !isFinalFailure(job)) return;
     // Retries exhausted: park the job in the dead-letter queue and send the review to a human (fail closed).
@@ -74,6 +76,11 @@ const sweepTimer = setInterval(() => {
 }, env.UPLOAD_SWEEP_INTERVAL_MS);
 
 // M3-05 maintenance sweepers (spec §7): due checks + monthly/daily re-verification, expiry, grace/downgrade. Idempotent, safe to overlap.
+// M5: public bucket follows moderation. Reconcile every minute; ClamAV freshness + /healthz (INF-003) when this group runs media.
+const mediaTimers = [
+  setInterval(() => { reconcilePublication(getPublishDeps()).then((r) => { if (r.demoted || r.promoted) console.log(JSON.stringify({ msg: "media.reconcile", ...r })); }).catch((e: Error) => console.error(JSON.stringify({ msg: "media.reconcile.error", err: e.message }))); }, 60_000),
+];
+const health = process.env.WORKER_HEALTH_PORT ? startMediaHealth(getScanner(), Number(process.env.WORKER_HEALTH_PORT), securityAlert) : null;
 const sweepDb = prisma as unknown as SweepStore;
 const logSweep = (name: string) => (r: unknown) => { if (r && JSON.stringify(r) !== "0" && JSON.stringify(r) !== '{"graceStarted":0,"expired":0}') console.log(JSON.stringify({ msg: `maintenance.${name}`, result: r })); };
 const sweepErr = (name: string) => (e: Error) => console.error(JSON.stringify({ msg: `maintenance.${name}.error`, err: e.message }));
@@ -97,6 +104,8 @@ async function shutdown() {
   clearInterval(sweepTimer);
   claimTimers.forEach(clearInterval);
   m4Timers.forEach(clearInterval);
+  mediaTimers.forEach(clearInterval);
+  health?.close();
   await Promise.all(workers.map((w) => w.close()));
   await Promise.all([...queues.values()].map((q) => q.close()));
   await prisma.$disconnect();

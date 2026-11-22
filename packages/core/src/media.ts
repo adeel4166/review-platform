@@ -13,7 +13,16 @@ import type { Env } from "./env";
 export const MEDIA_ALLOWED_MIME = ["image/jpeg", "image/png", "image/webp"] as const;
 export type MediaMime = (typeof MEDIA_ALLOWED_MIME)[number];
 export const MEDIA_MAX_BYTES = 10 * 1024 * 1024;
-export const MEDIA_MAX_PER_REVIEW = 5;
+export const MEDIA_ALLOWED_VIDEO_MIME = ["video/mp4", "video/quicktime"] as const;
+export const MEDIA_MAX_VIDEO_BYTES = 52_428_800;
+export const MEDIA_MAX_VIDEO_SECONDS = 30.5;
+export const MEDIA_MAX_VIDEO_SIDE = 4096;
+export const MEDIA_MAX_PHOTOS_PER_REVIEW = 10;
+export const MEDIA_MAX_VIDEOS_PER_REVIEW = 2;
+export const MEDIA_MAX_PER_REVIEW = MEDIA_MAX_PHOTOS_PER_REVIEW + MEDIA_MAX_VIDEOS_PER_REVIEW;
+/** ClamAV signature freshness (INF-003): alert above 24 h, scans fail closed above 72 h. */
+export const CLAMAV_MAX_SIGNATURE_AGE_HOURS = 24;
+export const CLAMAV_HARD_SIGNATURE_AGE_HOURS = 72;
 export const MEDIA_MAX_PIXELS = 50_000_000; // decompression-bomb guard
 export const MEDIA_PUT_TTL_SECONDS = 600;
 export const MEDIA_GET_TTL_SECONDS = 900;
@@ -21,15 +30,24 @@ export const MEDIA_VARIANTS = { thumb: 256, medium: 1024 } as const;
 
 export const uploadSlotInput = z
   .object({
-    mimeType: z.enum(MEDIA_ALLOWED_MIME),
-    sizeBytes: z.number().int().min(1).max(MEDIA_MAX_BYTES),
+    mimeType: z.enum([...MEDIA_ALLOWED_MIME, ...MEDIA_ALLOWED_VIDEO_MIME]),
+    sizeBytes: z.number().int().min(1).max(MEDIA_MAX_VIDEO_BYTES),
+    /** Video only; used for early refusal. The worker re-checks with ffprobe. */
+    durationMs: z.number().int().min(1).max(MEDIA_MAX_VIDEO_SECONDS * 1000).optional(),
   })
-  .strict();
+  .strict()
+  .refine((v) => !(MEDIA_ALLOWED_MIME as readonly string[]).includes(v.mimeType) || v.sizeBytes <= MEDIA_MAX_BYTES, { path: ["sizeBytes"], message: "image too large" });
+export const isVideoMime = (m: string) => (MEDIA_ALLOWED_VIDEO_MIME as readonly string[]).includes(m);
 export type UploadSlotInput = z.infer<typeof uploadSlotInput>;
 
 /** Server-generated keys only: the client's file name is never used. */
 export const ingestKey = (assetId: string) => `in/${assetId}`;
 export const variantKey = (assetId: string, v: keyof typeof MEDIA_VARIANTS) => `variants/${assetId}/${v}.webp`;
+
+/** Public keys exist only after promotion (MED-037). */
+export const publicKey = (assetId: string, name: string) => `m/${assetId}/${name}`;
+export const stagingKey = (assetId: string) => `staging/${assetId}/original`;
+export const quarantineKey = (assetId: string) => `quarantine/${assetId}`;
 
 /** Detects the real image type from magic bytes (never trusts the declared type or extension). */
 export function sniffImageMime(b: Uint8Array): MediaMime | null {
@@ -40,7 +58,7 @@ export function sniffImageMime(b: Uint8Array): MediaMime | null {
   return null;
 }
 
-export type MediaFailureReason = "TYPE_MISMATCH" | "UNSUPPORTED_TYPE" | "TOO_LARGE" | "CORRUPT" | "TOO_MANY_PIXELS" | "MISSING_OBJECT" | "PROCESSING_ERROR" | "UPLOAD_EXPIRED";
+export type MediaFailureReason = "MALWARE" | "BANNED_HASH" | "SCAN_UNAVAILABLE" | "NOT_CONFIRMED" | "UNSUPPORTED_CODEC" | "TOO_LONG" | "TYPE_MISMATCH" | "UNSUPPORTED_TYPE" | "TOO_LARGE" | "CORRUPT" | "TOO_MANY_PIXELS" | "MISSING_OBJECT" | "PROCESSING_ERROR" | "UPLOAD_EXPIRED";
 
 /** Minimal storage port so web/worker logic is testable with an in-memory fake (no network in tests). */
 export interface ObjectStore {
@@ -49,8 +67,14 @@ export interface ObjectStore {
   head(bucket: string, key: string): Promise<{ size: number } | null>;
   /** Reads at most `maxBytes`; returns null if absent, throws MediaTooLargeError if the object is bigger. */
   get(bucket: string, key: string, maxBytes: number): Promise<Buffer | null>;
-  put(bucket: string, key: string, body: Buffer, contentType: string): Promise<void>;
+  put(bucket: string, key: string, body: Buffer, contentType: string, headers?: ObjectHeaders): Promise<void>;
   delete(bucket: string, key: string): Promise<void>;
+}
+
+/** Public-object headers (MED-034). */
+export interface ObjectHeaders {
+  cacheControl?: string;
+  contentDisposition?: string;
 }
 
 export class MediaTooLargeError extends Error {
@@ -59,9 +83,10 @@ export class MediaTooLargeError extends Error {
   }
 }
 
-export const mediaBuckets = (env: Pick<Env, "S3_BUCKET_INGEST" | "S3_BUCKET_PRIVATE">) => ({
+export const mediaBuckets = (env: Pick<Env, "S3_BUCKET_INGEST" | "S3_BUCKET_PRIVATE"> & Partial<Pick<Env, "S3_BUCKET_PUBLIC">>) => ({
   ingest: env.S3_BUCKET_INGEST,
   private: env.S3_BUCKET_PRIVATE,
+  public: env.S3_BUCKET_PUBLIC ?? "",
 });
 
 /** S3/R2/MinIO implementation. Credentials come only from the validated env. */
@@ -106,8 +131,8 @@ export function createS3Store(env: Pick<Env, "S3_ENDPOINT" | "S3_REGION" | "S3_F
         throw e;
       }
     },
-    async put(Bucket, Key, Body, ContentType) {
-      await s3.send(new PutObjectCommand({ Bucket, Key, Body, ContentType }));
+    async put(Bucket, Key, Body, ContentType, h) {
+      await s3.send(new PutObjectCommand({ Bucket, Key, Body, ContentType, ...(h?.cacheControl ? { CacheControl: h.cacheControl } : {}), ...(h?.contentDisposition ? { ContentDisposition: h.contentDisposition } : {}) }));
     },
     async delete(Bucket, Key) {
       await s3.send(new DeleteObjectCommand({ Bucket, Key }));

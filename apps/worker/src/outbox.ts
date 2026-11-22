@@ -14,6 +14,9 @@ export const routes: Record<string, QueueName> = {
   "seller_reply.submitted": QUEUES.moderation,
   "seller_reply.edited": QUEUES.moderation,
   "media.uploaded": QUEUES.media,
+  // M5 publication (m4-m5-spec 10.2): promote only after moderation approves, demote when the review leaves PUBLISHED.
+  "media.promote_requested": QUEUES.media,
+  "media.demote_requested": QUEUES.media,
   // M4 Verified Buyer proof (m4-m5-spec 5): evidence processing in the media group, assessment in core, notices by email.
   "proof.file_uploaded": QUEUES.media,
   "proof.submitted": QUEUES.media,

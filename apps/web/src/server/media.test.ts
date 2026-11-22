@@ -20,7 +20,7 @@ function setup(over: { count?: number; review?: unknown; asset?: unknown } = {})
     $transaction: vi.fn((fn: (t: typeof tx) => unknown) => fn(tx)),
   };
   const store = new FakeObjectStore();
-  const st: Storage = { store, buckets: { ingest: "ingest", private: "private" } };
+  const st: Storage = { store, buckets: { ingest: "ingest", private: "private" }, publicBaseUrl: "https://cdn.example" };
   return { db: m as unknown as Db, m, tx, store, st };
 }
 
@@ -32,12 +32,31 @@ describe("createUploadSlot", () => {
     expect(r.uploadUrl).toContain("len=1000");
     expect(m.mediaAsset.update).toHaveBeenCalledWith({ where: { id: "m1" }, data: { ingestKey: "in/m1" } });
   });
-  it("404s for someone else's review and 409s at 5 images", async () => {
+  it("404s for someone else's review and 409s at 10 photos", async () => {
     const a = setup({ review: null });
     await expect(createUploadSlot(a.db, a.st, "u2", "r1", input)).rejects.toMatchObject({ status: 404 });
-    const b = setup({ count: 5 });
+    const b = setup({ count: 10 });
     await expect(createUploadSlot(b.db, b.st, "u1", "r1", input)).rejects.toMatchObject({ status: 409, code: "media_limit" });
     expect(b.m.mediaAsset.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("video slots (M5)", () => {
+  const video = { mimeType: "video/mp4" as const, sizeBytes: 30 * 1024 * 1024, durationMs: 20_000 };
+  it("allows a video up to 50 MiB (images stay at 10 MiB) and caps videos at 2 per review", async () => {
+    const a = setup();
+    expect((await createUploadSlot(a.db, a.st, "u1", "r1", video)).headers["Content-Type"]).toBe("video/mp4");
+    const b = setup({ count: 2 });
+    await expect(createUploadSlot(b.db, b.st, "u1", "r1", video)).rejects.toMatchObject({ status: 409, code: "media_limit" });
+    const c = setup();
+    await expect(createUploadSlot(c.db, c.st, "u1", "r1", { ...input, sizeBytes: 11 * 1024 * 1024 })).rejects.toMatchObject({ status: 413 });
+  });
+  it("the slot schema refuses oversized images, >30.5 s videos and unsupported types (GIF, WebM)", async () => {
+    const { uploadSlotInput } = await import("@rp/core");
+    expect(uploadSlotInput.safeParse({ mimeType: "image/png", sizeBytes: 11 * 1024 * 1024 }).success).toBe(false);
+    expect(uploadSlotInput.safeParse({ ...video, durationMs: 31_000 }).success).toBe(false);
+    expect(uploadSlotInput.safeParse({ mimeType: "image/gif", sizeBytes: 10 }).success).toBe(false);
+    expect(uploadSlotInput.safeParse({ mimeType: "video/webm", sizeBytes: 10 }).success).toBe(false);
   });
 });
 
@@ -66,21 +85,26 @@ describe("media on non-PENDING reviews (SEC-02)", () => {
   });
 });
 
-describe("confirmUpload", () => {
-  it("moves to PROCESSING and enqueues via the outbox when the object matches", async () => {
-    const { db, st, store, tx } = setup();
-    store.objects.set("ingest/in/m1", Buffer.alloc(1000));
+describe("confirmUpload (ADR-0023: no storage access, INF-002)", () => {
+  const asset = (createdAt = new Date()) => ({ id: "m1", status: "UPLOADING", createdAt, review: { status: "PENDING" } });
+  it("moves to PROCESSING and enqueues via the outbox without calling HEAD/GET on storage", async () => {
+    const { db, st, store, tx } = setup({ asset: asset() });
+    const spy = vi.spyOn(store, "head");
+    const get = vi.spyOn(store, "get");
     await confirmUpload(db, st, "u1", "m1");
     expect(tx.outboxEvent.create).toHaveBeenCalledWith({ data: expect.objectContaining({ type: "media.uploaded", payload: { assetId: "m1" } }) });
+    expect(spy).not.toHaveBeenCalled();
+    expect(get).not.toHaveBeenCalled();
   });
-  it("fails a missing or wrong-size upload and deletes the object", async () => {
-    const a = setup();
-    await expect(confirmUpload(a.db, a.st, "u1", "m1")).rejects.toMatchObject({ status: 422 });
-    expect(a.m.mediaAsset.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: { status: "FAILED", failureReason: "MISSING_OBJECT" } }));
-    const b = setup();
-    b.store.objects.set("ingest/in/m1", Buffer.alloc(2000));
-    await expect(confirmUpload(b.db, b.st, "u1", "m1")).rejects.toMatchObject({ status: 422 });
-    expect(b.store.objects.size).toBe(0);
+  it("an expired slot is 409 slot_expired and nothing is enqueued", async () => {
+    const { db, st, tx } = setup({ asset: asset(new Date(Date.now() - 11 * 60_000)) });
+    await expect(confirmUpload(db, st, "u1", "m1")).rejects.toMatchObject({ status: 409, code: "slot_expired" });
+    expect(tx.outboxEvent.create).not.toHaveBeenCalled();
+  });
+  it("a repeat confirm returns the current status with no new event", async () => {
+    const { db, st, tx } = setup({ asset: { ...asset(), status: "PROCESSING" } });
+    await confirmUpload(db, st, "u1", "m1");
+    expect(tx.outboxEvent.create).not.toHaveBeenCalled();
   });
   it("404s for another user's asset", async () => {
     const { db, st } = setup({ asset: null });
@@ -91,10 +115,10 @@ describe("confirmUpload", () => {
 describe("readyMediaUrls", () => {
   it("queries only READY media of PUBLISHED reviews", async () => {
     const { db, st, m } = setup();
-    m.mediaAsset.findMany.mockResolvedValue([{ id: "m1", reviewId: "r1", width: 10, height: 10, thumbKey: "t", mediumKey: "md", createdAt: new Date("2026-01-01"), attachedInVersion: 1, detachedInVersion: null, review: { publishedAt: new Date("2026-01-02"), publishedVersion: 1 } }]);
+    m.mediaAsset.findMany.mockResolvedValue([{ id: "m1", reviewId: "r1", width: 10, height: 10, thumbKey: "m/m1/thumb.webp", mediumKey: "m/m1/medium.webp", createdAt: new Date("2026-01-01"), attachedInVersion: 1, detachedInVersion: null, review: { publishedAt: new Date("2026-01-02"), publishedVersion: 1 } }]);
     const out = await readyMediaUrls(db, st, ["r1"]);
-    expect((m.mediaAsset.findMany.mock.calls[0]?.[0] as { where: unknown }).where).toMatchObject({ status: "READY", review: { status: "PUBLISHED" } });
-    expect(out.get("r1")?.[0]?.thumbUrl).toContain("private/t");
+    expect((m.mediaAsset.findMany.mock.calls[0]?.[0] as { where: unknown }).where).toMatchObject({ status: "READY", bucket: "PUBLIC", review: { status: "PUBLISHED" } });
+    expect(out.get("r1")?.[0]?.thumbUrl).toBe("https://cdn.example/m/m1/thumb.webp"); // public CDN URL, never a signed GET
   });
 });
 

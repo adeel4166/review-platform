@@ -1,0 +1,5 @@
+{"Version":"2012-10-17","Statement":[
+ {"Effect":"Allow","Action":["s3:GetObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::rp-ingest/*"]},
+ {"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::rp-private/*"]},
+ {"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::rp-public/*"]}
+]}
