@@ -17,12 +17,12 @@ export default async function AppealPage({ params, searchParams }: { params: Pro
   const { received } = await searchParams;
   const user = await pageUser(`/appeals/${id}`);
   let a;
-  try { a = await getOwnAppeal((await appealDeps()).db, user.id, id); } catch { return <main className="mx-auto max-w-reading px-4 py-6"><h1 className="text-2xl font-semibold">{t("notice.notFound")}</h1></main>; }
+  try { a = await getOwnAppeal((await appealDeps()).db, user.id, id); } catch { return <main className="mx-auto max-w-reading px-4 py-6 md:px-6 md:py-8 lg:px-8"><h1 className="text-2xl font-bold leading-tight md:text-3xl">{t("notice.notFound")}</h1></main>; }
   const decided = a.status !== "SUBMITTED" && a.status !== "IN_REVIEW";
   const current = decided ? "DECIDED" : a.status;
   return (
-    <main className="mx-auto max-w-reading px-4 py-6">
-      <h1 className="text-2xl font-semibold">{received ? t("appeal.received.h1") : t("appeal.status.h1")}</h1>
+    <main className="mx-auto max-w-reading px-4 py-6 md:px-6 md:py-8 lg:px-8">
+      <h1 className="text-2xl font-bold leading-tight md:text-3xl">{received ? t("appeal.received.h1") : t("appeal.status.h1")}</h1>
       {received && <p role="status" className="mt-2">{t("appeal.received.body", { id: a.id })}</p>}
       <p className="mt-2 text-text-muted">{t("appeal.submittedOn", { date: dateText(a.submittedAt) })}</p>
       <ol aria-label={t("appeal.steps")} className="mt-4 space-y-1">

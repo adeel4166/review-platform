@@ -6,6 +6,9 @@ import { getPublicProfile, listUserReviews } from "@/server/social";
 import { optionalUserId } from "@/server/viewer";
 import { FollowButton } from "@/components/m6/FollowButton";
 import { Stars } from "@/components/Stars";
+import { Badge } from "@/components/ui/Badge";
+import { Avatar } from "@/components/ui/Avatar";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { TrustBand } from "@/components/TrustBand";
 
 export const dynamic = "force-dynamic";
@@ -25,8 +28,11 @@ export default async function ProfilePage({ params, searchParams }: { params: Pr
   const follow = viewer && target && viewer !== target.id ? await db.follow.findFirst({ where: { followerId: viewer, followedUserId: target.id }, select: { id: true } }) : null;
   const q = (o: Record<string, string>) => `?${new URLSearchParams({ ...(sp.verified === "1" ? { verified: "1" } : {}), ...(sp.sort ? { sort: sp.sort } : {}), ...o })}`;
   return (
-    <main className="mx-auto max-w-content px-4 py-6">
-      <h1 className="text-2xl font-semibold">{profile.displayName} <span className="text-text-muted">@{profile.handle}</span></h1>
+    <main className="mx-auto max-w-content px-4 py-6 md:px-6 md:py-8 lg:px-8">
+      <div className="flex items-center gap-4">
+        <Avatar name={profile.displayName} size="lg" />
+        <h1 className="text-2xl font-bold leading-tight md:text-3xl">{profile.displayName} <span className="text-text-muted">@{profile.handle}</span></h1>
+      </div>
       <p className="mt-1"><TrustBand band={profile.band} /></p>
       {profile.bio && <p className="mt-2 max-w-reading whitespace-pre-wrap break-words">{profile.bio}</p>}
       <p className="mt-2 text-text-muted">{t("profile.since", { year: profile.memberSinceYear })}</p>
@@ -44,12 +50,12 @@ export default async function ProfilePage({ params, searchParams }: { params: Pr
         <Link className="inline-flex min-h-target items-center text-link underline" aria-current={sp.sort !== "helpful" ? "true" : undefined} href={q({ sort: "recent" })}>{t("profile.sort.recent")}</Link>
         <Link className="inline-flex min-h-target items-center text-link underline" aria-current={sp.sort === "helpful" ? "true" : undefined} href={q({ sort: "helpful" })}>{t("profile.sort.helpful")}</Link>
       </nav>
-      {reviews.items.length === 0 ? <p className="mt-3">{t("profile.noReviews")}</p> : (
+      {reviews.items.length === 0 ? <div className="mt-3"><EmptyState level={3} title={t("profile.noReviews")} /></div> : (
         <ul className="mt-3 space-y-3">
           {reviews.items.map((r) => (
             <li key={r.id} className="rounded-lg border border-border bg-surface p-3">
               <h3 className="font-semibold">{r.title}</h3>
-              <p className="flex flex-wrap items-center gap-2 text-sm"><Stars value={r.rating} />{r.verified && <span>{t("profile.verified")}</span>}<Link className="text-link underline" href={`/products/${r.product.slug}`}>{r.product.name}</Link></p>
+              <p className="flex flex-wrap items-center gap-2 text-sm"><Stars value={r.rating} />{r.verified && <Badge variant="verified">✓ {t("profile.verified")}</Badge>}<Link className="text-link underline" href={`/products/${r.product.slug}`}>{r.product.name}</Link></p>
               <p className="mt-1 line-clamp-3 whitespace-pre-wrap break-words">{r.body}</p>
             </li>
           ))}

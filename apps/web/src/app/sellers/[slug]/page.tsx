@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ProductThumb } from "@/components/ui/ProductCard";
 import { notFound } from "next/navigation";
 import { SellerVerifiedBadge } from "@/components/seller/SellerVerifiedBadge";
 import { db } from "@/server/db";
@@ -16,8 +17,8 @@ export default async function PublicSellerPage({ params }: { params: Promise<{ s
   const seller = await getPublicSeller(db, (await params).slug);
   if (!seller) notFound();
   return (
-    <main className="mx-auto max-w-content px-4 py-8">
-      <h1 className="text-2xl font-semibold">{seller.name}</h1>
+    <main className="mx-auto max-w-content px-4 py-6 md:px-6 md:py-8 lg:px-8">
+      <h1 className="text-2xl font-bold leading-tight md:text-3xl">{seller.name}</h1>
       <div className="mt-2">
         {seller.verifiedDomain ? (
           <>
@@ -37,8 +38,13 @@ export default async function PublicSellerPage({ params }: { params: Promise<{ s
       <section aria-labelledby="sp-h" className="mt-8">
         <h2 id="sp-h" className="text-xl font-semibold">{t("seller.public.products")}</h2>
         {seller.products.length === 0 ? <p className="mt-2">{t("seller.public.noProducts")}</p> : (
-          <ul className="mt-2 space-y-1">
-            {seller.products.map((p) => <li key={p.id}><Link className="text-link underline" href={`/products/${p.slug}`}>{p.name}</Link></li>)}
+          <ul className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {seller.products.map((p) => (
+              <li key={p.id} className="relative rounded-lg border border-border bg-surface p-4 shadow-sm hover:shadow-md">
+                <ProductThumb name={p.name} />
+                <h3 className="mt-3 line-clamp-2 text-lg font-semibold leading-tight"><Link className="after:absolute after:inset-0 after:content-[''] hover:underline" href={`/products/${p.slug}`}>{p.name}</Link></h3>
+              </li>
+            ))}
           </ul>
         )}
       </section>

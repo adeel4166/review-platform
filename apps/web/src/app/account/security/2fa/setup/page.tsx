@@ -16,8 +16,8 @@ export default async function TwoFactorSetupPage() {
   ]);
   const staff = s.user.role === "admin" || s.user.role === "super_admin";
   return (
-    <main className="mx-auto max-w-content px-4 py-6">
-      <h1 className="text-2xl font-semibold">{t("tf.setup.title")}</h1>
+    <main className="mx-auto max-w-content px-4 py-6 md:px-6 md:py-8 lg:px-8">
+      <h1 className="text-2xl font-bold leading-tight md:text-3xl">{t("tf.setup.title")}</h1>
       <p className="mt-1 text-text-muted">{t("tf.setup.lead")}</p>
       <TwoFactorSetup initiallyEnabled={!!row?.confirmedAt} roleBanner={staff || !!member} />
     </main>

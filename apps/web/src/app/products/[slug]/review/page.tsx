@@ -17,9 +17,9 @@ export default async function WriteReviewPage({ params }: { params: Promise<{ sl
   const href = `/products/${product.slug}`;
   const session = await auth();
   return (
-    <main className="mx-auto max-w-content px-4 py-6">
-      <h1 className="text-2xl font-semibold">{t("form.title", { product: product.name })}</h1>
-      <div className="mt-6">
+    <main className="mx-auto max-w-content px-4 py-6 md:px-6 md:py-8 lg:px-8">
+      <h1 className="text-2xl font-bold leading-tight md:text-3xl">{t("form.title", { product: product.name })}</h1>
+      <div className="mt-6 max-w-2xl rounded-xl border border-border bg-surface p-4 shadow-md md:p-6">
         {session?.user?.id ? (
           <ReviewForm productId={product.id} productName={product.name} productHref={href} />
         ) : (

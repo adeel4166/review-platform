@@ -15,11 +15,11 @@ export default async function DecisionPage({ params }: { params: Promise<{ id: s
   const user = await pageUser(`/decisions/${id}`);
   const now = clock.now();
   let n;
-  try { n = await getDecisionNotice(db, user.id, id, now); } catch { return <main className="mx-auto max-w-reading px-4 py-6"><h1 className="text-2xl font-semibold">{t("notice.notFound")}</h1></main>; }
+  try { n = await getDecisionNotice(db, user.id, id, now); } catch { return <main className="mx-auto max-w-reading px-4 py-6 md:px-6 md:py-8 lg:px-8"><h1 className="text-2xl font-bold leading-tight md:text-3xl">{t("notice.notFound")}</h1></main>; }
   const left = daysLeft(n.appealableUntil, now.getTime());
   return (
-    <main className="mx-auto max-w-reading px-4 py-6">
-      <h1 className="text-2xl font-semibold">{t(`notice.h1.${n.kind}` as MessageKey)}</h1>
+    <main className="mx-auto max-w-reading px-4 py-6 md:px-6 md:py-8 lg:px-8">
+      <h1 className="text-2xl font-bold leading-tight md:text-3xl">{t(`notice.h1.${n.kind}` as MessageKey)}</h1>
       <p className="mt-2" data-testid="notice-content">{t("notice.content", { title: n.title ?? t("notice.reply"), product: n.product?.name ?? "" })}</p>
       {n.decidedAt && <p className="text-text-muted">{t("notice.decided", { date: dateText(n.decidedAt), by: t(`notice.by.${n.source}` as MessageKey) })}</p>}
       {n.kind === "UNDER_REVIEW" && (

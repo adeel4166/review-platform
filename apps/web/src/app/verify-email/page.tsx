@@ -7,8 +7,8 @@ export const metadata = { title: `${t("verify.title")} · ${t("app.name")}`, ref
 export default async function VerifyEmailPage({ searchParams }: { searchParams: Promise<{ token?: string | string[] }> }) {
   const raw = (await searchParams).token;
   return (
-    <main className="mx-auto max-w-md px-4 py-10">
-      <h1 className="text-2xl font-semibold">{t("verify.title")}</h1>
+    <main className="mx-auto my-8 max-w-md rounded-xl border border-border bg-surface p-6 shadow-lg md:my-16 md:p-8">
+      <h1 className="text-2xl font-bold leading-tight md:text-3xl">{t("verify.title")}</h1>
       <VerifyEmailForm token={typeof raw === "string" ? raw : ""} />
     </main>
   );

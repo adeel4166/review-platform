@@ -10,8 +10,8 @@ export default async function RegisterPage({ searchParams }: { searchParams: Pro
   const callbackUrl = safeCallbackUrl((await searchParams).callbackUrl);
   if ((await auth())?.user?.id) redirect(callbackUrl);
   return (
-    <main className="mx-auto max-w-md px-4 py-10">
-      <h1 className="text-2xl font-semibold">{t("register.title")}</h1>
+    <main className="mx-auto my-8 max-w-md rounded-xl border border-border bg-surface p-6 shadow-lg md:my-16 md:p-8">
+      <h1 className="text-2xl font-bold leading-tight md:text-3xl">{t("register.title")}</h1>
       <RegisterForm callbackUrl={callbackUrl} />
     </main>
   );
