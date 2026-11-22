@@ -1,8 +1,9 @@
 import { t } from "@/i18n/en";
+import { SkeletonPrimitive } from "./primitives/skeleton";
 
 /** Static-by-default block; shimmer only when motion is allowed. Size it to match the final element to avoid layout shift. */
 export function Skeleton({ className = "" }: { className?: string }) {
-  return <div aria-hidden="true" className={`rounded-md bg-bg-subtle motion-safe:animate-pulse ${className}`} />;
+  return <SkeletonPrimitive className={className} />;
 }
 
 /** Wrapper that announces loading once for assistive tech. */

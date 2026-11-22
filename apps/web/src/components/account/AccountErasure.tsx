@@ -7,7 +7,7 @@ import { Dialog } from "../Dialog";
 import { field, secondaryBtn } from "../seller/ui";
 import { StepUpFields, stepUp } from "./StepUpFields";
 
-export const ERASE_DANGER_BTN = "inline-flex min-h-target items-center justify-center rounded-md bg-red-700 px-4 py-2 font-semibold text-white hover:bg-red-800 disabled:opacity-60";
+export const ERASE_DANGER_BTN = "inline-flex min-h-target items-center justify-center rounded-md bg-danger px-4 py-2 font-semibold text-white hover:bg-danger/90 disabled:opacity-60";
 /** The typed confirmation must equal the handle exactly (the API enforces the same, 422 confirmation_mismatch). */
 export const eraseConfirmed = (typed: string, handle: string) => typed.trim() === handle;
 /** Maps an API error to an i18n key; unknown codes fall back to the generic message. */
@@ -46,7 +46,7 @@ export function AccountErasure({ handle, redirectTo = "/", navigate = (u: string
   }
 
   return (
-    <section aria-labelledby="erase-h" className="mt-10 rounded-md border border-red-700 p-4">
+    <section aria-labelledby="erase-h" className="mt-10 rounded-md border border-danger p-4">
       <h2 id="erase-h" className="text-xl font-semibold">{t("erase.h2")}</h2>
       <p className="mt-2 max-w-reading">{t("erase.explain")}</p>
       <button type="button" className={`${ERASE_DANGER_BTN} mt-3`} onClick={() => { setOpen(true); setTyped(""); setErr(null); }}>{t("erase.open")}</button>
@@ -64,7 +64,7 @@ export function AccountErasure({ handle, redirectTo = "/", navigate = (u: string
               <label htmlFor="erase-code" className="font-medium">{t("erase.code.label")}</label>
               <input id="erase-code" name="stepUpCode" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} className={field} />
             </div>
-            <p role="alert" className="min-h-[1.5rem] text-red-700">{err ? t(err) : ""}</p>
+            <p role="alert" className="min-h-[1.5rem] text-danger">{err ? t(err) : ""}</p>
             {done && <p role="status">{t("erase.done")}</p>}
             <div className="flex gap-2">
               <button type="submit" disabled={busy || !eraseConfirmed(typed, handle)} className={ERASE_DANGER_BTN}>{t("erase.submit")}</button>
