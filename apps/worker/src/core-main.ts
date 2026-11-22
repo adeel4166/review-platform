@@ -6,6 +6,8 @@ import { expireStaleUploads } from "./media";
 import { getMediaDeps, markMediaFailed, processors, setEgressQueue, setNotificationsQueue } from "./processors";
 import { MODERATION_JOB_OPTIONS, escalateDeadLetter, isFinalFailure, type WorkerDb } from "./moderation";
 import { sweepDueChecks, sweepExpiry, sweepGrace, type SweepStore } from "./verification/checks";
+import { nullOldIpHashes, reconcileVoteCounts, sweepProofs } from "./proofs";
+import { getProofDeps } from "./processors";
 import { relayOnce, type OutboxStore } from "./outbox";
 
 // Without infra config (e.g. a preview with no Redis/MySQL) idle instead of crashing next to the web app.
@@ -81,12 +83,20 @@ const claimTimers = [
   setInterval(() => { sweepGrace(sweepDb).then(logSweep("claims-grace")).catch(sweepErr("claims-grace")); }, 60 * 60_000),
 ];
 
+// M4 maintenance (m4-m5-spec 2.1, 5.8): vote counter reconcile + 90-day ipHash nulling (daily), proof drafts/SLA/retention/purge (every 10 min).
+const m4Timers = [
+  setInterval(() => { reconcileVoteCounts(prisma).then(logSweep("vote-counts")).catch(sweepErr("vote-counts")); }, 24 * 60 * 60_000),
+  setInterval(() => { nullOldIpHashes(prisma).then(logSweep("ip-hash-retention")).catch(sweepErr("ip-hash-retention")); }, 24 * 60 * 60_000),
+  setInterval(() => { const { db, store, buckets } = getProofDeps(); sweepProofs({ db, store, buckets, originalRetention: process.env.PROOF_ORIGINAL_RETENTION === "APPEAL_WINDOW" ? "APPEAL_WINDOW" : "AT_DECISION" }).then(logSweep("proof-retention")).catch(sweepErr("proof-retention")); }, 10 * 60_000),
+];
+
 console.log(JSON.stringify({ msg: "worker.started", group: "core", queues: Object.keys(processors) }));
 
 async function shutdown() {
   clearInterval(timer);
   clearInterval(sweepTimer);
   claimTimers.forEach(clearInterval);
+  m4Timers.forEach(clearInterval);
   await Promise.all(workers.map((w) => w.close()));
   await Promise.all([...queues.values()].map((q) => q.close()));
   await prisma.$disconnect();

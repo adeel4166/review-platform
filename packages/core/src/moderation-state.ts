@@ -1,5 +1,5 @@
 /** Moderation case state machine (ADR-0005 / ADR-0011). Pure: no I/O, easy to test exhaustively. */
-export const MODERATION_STATES = ["PENDING", "AI_REVIEW", "NEEDS_HUMAN", "APPROVED", "REJECTED"] as const;
+export const MODERATION_STATES = ["PENDING", "AI_REVIEW", "NEEDS_HUMAN", "APPROVED", "REJECTED", "SUPERSEDED"] as const;
 export type ModerationState = (typeof MODERATION_STATES)[number];
 
 /**
@@ -7,11 +7,12 @@ export type ModerationState = (typeof MODERATION_STATES)[number];
  * PENDING -> NEEDS_HUMAN exists for dead-lettered jobs that never started; failures never auto-approve.
  */
 export const TRANSITIONS: Readonly<Record<ModerationState, readonly ModerationState[]>> = {
-  PENDING: ["AI_REVIEW", "NEEDS_HUMAN"],
-  AI_REVIEW: ["APPROVED", "REJECTED", "NEEDS_HUMAN"],
-  NEEDS_HUMAN: ["APPROVED", "REJECTED"],
+  PENDING: ["AI_REVIEW", "NEEDS_HUMAN", "SUPERSEDED"],
+  AI_REVIEW: ["APPROVED", "REJECTED", "NEEDS_HUMAN", "SUPERSEDED"],
+  NEEDS_HUMAN: ["APPROVED", "REJECTED", "SUPERSEDED"],
   APPROVED: [],
   REJECTED: [],
+  SUPERSEDED: [],
 };
 
 export class IllegalTransitionError extends Error {

@@ -13,6 +13,8 @@ export interface CaseRow {
   sellerReplyId?: string | null;
   version: number;
   state: ModerationState;
+  /** Absent means SUBMISSION. EDIT cases on a PUBLISHED review take the revision path (m4-m5-spec 3.2). */
+  trigger?: "SUBMISSION" | "EDIT" | "USER_REPORT";
 }
 export interface ModerationTx {
   moderationCase: {
@@ -23,7 +25,13 @@ export interface ModerationTx {
     findUnique(args: unknown): Promise<{ id: string; status: string; authorId?: string; currentVersion: number; rating: number; title: string; body: string } | null>;
     updateMany(args: unknown): Promise<{ count: number }>;
   };
-  reviewRevision: { updateMany(args: unknown): Promise<{ count: number }> };
+  reviewRevision: {
+    updateMany(args: unknown): Promise<{ count: number }>;
+    /** Needed to copy an approved revision onto a PUBLISHED review (R2/R5). */
+    findFirst?(args: unknown): Promise<{ rating: number; title: string; body: string; incentive?: string } | null>;
+  };
+  /** Optional: media versions (m4-m5-spec 3.4). An asset not READY when its version is approved is detached in that version. */
+  mediaAsset?: { updateMany(args: unknown): Promise<{ count: number }> };
   /** Only needed for SELLER_REPLY cases. */
   sellerReply?: {
     findUnique(args: unknown): Promise<{ id: string; authorId?: string; status: string; version: number } | null>;
@@ -77,6 +85,7 @@ const REPLY_AUDIT_ACTION: Record<ModerationState, string> = {
   NEEDS_HUMAN: "seller_reply.hold",
   APPROVED: "seller_reply.approve",
   REJECTED: "seller_reply.reject",
+  SUPERSEDED: "seller_reply.superseded",
 };
 
 const AUDIT_ACTION: Record<ModerationState, string> = {
@@ -85,6 +94,14 @@ const AUDIT_ACTION: Record<ModerationState, string> = {
   NEEDS_HUMAN: "review.hold",
   APPROVED: "review.approve",
   REJECTED: "review.reject",
+  SUPERSEDED: "review.case_superseded",
+};
+
+const REVISION_AUDIT_ACTION: Partial<Record<ModerationState, string>> = {
+  AI_REVIEW: "review.revision_ai_start",
+  NEEDS_HUMAN: "review.revision_auto_hold",
+  APPROVED: "review.revision_approve",
+  REJECTED: "review.revision_reject",
 };
 
 /**
@@ -108,8 +125,12 @@ export async function transitionCase(db: ModerationDb, input: TransitionInput): 
       if (own?.authorId && own.authorId === input.actor.id) throw new SelfDecisionError();
     }
 
+    // Revision path (R2-R6): an EDIT case on a PUBLISHED review never changes the review status; the live text stays until approval.
+    const liveReview = !isReply && c.trigger === "EDIT" ? await tx.review.findUnique({ where: { id: c.reviewId }, select: { id: true, status: true, authorId: true, currentVersion: true, rating: true, title: true, body: true } }) : null;
+    const isRevision = liveReview?.status === "PUBLISHED";
+
     const now = new Date();
-    const terminal = input.to === "APPROVED" || input.to === "REJECTED";
+    const terminal = input.to === "APPROVED" || input.to === "REJECTED" || input.to === "SUPERSEDED";
     const res = await tx.moderationCase.updateMany({
       where: { id: c.id, state: c.state },
       data: {
@@ -125,7 +146,23 @@ export async function transitionCase(db: ModerationDb, input: TransitionInput): 
     if (res.count !== 1) throw new TransitionConflictError();
 
     const status = REVIEW_STATUS_FOR[input.to];
-    if (isReply && status && input.to !== "PENDING" && input.to !== "AI_REVIEW") {
+    if (isRevision) {
+      const revStatus = input.to === "APPROVED" ? "APPROVED" : input.to === "REJECTED" ? "REJECTED" : input.to === "NEEDS_HUMAN" ? "HELD" : input.to === "SUPERSEDED" ? "SUPERSEDED" : null;
+      if (input.to === "APPROVED") {
+        const rev = await tx.reviewRevision.findFirst?.({ where: { reviewId: c.reviewId, version: c.version }, select: { rating: true, title: true, body: true, incentive: true } });
+        if (!rev) throw new TransitionConflictError();
+        const r = await tx.review.updateMany({
+          where: { id: c.reviewId, currentVersion: c.version, status: "PUBLISHED" },
+          data: { rating: rev.rating, title: rev.title, body: rev.body, ...(rev.incentive ? { incentive: rev.incentive } : {}), publishedVersion: c.version, editedAt: now },
+        });
+        if (r.count !== 1) throw new TransitionConflictError();
+        // Assets still not READY at approval are detached in this version so unreviewed media can never become public later.
+        await tx.mediaAsset?.updateMany({ where: { reviewId: c.reviewId, attachedInVersion: { lte: c.version }, detachedInVersion: null, status: { not: "READY" } }, data: { detachedInVersion: c.version } });
+      }
+      if (revStatus) await tx.reviewRevision.updateMany({ where: { reviewId: c.reviewId, version: c.version, status: { in: ["PENDING", "HELD"] } }, data: { status: revStatus } });
+    } else if (input.to === "SUPERSEDED") {
+      // Superseded cases never touch the content (a newer revision/edit owns it).
+    } else if (isReply && status && input.to !== "PENDING" && input.to !== "AI_REVIEW") {
       const r = await tx.sellerReply!.updateMany({
         // Guard on version: an edit has its own case; a stale decision must not publish or hide the newer text (m3b-spec 5.3).
         where: { id: c.sellerReplyId, version: c.version, status: { in: ["PENDING", "HIDDEN"] } },
@@ -154,7 +191,7 @@ export async function transitionCase(db: ModerationDb, input: TransitionInput): 
       data: {
         actorType: input.actor.type,
         actorId: input.actor.id ?? null,
-        action: (isReply ? REPLY_AUDIT_ACTION : AUDIT_ACTION)[input.to],
+        action: isReply ? REPLY_AUDIT_ACTION[input.to] : (isRevision ? REVISION_AUDIT_ACTION[input.to] : undefined) ?? AUDIT_ACTION[input.to],
         entityType: isReply ? "SellerReply" : "Review",
         entityId: (isReply ? c.sellerReplyId : c.reviewId) as string,
         metadata,

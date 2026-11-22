@@ -2,17 +2,21 @@ import type { Db } from "./db";
 import { HttpError } from "./http";
 import { readyMediaUrls, type Storage } from "./media";
 import { publicRepliesFor } from "./seller-replies";
-import type { ReviewInput } from "./validation";
+import { myVotes } from "./votes";
+import type { ReviewInput, reviewEditInput } from "./validation";
+import type { z } from "zod";
+import { MEDIA_MAX_PER_REVIEW } from "@rp/core";
+import type { Actor } from "./session";
 
 const publicSelect = {
-  id: true, productId: true, rating: true, title: true, body: true, incentive: true, verifiedBuyer: true,
+  id: true, productId: true, rating: true, title: true, body: true, incentive: true, verifiedBuyer: true, verifiedPurchaseAt: true, verificationMethod: true,
   helpfulCount: true, notHelpfulCount: true, publishedAt: true, editedAt: true,
   author: { select: { handle: true, displayName: true } }, // never expose email
 } as const;
 
 const ownSelect = {
   id: true, productId: true, rating: true, title: true, body: true, status: true,
-  currentVersion: true, createdAt: true, updatedAt: true,
+  currentVersion: true, publishedVersion: true, incentive: true, createdAt: true, updatedAt: true,
 } as const;
 
 function isUniqueViolation(e: unknown): boolean {
@@ -20,22 +24,26 @@ function isUniqueViolation(e: unknown): boolean {
 }
 
 /** Published reviews only, newest first, paginated. */
-export async function listPublishedReviews(db: Db, productId: string, page: number, pageSize: number, storage?: Storage) {
+export async function listPublishedReviews(db: Db, productId: string, page: number, pageSize: number, storage?: Storage, opts: { verifiedOnly?: boolean; viewerId?: string | null } = {}) {
   const product = await db.product.findFirst({ where: { id: productId, status: "ACTIVE" }, select: { id: true, sellerId: true } });
   if (!product) throw new HttpError(404, "not_found", "Product not found");
-  const where = { productId, status: "PUBLISHED" as const };
-  const [items, total] = await Promise.all([
+  const where = { productId, status: "PUBLISHED" as const, ...(opts.verifiedOnly ? { verifiedPurchaseAt: { not: null } } : {}) };
+  const [items, total, verifiedCount, allCount] = await Promise.all([
     db.review.findMany({
       where, select: publicSelect, orderBy: [{ publishedAt: "desc" }, { id: "asc" }],
       skip: (page - 1) * pageSize, take: pageSize,
     }),
     db.review.count({ where }),
+    db.review.count({ where: { productId, status: "PUBLISHED", verifiedPurchaseAt: { not: null } } }),
+    db.review.count({ where: { productId, status: "PUBLISHED" } }),
   ]);
+  const mine = await myVotes(db, opts.viewerId ?? null, items.map((r) => r.id));
   // Media is shown only when it is READY and its review is PUBLISHED.
   const media = storage ? await readyMediaUrls(db, storage, items.map((r) => r.id)) : new Map();
   // Seller replies are embedded only while PUBLISHED, owned by the product's current seller and VERIFIED (m3b-spec 5.5).
   const replies = await publicRepliesFor(db, product.sellerId, items.map((r) => r.id));
-  return { items: items.map((r) => ({ ...r, media: media.get(r.id) ?? [], reply: replies.get(r.id) ?? null })), page, pageSize, total };
+  // Verified share is computed at read time (m4-m5-spec 5.1). `myVote` is the caller's own vote only.
+  return { items: items.map((r) => ({ ...r, media: media.get(r.id) ?? [], reply: replies.get(r.id) ?? null, myVote: mine.get(r.id) ?? null })), page, pageSize, total, verified: { count: verifiedCount, of: allCount } };
 }
 
 /** New reviews always start PENDING; the review, its first revision and the outbox event commit atomically. */
@@ -52,7 +60,7 @@ export async function createReview(db: Db, userId: string, productId: string, in
         },
         select: ownSelect,
       });
-      await tx.outboxEvent.create({ data: { type: "review.submitted", aggregateId: review.id, payload: { reviewId: review.id, version: 1 } } });
+      await tx.outboxEvent.create({ data: { type: "review.submitted", aggregateId: review.id, payload: { subjectType: "REVIEW", subjectId: review.id, version: 1, trigger: "SUBMISSION" } } });
       return review;
     });
   } catch (e) {
@@ -61,45 +69,92 @@ export async function createReview(db: Db, userId: string, productId: string, in
   }
 }
 
-async function loadOwnEditable(db: Db, userId: string, reviewId: string) {
-  const r = await db.review.findFirst({
-    where: { id: reviewId, authorId: userId, status: { not: "DELETED" } },
-    select: { id: true, status: true, currentVersion: true, rating: true, title: true, body: true },
-  });
-  // Someone else's review is indistinguishable from a missing one.
-  if (!r) throw new HttpError(404, "not_found", "Review not found");
-  if (r.status !== "PENDING") throw new HttpError(409, "not_editable", "Only pending reviews can be changed");
-  return r;
-}
+type Tx = Db;
+const NEXT_STATUS_PATH = new Set(["PENDING", "HIDDEN"]);
 
-export async function updateOwnReview(db: Db, userId: string, reviewId: string, patch: Partial<ReviewInput>) {
-  const cur = await loadOwnEditable(db, userId, reviewId);
-  const next = {
-    rating: patch.rating ?? cur.rating,
-    title: patch.title ?? cur.title,
-    body: patch.body ?? cur.body,
-  };
+/**
+ * Edit own review (m4-m5-spec 3). PENDING/HIDDEN: in-place (T14), old open revision and case become SUPERSEDED.
+ * PUBLISHED: R1, the row keeps the live text and a new PENDING revision is written. REJECTED/REMOVED: 409; DELETED/other: 404.
+ */
+export async function editOwnReview(db: Db, userId: string, reviewId: string, input: z.infer<typeof reviewEditInput>, ctx: { charge?: (live: boolean) => Promise<void> } = {}) {
+  const cur = await db.review.findFirst({
+    where: { id: reviewId, authorId: userId, status: { not: "DELETED" } }, // someone else's review is indistinguishable from a missing one (deny reason NOT_OWNER stays internal)
+    select: { id: true, status: true, currentVersion: true, publishedVersion: true, rating: true, title: true, body: true, incentive: true, product: { select: { sellerId: true } } },
+  });
+  if (!cur) throw new HttpError(404, "not_found", "Review not found");
+  if (cur.status === "REJECTED" || cur.status === "REMOVED") throw new HttpError(409, "not_editable", "This review can no longer be edited");
+  if (input.expectedVersion !== cur.currentVersion) throw new HttpError(409, "version_conflict", "Review changed, reload and retry");
+  const live = cur.status === "PUBLISHED";
+  await ctx.charge?.(live);
+  const next = { rating: input.rating ?? cur.rating, title: input.title ?? cur.title, body: input.body ?? cur.body, incentive: input.incentive ?? cur.incentive };
   const version = cur.currentVersion + 1;
-  return db.$transaction(async (tx) => {
+  return db.$transaction(async (t) => {
+    const tx = t as unknown as Tx;
     // Guarded on status + version so a concurrent moderation decision or edit cannot be overwritten.
     const res = await tx.review.updateMany({
-      where: { id: reviewId, authorId: userId, status: "PENDING", currentVersion: cur.currentVersion },
-      data: { ...next, currentVersion: version, editedAt: new Date() },
+      where: { id: reviewId, authorId: userId, status: cur.status, currentVersion: cur.currentVersion },
+      data: live ? { currentVersion: version } : { ...next, currentVersion: version, editedAt: new Date(), status: "PENDING" },
     });
-    if (res.count !== 1) throw new HttpError(409, "not_editable", "Review changed, reload and retry");
-    await tx.reviewRevision.updateMany({ where: { reviewId, status: "PENDING" }, data: { status: "SUPERSEDED" } });
+    if (res.count !== 1) throw new HttpError(409, "version_conflict", "Review changed, reload and retry");
+    await tx.reviewRevision.updateMany({ where: { reviewId, status: { in: ["PENDING", "HELD"] } }, data: { status: "SUPERSEDED" } });
+    await tx.moderationCase.updateMany({ where: { reviewId, state: { in: ["PENDING", "AI_REVIEW", "NEEDS_HUMAN"] }, trigger: { in: ["SUBMISSION", "EDIT"] } }, data: { state: "SUPERSEDED" } });
     await tx.reviewRevision.create({ data: { reviewId, version, ...next, editorId: userId, status: "PENDING" } });
-    await tx.outboxEvent.create({ data: { type: "review.submitted", aggregateId: reviewId, payload: { reviewId, version } } });
-    return tx.review.findUniqueOrThrow({ where: { id: reviewId }, select: ownSelect });
+
+    // Media per revision (3.4): claim staged assets, detach removed ones; the case for `version` assesses exactly the visible set.
+    if (input.addMediaIds?.length || input.removeMediaIds?.length || live) {
+      const assets = await tx.mediaAsset.findMany({ where: { reviewId }, select: { id: true, ownerId: true, status: true, attachedInVersion: true, detachedInVersion: true } });
+      const byId = new Map(assets.map((a) => [a.id, a]));
+      for (const aid of input.addMediaIds ?? []) {
+        const a = byId.get(aid);
+        if (!a || a.ownerId !== userId || a.attachedInVersion !== null || !["PROCESSING", "READY"].includes(a.status)) throw new HttpError(409, "media_not_attachable", "Media cannot be attached to this review");
+        a.attachedInVersion = version;
+      }
+      for (const aid of input.removeMediaIds ?? []) {
+        const a = byId.get(aid);
+        if (!a || a.attachedInVersion === null || a.detachedInVersion !== null) throw new HttpError(409, "media_not_attachable", "Media cannot be removed from this review");
+        a.detachedInVersion = version;
+      }
+      const visible = assets.filter((a) => a.attachedInVersion !== null && a.attachedInVersion <= version && (a.detachedInVersion === null || a.detachedInVersion > version)).length;
+      if (visible > MEDIA_MAX_PER_REVIEW) throw new HttpError(409, "media_limit", `At most ${MEDIA_MAX_PER_REVIEW} images per review`);
+      if (input.addMediaIds?.length) await tx.mediaAsset.updateMany({ where: { id: { in: input.addMediaIds }, reviewId, ownerId: userId, attachedInVersion: null }, data: { attachedInVersion: version } });
+      if (input.removeMediaIds?.length) await tx.mediaAsset.updateMany({ where: { id: { in: input.removeMediaIds }, reviewId, detachedInVersion: null }, data: { detachedInVersion: version } });
+    }
+    // D-1: the payload is the moderationJobSchema shape; `review.submitted` for T14, `review.edited` for R1.
+    await tx.outboxEvent.create({ data: { type: live ? "review.edited" : "review.submitted", aggregateId: reviewId, payload: { subjectType: "REVIEW", subjectId: reviewId, version, trigger: "EDIT" } } });
+    await tx.auditLog.create({ data: { actorType: "USER", actorId: userId, action: "review.revision_submit", entityType: "Review", entityId: reviewId, metadata: { version } } });
+    const row = await tx.review.findUniqueOrThrow({ where: { id: reviewId }, select: ownSelect });
+    return { ...row, pendingRevision: { version, status: "PENDING" as const } };
   });
 }
 
-/** Soft delete (ADR-0004: user content is never hard-deleted by the app). */
+/** Back-compat wrapper for the pre-M4 PATCH shape (no expectedVersion): applies to the current version. */
+export async function updateOwnReview(db: Db, userId: string, reviewId: string, patch: Partial<ReviewInput>) {
+  const cur = await db.review.findFirst({ where: { id: reviewId, authorId: userId, status: { not: "DELETED" } }, select: { status: true, currentVersion: true } });
+  if (!cur) throw new HttpError(404, "not_found", "Review not found");
+  if (!NEXT_STATUS_PATH.has(cur.status)) throw new HttpError(409, "not_editable", "Only pending reviews can be changed without expectedVersion");
+  return editOwnReview(db, userId, reviewId, { expectedVersion: cur.currentVersion, ...patch });
+}
+
+/** Author and staff only (the public route never includes revisions). A non-author gets the same 404 as a missing review. */
+export async function listRevisions(db: Db, actor: Actor, reviewId: string) {
+  const staff = actor.role === "admin" || actor.role === "super_admin";
+  const r = await db.review.findFirst({ where: { id: reviewId, ...(staff ? {} : { authorId: actor.id }) }, select: { id: true } });
+  if (!r) throw new HttpError(404, "not_found", "Review not found");
+  return db.reviewRevision.findMany({ where: { reviewId }, orderBy: { version: "desc" }, select: { version: true, status: true, rating: true, title: true, body: true, createdAt: true } });
+}
+
+/** Soft delete (ADR-0004). T13/T19: allowed from PENDING, HIDDEN, PUBLISHED, REJECTED, REMOVED. Open cases become SUPERSEDED. */
 export async function deleteOwnReview(db: Db, userId: string, reviewId: string) {
-  await loadOwnEditable(db, userId, reviewId);
-  const res = await db.review.updateMany({
-    where: { id: reviewId, authorId: userId, status: "PENDING" },
-    data: { status: "DELETED", deletedAt: new Date() },
+  const r = await db.review.findFirst({ where: { id: reviewId, authorId: userId, status: { not: "DELETED" } }, select: { id: true, status: true } });
+  if (!r) throw new HttpError(404, "not_found", "Review not found");
+  await db.$transaction(async (t) => {
+    const tx = t as unknown as Tx;
+    const res = await tx.review.updateMany({ where: { id: reviewId, authorId: userId, status: r.status }, data: { status: "DELETED", deletedAt: new Date() } });
+    if (res.count !== 1) throw new HttpError(409, "not_editable", "Review changed, reload and retry");
+    await tx.moderationCase.updateMany({ where: { reviewId, state: { in: ["PENDING", "AI_REVIEW", "NEEDS_HUMAN"] } }, data: { state: "SUPERSEDED", openReportKey: null } });
+    await tx.reviewRevision.updateMany({ where: { reviewId, status: { in: ["PENDING", "HELD"] } }, data: { status: "SUPERSEDED" } });
+    // Proof files are purged by the retention job once the proof is closed (m4-m5-spec 5.8).
+    await tx.purchaseProof.updateMany({ where: { reviewId, status: { in: ["DRAFT", "PENDING"] } }, data: { status: "WITHDRAWN", closeReason: "USER_WITHDRAWN", closedAt: new Date(), openKey: null, filesDeleteRequestedAt: new Date() } });
+    await tx.auditLog.create({ data: { actorType: "USER", actorId: userId, action: "review.delete", entityType: "Review", entityId: reviewId, metadata: { fromStatus: r.status } } });
   });
-  if (res.count !== 1) throw new HttpError(409, "not_editable", "Review changed, reload and retry");
 }

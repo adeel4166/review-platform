@@ -87,3 +87,26 @@ export const limitReplyCreate = (userId: string, sellerId: string) =>
 
 /** Reply edits: 5/day per reply. */
 export const limitReplyEdit = (replyId: string) => enforce([{ key: `reply:edit:d:${replyId}`, rule: rule(5, DAY) }]);
+
+/** Votes (m4-m5-spec 2.1): 60/h per user (NEW accounts 20/h), 300/h per ipHash. Fail open like other content limits. */
+export const limitVote = (userId: string, ipHash: string | null, newAccount: boolean) =>
+  enforce([
+    { key: `vote:u:h:${userId}`, rule: rule(newAccount ? 20 : 60, HOUR) },
+    ...(ipHash ? [{ key: `vote:ip:h:${ipHash}`, rule: rule(300, HOUR) }] : []),
+  ]);
+
+/** Edits of PUBLISHED reviews: 5 per user per day (threat-model section 5). */
+export const limitReviewEdit = (userId: string) => enforce([{ key: `review:edit:u:d:${userId}`, rule: rule(5, DAY) }]);
+
+/** Reports: 20/day per user, 50/day per ipHash. */
+export const limitReport = (userId: string, ipHash: string | null) =>
+  enforce([
+    { key: `report:u:d:${userId}`, rule: rule(20, DAY) },
+    ...(ipHash ? [{ key: `report:ip:d:${ipHash}`, rule: rule(50, DAY) }] : []),
+  ]);
+
+/** Proof creations: 5 per user per day. */
+export const limitProofCreate = (userId: string) => enforce([{ key: `proof:u:d:${userId}`, rule: rule(5, DAY) }]);
+
+/** Keyed hash of the client IP for anti-abuse data (L-11: nulled after 90 days by the retention sweep). */
+export { hashIp } from "@rp/core";

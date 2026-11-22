@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_THRESHOLDS, FakeModerationDb, IllegalTransitionError, MODERATION_STATES, MockModerationProvider,
-  StubPurchaseLookup, TRANSITIONS, TransitionConflictError, canTransition, createModerationProvider, decideVerdict,
-  markVerifiedBuyer, transitionCase, type ModerationDb, type ModerationState,
+  TRANSITIONS, TransitionConflictError, canTransition, createModerationProvider, decideVerdict,
+  transitionCase, type ModerationDb, type ModerationState,
 } from "./index";
 
 const asDb = (f: FakeModerationDb) => f as unknown as ModerationDb;
@@ -94,30 +94,3 @@ describe("verdicts and providers", () => {
   });
 });
 
-describe("verified buyer", () => {
-  const mk = (verified = false) => {
-    const set: string[] = [];
-    const store = {
-      findReview: async (id: string) => (id === "r1" ? { id, authorId: "u1", productId: "p1", verifiedBuyer: verified } : null),
-      setVerified: async (id: string, order: string) => { set.push(`${id}:${order}`); },
-    };
-    return { store, set };
-  };
-  const lookup = new StubPurchaseLookup([{ orderId: "o1", userId: "u1", productId: "p1", purchasedAt: new Date() }]);
-  it("marks verified when author bought the product", async () => {
-    const { store, set } = mk();
-    expect(await markVerifiedBuyer(store, lookup, "r1")).toBe(true);
-    expect(set).toEqual(["r1:o1"]);
-  });
-  it("does not verify without a purchase, or for unknown reviews", async () => {
-    const { store, set } = mk();
-    expect(await markVerifiedBuyer(store, new StubPurchaseLookup(), "r1")).toBe(false);
-    expect(await markVerifiedBuyer(store, lookup, "nope")).toBe(false);
-    expect(set).toEqual([]);
-  });
-  it("is idempotent when already verified", async () => {
-    const { store, set } = mk(true);
-    expect(await markVerifiedBuyer(store, new StubPurchaseLookup(), "r1")).toBe(true);
-    expect(set).toEqual([]);
-  });
-});

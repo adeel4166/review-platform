@@ -10,7 +10,6 @@ import {
   type ModerationJob,
   type ModerationProvider,
   type ModerationThresholds,
-  type VerifiedBuyerStore,
   DEFAULT_THRESHOLDS,
 } from "@rp/core";
 
@@ -38,7 +37,7 @@ async function processReply(db: WorkerDb, provider: ModerationProvider, job: Mod
   const reply = (await db.sellerReply.findUnique({ where: { id: job.subjectId }, select: REPLY_SELECT })) as ReplyRow | null;
   if (!reply || reply.version !== job.version || reply.status !== "PENDING") return "SKIPPED"; // stale/deleted/decided
   const c = await db.moderationCase.upsert({
-    where: { sellerReplyId_version: { sellerReplyId: reply.id, version: job.version } },
+    where: { sellerReplyId_version_trigger_seq: { sellerReplyId: reply.id, version: job.version, trigger: "SUBMISSION", seq: 1 } },
     create: { subjectType: "SELLER_REPLY", sellerReplyId: reply.id, version: job.version },
     update: {},
   });
@@ -82,19 +81,23 @@ export async function processModeration(
   db: WorkerDb,
   provider: ModerationProvider,
   job: ModerationJob,
-  opts: { jobId?: string; thresholds?: ModerationThresholds; verifyBuyer?: (reviewId: string) => Promise<boolean> } = {},
+  opts: { jobId?: string; thresholds?: ModerationThresholds } = {},
 ): Promise<ModerationOutcome> {
   if (job.subjectType === "SELLER_REPLY") return processReply(db, provider, job, opts);
   if (job.subjectType !== "REVIEW") return "SKIPPED"; // other subjects arrive with their features
+  if ((job.trigger ?? "SUBMISSION") === "USER_REPORT") return "SKIPPED"; // report cases are decided by humans in M4 (AI re-scan is M6)
   const review = await db.review.findUnique({
     where: { id: job.subjectId },
-    select: { id: true, status: true, currentVersion: true, rating: true, title: true, body: true },
-  });
-  if (!review || review.currentVersion !== job.version || review.status !== "PENDING") return "SKIPPED"; // stale/deleted/decided
+    select: { id: true, status: true, currentVersion: true, publishedVersion: true, rating: true, title: true, body: true },
+  }) as { id: string; status: string; currentVersion: number; publishedVersion?: number | null; rating: number; title: string; body: string } | null;
+  // Stale/deleted/decided jobs are no-ops. A PUBLISHED review takes the revision path (R2-R4): only a newer, current version qualifies.
+  const revision = review?.status === "PUBLISHED" && (job.trigger ?? "SUBMISSION") === "EDIT" && job.version > (review.publishedVersion ?? 0);
+  if (!review || review.currentVersion !== job.version || (review.status !== "PENDING" && !revision)) return "SKIPPED";
+  const trigger = revision || job.trigger === "EDIT" ? "EDIT" : "SUBMISSION";
 
   const c = await db.moderationCase.upsert({
-    where: { reviewId_version: { reviewId: review.id, version: job.version } },
-    create: { reviewId: review.id, version: job.version },
+    where: { reviewId_version_trigger_seq: { reviewId: review.id, version: job.version, trigger, seq: 1 } },
+    create: { reviewId: review.id, version: job.version, trigger },
     update: {},
   });
   if (c.state === "PENDING") {
@@ -108,9 +111,7 @@ export async function processModeration(
     return "SKIPPED"; // already decided or with a human
   }
 
-  // Verified Buyer is independent of the AI verdict and must not block moderation if the order lookup fails.
-  await opts.verifyBuyer?.(review.id).catch((e: Error) => console.warn(JSON.stringify({ msg: "verified_buyer.error", err: e.message })));
-
+  // ADR-0008: the Verified Buyer label is never set by this job; only a staff proof decision sets it.
   const assessment = await provider.assess({ title: review.title, body: review.body, rating: review.rating });
   const verdict = decideVerdict(assessment, opts.thresholds ?? DEFAULT_THRESHOLDS);
   try {
@@ -138,7 +139,7 @@ export async function escalateDeadLetter(db: WorkerDb, job: ModerationJob, error
     const reply = await db.sellerReply?.findUnique({ where: { id: job.subjectId }, select: REPLY_SELECT });
     if (!reply || reply.version !== job.version) return false;
     const c = await db.moderationCase.upsert({
-      where: { sellerReplyId_version: { sellerReplyId: reply.id, version: job.version } },
+      where: { sellerReplyId_version_trigger_seq: { sellerReplyId: reply.id, version: job.version, trigger: "SUBMISSION", seq: 1 } },
       create: { subjectType: "SELLER_REPLY", sellerReplyId: reply.id, version: job.version },
       update: {},
     });
@@ -156,9 +157,10 @@ export async function escalateDeadLetter(db: WorkerDb, job: ModerationJob, error
     select: { id: true, status: true, currentVersion: true, rating: true, title: true, body: true },
   });
   if (!review || review.currentVersion !== job.version) return false;
+  const trigger = job.trigger === "EDIT" ? "EDIT" : "SUBMISSION";
   const c = await db.moderationCase.upsert({
-    where: { reviewId_version: { reviewId: review.id, version: job.version } },
-    create: { reviewId: review.id, version: job.version },
+    where: { reviewId_version_trigger_seq: { reviewId: review.id, version: job.version, trigger, seq: 1 } },
+    create: { reviewId: review.id, version: job.version, trigger },
     update: {},
   });
   try {
@@ -186,17 +188,3 @@ export const MODERATION_JOB_OPTIONS = {
 /** True when BullMQ will not retry this failure again. */
 export const isFinalFailure = (job: { attemptsMade: number; opts: { attempts?: number } }) =>
   job.attemptsMade >= (job.opts.attempts ?? 1);
-
-/** Prisma-backed Verified Buyer store (structural, so tests can fake it). */
-export interface VerifiedBuyerDb {
-  review: {
-    findUnique(args: unknown): Promise<{ id: string; authorId: string; productId: string; verifiedBuyer: boolean } | null>;
-    update(args: unknown): Promise<unknown>;
-  };
-}
-export const verifiedBuyerStore = (db: VerifiedBuyerDb): VerifiedBuyerStore => ({
-  findReview: (id) => db.review.findUnique({ where: { id }, select: { id: true, authorId: true, productId: true, verifiedBuyer: true } }),
-  setVerified: async (id, orderId, at) => {
-    await db.review.update({ where: { id }, data: { verifiedBuyer: true, verifiedAt: at, verifiedOrderId: orderId } });
-  },
-});

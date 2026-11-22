@@ -1,20 +1,19 @@
 import type { Job } from "bullmq";
 import { QUEUES, createMailProvider, createS3Store, loadEnv, mediaBuckets, mediaJobSchema, moderationJobSchema, type QueueName } from "@rp/core";
 import { prisma } from "@rp/db";
-import { StubPurchaseLookup, createModerationProvider, markVerifiedBuyer } from "@rp/core";
+import { assertNoAutoVerify, createModerationProvider, parseOrderRefKeys } from "@rp/core";
 import { sendAccountExistsEmail, sendClaimBusinessEmail, type ClaimEmailDeps, sendSellerInvitationEmail, sendVerificationEmail, type EmailDb, type EmailDbInvitations } from "./email";
 import { reminderDelayMs, sendTransferCancelLinks, type TransferNotifyDb } from "./ownership-transfer-email";
 import { markMediaFailed, processMedia, type MediaDb } from "./media";
+import { assessProof, failClosedRedactor, finalizeProof, processProofFile, purgeProofFiles, sendProofNotice, type AssessDeps, type ProofDeps } from "./proofs";
 import { applyClaimObservation, prepareClaimCheck, type CheckStore, type EgressResult } from "./verification/checks";
 import { sendClaimNotice, type NotifyDb } from "./verification/notify";
-import { processModeration, verifiedBuyerStore, type VerifiedBuyerDb, type WorkerDb } from "./moderation";
+import { processModeration, type WorkerDb } from "./moderation";
 
 export type Processor = (job: Job) => Promise<void>;
 
 let provider: ReturnType<typeof createModerationProvider> | undefined;
 const getProvider = () => (provider ??= createModerationProvider({ MODERATION_PROVIDER: process.env.MODERATION_PROVIDER, MODERATION_API_KEY: process.env.MODERATION_API_KEY }));
-// Stub order adapter (no records) until a real order/PurchaseProof integration exists (ADR-0008).
-const purchases = new StubPurchaseLookup();
 let storage: { store: ReturnType<typeof createS3Store>; buckets: ReturnType<typeof mediaBuckets> } | undefined;
 export const getMediaDeps = () => {
   if (!storage) {
@@ -24,6 +23,19 @@ export const getMediaDeps = () => {
   return { db: prisma as unknown as MediaDb, ...storage };
 };
 export { markMediaFailed };
+
+/** ADR-0008: the label is only ever set by a staff decision. Refuse to start with the reserved auto-verify switch on (C-3). */
+assertNoAutoVerify();
+const orderRefKeys = () => parseOrderRefKeys(process.env.ORDER_REF_HMAC_KEYS);
+export const getProofDeps = (): ProofDeps => {
+  const m = getMediaDeps();
+  return { db: prisma, store: m.store, buckets: m.buckets, redactor: failClosedRedactor, keys: orderRefKeys() };
+};
+// No ProofExtractor provider is configured yet: proofs reach the queue without hints (aiAssessment.skipped), never auto-decided.
+export const getAssessDeps = (): AssessDeps => {
+  const m = getMediaDeps();
+  return { db: prisma, store: m.store, buckets: m.buckets, extractor: null, takeBudget: async () => true, keys: orderRefKeys() };
+};
 let mailer: ReturnType<typeof createMailProvider> | undefined;
 const getMail = () => (mailer ??= createMailProvider());
 const getDb = () => prisma as unknown as WorkerDb;
@@ -36,13 +48,20 @@ const getDb = () => prisma as unknown as WorkerDb;
 export const processors: Partial<Record<QueueName, Processor>> = {
   [QUEUES.moderation]: async (job) => {
     const p = moderationJobSchema.parse(job.data);
-    const outcome = await processModeration(getDb(), getProvider(), p, {
-      jobId: String(job.id),
-      verifyBuyer: (id) => markVerifiedBuyer(verifiedBuyerStore(prisma as unknown as VerifiedBuyerDb), purchases, id),
-    });
+    const outcome = await processModeration(getDb(), getProvider(), p, { jobId: String(job.id) });
     console.log(JSON.stringify({ msg: "moderation.done", jobId: job.id, subject: p.subjectType, id: p.subjectId, outcome }));
   },
   [QUEUES.media]: async (job) => {
+    if (job.name.startsWith("proof.")) {
+      const d = getProofDeps();
+      const data = (job.data ?? {}) as { fileId?: string; proofId?: string; rule?: string };
+      let outcome = "SKIPPED";
+      if (job.name === "proof.file_uploaded" && data.fileId) outcome = await processProofFile(d, data.fileId);
+      else if (job.name === "proof.submitted" && data.proofId) outcome = await finalizeProof(d.db, data.proofId, new Date());
+      else if (job.name === "proof.purge_requested" && data.proofId) outcome = await purgeProofFiles(d, data.proofId, "PROOF_ORIGINAL");
+      console.log(JSON.stringify({ msg: "proof.media.done", jobId: job.id, type: job.name, outcome })); // ids and outcome only
+      return;
+    }
     const p = mediaJobSchema.parse(job.data);
     const outcome = await processMedia(getMediaDeps(), p.assetId);
     console.log(JSON.stringify({ msg: "media.done", jobId: job.id, assetId: p.assetId, outcome }));
@@ -52,6 +71,13 @@ export const processors: Partial<Record<QueueName, Processor>> = {
     const key = String(job.id);
     const data = (job.data ?? {}) as { tokenId?: string; userId?: string; invitationId?: string };
     let outcome = "SKIPPED";
+    if (["proof.decided", "proof.expired", "review.removed", "review.verified_label_revoked"].includes(job.name)) {
+      const n = (job.data ?? {}) as { proofId?: string; reviewId?: string; outcome?: string; enforcementId?: string; caseId?: string };
+      const entityId = n.proofId ?? n.reviewId ?? "";
+      if (entityId) outcome = await sendProofNotice({ db: prisma, mail: getMail() }, job.name, entityId, n, key);
+      console.log(JSON.stringify({ msg: "notification.done", jobId: job.id, type: job.name, outcome }));
+      return;
+    }
     if (job.name === "user.email_verification_requested" && data.tokenId) outcome = await sendVerificationEmail(d, data.tokenId, key);
     else if (job.name === "user.registration_conflict" && data.userId) outcome = await sendAccountExistsEmail(d, data.userId, key);
     else if (job.name === "seller.invitation_created" && data.invitationId) outcome = await sendSellerInvitationEmail(d, data.invitationId, key);
@@ -75,6 +101,11 @@ export const processors: Partial<Record<QueueName, Processor>> = {
   // T-01 / ADR-0015: the core worker never touches the network for verification. Intake prepares the request for the isolated
   // egress group (`verification-egress`); the observation comes back on `verification-result` and is persisted here.
   [QUEUES.verification]: async (job) => {
+    if (job.name === "proof.files_ready") {
+      const proofId = String(((job.data ?? {}) as { proofId?: string }).proofId ?? "");
+      if (proofId) console.log(JSON.stringify({ msg: "proof.assess.done", jobId: job.id, proofId, outcome: await assessProof(getAssessDeps(), proofId) }));
+      return;
+    }
     const claimId = String(((job.data ?? {}) as { claimId?: string }).claimId ?? "");
     if (!claimId) return;
     const req = await prepareClaimCheck(prisma as unknown as CheckStore, claimId);

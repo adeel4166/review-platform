@@ -113,29 +113,13 @@ describe("reviews", () => {
     await expect(createReview(f.db, "u1", "p", valid)).rejects.toMatchObject({ status: 404 });
   });
 
-  it("edits own pending review, writing a new revision", async () => {
-    f.m.review.findFirst.mockResolvedValue({ id: "r", status: "PENDING", currentVersion: 1, rating: 3, title: "t", body: "b".repeat(12) });
-    f.tx.review.updateMany.mockResolvedValue({ count: 1 });
-    f.tx.review.findUniqueOrThrow.mockResolvedValue({ id: "r" });
-    await updateOwnReview(f.db, "u1", "r", { rating: 5 });
-    expect(f.m.review.findFirst.mock.calls[0]![0].where).toMatchObject({ id: "r", authorId: "u1" });
-    expect(f.tx.review.updateMany.mock.calls[0]![0].where).toMatchObject({ status: "PENDING", authorId: "u1" });
-    expect(f.tx.reviewRevision.create.mock.calls[0]![0].data).toMatchObject({ version: 2, rating: 5, title: "t" });
-  });
-  it("hides other users' reviews (404) and blocks non-pending edits/deletes (409)", async () => {
+  // Edits, revisions and deletes of PENDING/PUBLISHED reviews are covered in m4.test.ts (REV-001..006).
+  it("hides other users' reviews (404); the legacy no-expectedVersion shape refuses PUBLISHED reviews (409)", async () => {
     f.m.review.findFirst.mockResolvedValue(null);
     await expect(updateOwnReview(f.db, "u2", "r", { rating: 1 })).rejects.toMatchObject({ status: 404 });
     await expect(deleteOwnReview(f.db, "u2", "r")).rejects.toMatchObject({ status: 404 });
     f.m.review.findFirst.mockResolvedValue({ id: "r", status: "PUBLISHED", currentVersion: 1 });
     await expect(updateOwnReview(f.db, "u1", "r", { rating: 1 })).rejects.toMatchObject({ status: 409 });
-    await expect(deleteOwnReview(f.db, "u1", "r")).rejects.toMatchObject({ status: 409 });
   });
-  it("soft-deletes own pending review and detects lost races", async () => {
-    f.m.review.findFirst.mockResolvedValue({ id: "r", status: "PENDING", currentVersion: 1 });
-    f.m.review.updateMany.mockResolvedValue({ count: 1 });
-    await deleteOwnReview(f.db, "u1", "r");
-    expect(f.m.review.updateMany.mock.calls[0]![0].data).toMatchObject({ status: "DELETED" });
-    f.m.review.updateMany.mockResolvedValue({ count: 0 });
-    await expect(deleteOwnReview(f.db, "u1", "r")).rejects.toMatchObject({ status: 409 });
-  });
+
 });

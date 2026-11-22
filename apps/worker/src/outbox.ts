@@ -10,9 +10,20 @@ export interface OutboxRow {
 /** Maps outbox event types to a target queue. Extend as features add events. */
 export const routes: Record<string, QueueName> = {
   "review.submitted": QUEUES.moderation,
+  "review.edited": QUEUES.moderation, // m4-m5-spec 16.1: R1 live edit of a PUBLISHED review
   "seller_reply.submitted": QUEUES.moderation,
   "seller_reply.edited": QUEUES.moderation,
   "media.uploaded": QUEUES.media,
+  // M4 Verified Buyer proof (m4-m5-spec 5): evidence processing in the media group, assessment in core, notices by email.
+  "proof.file_uploaded": QUEUES.media,
+  "proof.submitted": QUEUES.media,
+  "proof.purge_requested": QUEUES.media,
+  "proof.files_ready": QUEUES.verification,
+  "proof.decided": QUEUES.notifications,
+  "proof.expired": QUEUES.notifications,
+  "review.removed": QUEUES.notifications,
+  "seller_reply.removed": QUEUES.notifications,
+  "review.verified_label_revoked": QUEUES.notifications,
   "user.email_verification_requested": QUEUES.notifications,
   "user.registration_conflict": QUEUES.notifications,
   "seller.invitation_created": QUEUES.notifications,
@@ -28,6 +39,10 @@ export const routes: Record<string, QueueName> = {
   "claim.contested": QUEUES.notifications,
   "claim.grace_started": QUEUES.notifications,
   "seller.downgraded": QUEUES.notifications,
+  // Previously emitted but unrouted (OUT-008 / ADR-0007 section 3). Routed so they are no longer silently dropped.
+  "claim.mailbox_denied": QUEUES.notifications,
+  "seller.ownership_transfer_cancelled": QUEUES.notifications,
+  "auth.security_alert": QUEUES.notifications,
 };
 
 export interface OutboxStore {

@@ -47,6 +47,7 @@ export const moderationQueueQuery = pageQuery.extend({
   state: z.enum(["PENDING", "AI_REVIEW", "NEEDS_HUMAN", "APPROVED", "REJECTED"]).default("NEEDS_HUMAN"),
   productId: id.optional(),
   subjectType: z.enum(["REVIEW", "SELLER_REPLY"]).default("REVIEW"),
+  trigger: z.enum(["SUBMISSION", "EDIT", "USER_REPORT"]).optional(),
   minScore: z.coerce.number().min(0).max(1).optional(),
   maxScore: z.coerce.number().min(0).max(1).optional(),
   hasMedia: z.enum(["true", "false"]).transform((v) => v === "true").optional(),
@@ -144,3 +145,36 @@ export const replyRestrictionInput = z
     endsAt: z.coerce.date().optional(),
   })
   .strict();
+
+// ---- M4 (m4-m5-spec) ----
+import { REPORT_REASONS, REMOVAL_REASON_CODES, PROOF_DECISION_REASONS } from "@rp/core";
+
+export const voteInput = z.object({ value: z.enum(["HELPFUL", "NOT_HELPFUL"]) }).strict();
+
+export const reviewEditInput = z.object({
+  expectedVersion: z.number().int().min(1),
+  rating: z.number().int().min(1).max(5).optional(),
+  title: z.string().trim().min(1).max(150).optional(),
+  body: z.string().trim().min(10).max(10_000).optional(),
+  incentive: z.enum(["NONE", "FREE_PRODUCT", "DISCOUNT", "PAYMENT", "OTHER"]).optional(),
+  addMediaIds: z.array(id).max(10).optional(),
+  removeMediaIds: z.array(id).max(10).optional(),
+}).strict().refine((v) => Object.keys(v).some((k) => k !== "expectedVersion"), { message: "At least one field is required" });
+
+export const reportInput = z.object({ reason: z.enum(REPORT_REASONS), details: z.string().trim().min(1).max(1000).optional() }).strict();
+export const dismissReportsInput = z.object({ note: z.string().trim().max(500).optional() }).strict();
+export const removeContentInput = z.object({ reasonCode: z.enum(REMOVAL_REASON_CODES), publicReason: z.string().trim().min(1, "reason_required").max(2000) }).strict();
+
+export const proofCreateInput = z.object({
+  method: z.enum(["RECEIPT_UPLOAD", "ORDER_CONFIRMATION", "MARKETPLACE_ORDER_LINK"]),
+  consentVersion: z.string().max(16),
+  marketplace: z.enum(["AMAZON", "EBAY", "ETSY", "OTHER"]).optional(),
+  orderReference: z.string().trim().min(1).max(64).optional(),
+}).strict();
+export const proofFileInput = z.object({ kind: z.enum(["IMAGE", "DOCUMENT"]), mimeType: z.string().max(64), sizeBytes: z.number().int().min(1) }).strict();
+export const proofDecisionInput = z.object({
+  outcome: z.enum(["VERIFIED", "REJECTED"]),
+  reasonCode: z.enum(PROOF_DECISION_REASONS).optional(),
+  note: z.string().trim().max(500).optional(),
+}).strict();
+export const labelRevokeInput = z.object({ reasonCode: z.string().trim().min(1).max(64), publicReason: z.string().trim().min(1).max(2000) }).strict();
