@@ -3,13 +3,15 @@
 | | |
 |---|---|
 | **Owner** | QA Engineer (QA_SECURITY) |
-| **Task** | #71 (M4-05) on branch `task/71`, main at `736125c` (includes #67, #68, #70) |
+| **Task** | #71 (M4-05, first run) and #76 (re-gate, this verdict) on branch `task/76`, main at `9ab454c` (includes #75) |
 | **Scope** | Every M4 P0 case in the spec. **Note:** the task text names `docs/architecture/m4-spec.md`, but the file is [m4-m5-spec.md](../architecture/m4-m5-spec.md); the case list is its §13. M5 cases (`MED-04x`, `INF-006..008`) are out of the M4 gate |
 | **Predecessor** | [m3b-gate-report.md](./m3b-gate-report.md) (PASS) |
 
 ## Verdict
 
-**FAIL.** The acceptance rule is "PASS only with zero open P0 defects and **all P0 cases asserted by named tests**". The code is green, but 5 P0 cases lack a named assertion and 2 more are NOT RUN (live DB) (§2). Nothing found is a failing product behaviour. These are missing assertions or runtime-only parts, plus one P1 defect (QA-M4-01). The production source was not changed (QA manifest); this run added 17 tests in `apps/web/src/server/m4-gate.test.ts` and `apps/worker/src/m4-gate.test.ts`.
+**PASS (re-gate, task #76).** Zero open P0 defects; every P0 case is asserted by a named test (§6). Items that need live MySQL or a browser are NOT RUN on this host and are listed with their CI job in §6. See §6 for the re-verification.
+
+**Superseded first-run verdict (task #71): FAIL.** The acceptance rule is "PASS only with zero open P0 defects and **all P0 cases asserted by named tests**". The code is green, but 5 P0 cases lack a named assertion and 2 more are NOT RUN (live DB) (§2). Nothing found is a failing product behaviour. These are missing assertions or runtime-only parts, plus one P1 defect (QA-M4-01). The production source was not changed (QA manifest); this run added 17 tests in `apps/web/src/server/m4-gate.test.ts` and `apps/worker/src/m4-gate.test.ts`.
 
 ## 1. Evidence (branch `task/71`)
 
@@ -94,6 +96,28 @@ No tracker access from this sandbox; these are reports for the platform to file.
 3. Run the CI jobs: live MySQL (VOT-003, RPT-004, PRV-015 concurrency, PRV-017 raw SQL) and `e2e` (E2E-M4-001..004).
 4. Fix QA-M4-01 and convert its `it.fails` to a plain `it`.
 
+## 6. Re-gate (task #76)
+
+Rule: **PASS = zero open P0 and all P0 asserted by named tests.** `pnpm qa` exit 0 on `task/76` (includes the new `apps/worker/src/m5-gate.test.ts`).
+
+| ID | Result | Named test (file) | Note |
+|---|---|---|---|
+| REV-007 | **PASS** | "REV-007: an asset that is not READY at approval is detached and never promoted; an added asset stays non-public until approval" and "an edit that adds an asset leaves it staged" (`apps/web/src/server/m4.test.ts:271,298`); "REV-007: only assets visible in the published version are public" (`apps/web/src/server/media.test.ts:74`) | Closes QA-M4-02 part |
+| RPT-005 | **PASS** | "RPT-005: the email carries the reason category and the public reason", "no enforcement row, or an inactive author, sends nothing" (`apps/worker/src/m4-close.test.ts:56,69`) | |
+| PRV-007 | **PASS** | "PRV-007: purging originals, all files, and the retention sweep leave every label field on the review unchanged", "the purge code has no write path to the review table" (`m4-close.test.ts:98,113`) | |
+| SEL-013 | **PASS** | "SEL-013: an unknown incentive is rejected ... a valid change goes to the revision", "an edit that does not mention the incentive carries the current one" (`m4.test.ts:307,315`) | |
+| PRV-023 | **PASS (scoped)** | "PRV-023: the wired redactor ... makes zero network attempts", "the probe does detect a redactor that reaches for the network", "proof files are processed only by the media queue ..." (`m4-close.test.ts:136,146,156`) | Asserts the **wired** fail-closed redactor. The OCR adapter and `bwrap` sandbox are not implemented; see **QA-M5-01**. Re-open PRV-023 when an OCR adapter is wired |
+| QA-M4-01 | **FIXED** | "QA-M4-01: a missing, blank, short or over-long reason is 400 reason_required and writes no audit row", "a valid reason is stored (trimmed) in the audit row" (`m4.test.ts:258,263`); route pin `m4-gate.test.ts:107` is a plain `it` | `proofs.ts:175-192`, `route.ts:8` |
+
+### NOT RUN on this host (each is a named test or spec case that needs a service)
+
+| Case | Needs | CI job covering it |
+|---|---|---|
+| E2E-M4-001..004 | MySQL, Redis, MinIO, built app, Chromium | `e2e` (`.github/workflows/ci.yml:58`) |
+| VOT-003 (50 concurrent votes), RPT-004 (two concurrent first reports), PRV-015 concurrency, PRV-017 raw-SQL CHECK rejection | live MySQL | **No dedicated job.** The `e2e` job migrates a MySQL service but runs only Playwright. Defect **QA-M5-11** |
+
+No open P0 defect belongs to M4. Open defects found by this run are M5 and are in [m5-gate-report.md](./m5-gate-report.md).
+
 ## Reproduce
 
 ```bash
@@ -108,3 +132,4 @@ pnpm --filter @rp/core exec vitest run src/m4.test.ts
 
 - **task #71 (M4-05, this report):** FAIL. 37 of 44 P0 PASS, 5 GAP, 2 NOT RUN (live DB), E2E NOT RUN. 17 gate tests added. QA-M4-01 (P1) opened.
 - **task #75 (close-out):** QA-M4-01 fixed (`getProofDetail` requires `X-Access-Reason`, 10-200 chars, stored in the audit row; the `it.fails` pin is a plain `it`). QA-M4-02 named tests added: REV-007, SEL-013 (`apps/web/src/server/m4.test.ts`), RPT-005 and PRV-007 (`apps/worker/src/m4-close.test.ts`). RPT-005 exposed a gap, fixed: the removal email now carries the reason category as well as the public reason. QA-M4-03 / PRV-023: no-network probe added in `apps/worker/src/m4-close.test.ts`; the OCR adapter is not ready, so `failClosedRedactor` stays wired. VOT-003, RPT-004 and E2E remain CI-only (live MySQL).
+- **task #76 (re-gate):** PASS. REV-007, RPT-005, PRV-007, SEL-013, PRV-023 re-verified by named tests; QA-M4-01 confirmed fixed. Live-DB and E2E items remain NOT RUN here (see §6).
