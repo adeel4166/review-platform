@@ -1,8 +1,7 @@
 import type { z } from "zod";
 import {
   FRAUD_REASONS, assertNoAutoVerify, MEDIA_GET_TTL_SECONDS, MEDIA_MAX_BYTES, MEDIA_PUT_TTL_SECONDS, PROOF_CONSENT_VERSION, PROOF_MAX_FILES, PROOF_SLA_HOURS,
-  hashOrderRef, orderRefCandidates, parseOrderRefKeys, proofEligibility, proofRetention, type ProofOriginalRetention,
-} from "@rp/core";
+  hashOrderRef, orderRefCandidates, parseOrderRefKeys, proofEligibility, proofRetention, type ProofOriginalRetention,systemClock } from "@rp/core";
 import type { Db } from "./db";
 import { HttpError } from "./http";
 import type { Storage } from "./media";
@@ -23,7 +22,7 @@ export interface ProofCtx { charge?: () => Promise<void>; now?: Date; env?: Reco
 // ---------------------------------------------------------------------------------------------------------------------
 
 export async function createProof(db: Db, userId: string, reviewId: string, input: z.infer<typeof proofCreateInput>, ctx: ProofCtx = {}) {
-  const now = ctx.now ?? new Date();
+  const now = ctx.now ?? systemClock.now();
   const review = await db.review.findFirst({ where: { id: reviewId, authorId: userId }, select: { id: true, status: true, verifiedProofId: true } });
   if (!review) throw notFound(); // other users' reviews are indistinguishable from missing ones (AZ-023, deny reason NOT_OWNER internal)
   const [revoked, open, rejected] = await Promise.all([
@@ -80,7 +79,7 @@ export async function createProofFileSlot(db: Db, st: Storage, userId: string, p
   if (ALLOWED_MIME[input.mimeType] !== input.kind) throw new HttpError(415, "unsupported_media_type", "Unsupported file type");
   const used = await db.purchaseProofFile.count({ where: { proofId, status: { notIn: ["REJECTED", "FAILED", "PURGED"] } } });
   if (used >= PROOF_MAX_FILES) throw new HttpError(409, "proof_file_limit", "proof_file_limit");
-  const f = await db.purchaseProofFile.create({ data: { proofId, ownerId: userId, kind: input.kind, declaredMime: input.mimeType, sizeBytes: input.sizeBytes, storageKey: `pending:${proofId}:${used}:${Date.now()}` }, select: { id: true } });
+  const f = await db.purchaseProofFile.create({ data: { proofId, ownerId: userId, kind: input.kind, declaredMime: input.mimeType, sizeBytes: input.sizeBytes, storageKey: `pending:${proofId}:${used}:${systemClock.now().getTime()}` }, select: { id: true } });
   const key = proofFileKey(f.id);
   await db.purchaseProofFile.update({ where: { id: f.id }, data: { storageKey: key } });
   const uploadUrl = await st.store.presignPut(st.buckets.ingest, key, { contentType: input.mimeType, contentLength: input.sizeBytes, expiresIn: MEDIA_PUT_TTL_SECONDS });
@@ -100,7 +99,7 @@ export async function confirmProofFile(db: Db, userId: string, proofId: string, 
   });
 }
 
-export async function submitProof(db: Db, userId: string, proofId: string, now = new Date()) {
+export async function submitProof(db: Db, userId: string, proofId: string, now = systemClock.now()) {
   await ownProof(db, userId, proofId);
   return db.$transaction(async (t) => {
     const tx = t as unknown as Db;
@@ -128,7 +127,7 @@ export async function listOwnProofs(db: Db, userId: string, reviewId: string) {
 }
 
 /** DRAFT/PENDING -> WITHDRAWN. Files are purged within 24 h by the retention job. A VERIFIED label stays (L-7, PRV-007). */
-export async function withdrawProof(db: Db, userId: string, proofId: string, now = new Date()) {
+export async function withdrawProof(db: Db, userId: string, proofId: string, now = systemClock.now()) {
   const p = await ownProof(db, userId, proofId);
   await db.$transaction(async (t) => {
     const tx = t as unknown as Db;
@@ -196,7 +195,7 @@ export async function getProofDetail(db: Db, st: Storage, actor: Actor, proofId:
 
 export async function decideProof(db: Db, actor: Actor, proofId: string, input: z.infer<typeof proofDecisionInput>, ctx: { now?: Date; originalRetention?: ProofOriginalRetention } = {}) {
   staff(actor);
-  const now = ctx.now ?? new Date();
+  const now = ctx.now ?? systemClock.now();
   if (input.outcome === "REJECTED" && !input.reasonCode) throw new HttpError(400, "reason_required", "reason_required");
   return db.$transaction(async (t) => {
     const tx = t as unknown as Db;

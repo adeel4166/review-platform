@@ -133,6 +133,7 @@ model User {
   blocksReceived        UserBlock[]            @relation("Blocked")
   notifications         Notification[]         @relation("NotificationRecipient")
   notificationPrefs     NotificationPreference[]
+  erasureRequest        ErasureRequest?
   createdAt             DateTime               @default(now())
   updatedAt             DateTime               @updatedAt
 
@@ -1664,4 +1665,19 @@ model NotificationPreference {
 
   @@id([userId, type, channel])
   @@map("notification_preferences")
+}
+
+/// ADR-0033 / spec 22.2: account erasure is a tracked, resumable job. `steps` holds ISO completion times per step;
+/// `completedAt` is set only after every purge verified (HEAD 404).
+model ErasureRequest {
+  id          String    @id @default(cuid())
+  userId      String    @unique
+  requestedAt DateTime  @db.DateTime(3)
+  steps       Json
+  completedAt DateTime? @db.DateTime(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([completedAt])
+  @@map("erasure_requests")
 }

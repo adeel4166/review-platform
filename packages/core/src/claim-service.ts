@@ -4,6 +4,7 @@
  * involved sellers, re-reads, checks the transition table and writes claim + decision + seller recompute + audit + outbox
  * in one transaction. Used by the staff API (web) and by the verification worker.
  */
+import { systemClock } from "./clock";
 import { assertAuditMetadataClean } from "./audit-metadata";
 import {
   CLAIM_CONFIG, DAY_MS, assertClaimTransition, canAutoApprove, evaluateObservedTokens, isAutoMethod, isManualMethod, nextCheckAt, sampleSpotCheck,
@@ -70,7 +71,7 @@ const ENDED = (status: ClaimStatus, now: Date, endReason: string | null) => ({
   status, endedAt: now, endReason, activeKey: null, verifiedDomainKey: null, nextCheckAt: null, graceEndsAt: null, reverifyFailingSince: null,
 });
 
-export async function applyClaimTransition(db: ClaimDb, claimId: string, input: ClaimInput, actor: ClaimActor, now: Date = new Date()): Promise<ClaimResult> {
+export async function applyClaimTransition(db: ClaimDb, claimId: string, input: ClaimInput, actor: ClaimActor, now: Date = systemClock.now()): Promise<ClaimResult> {
   return db.$transaction(async (tx: Tx): Promise<ClaimResult> => {
     // Lock order: claim, then sellers by id. Re-read everything after locking.
     await lock(tx, "claims", claimId);

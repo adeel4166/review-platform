@@ -1,4 +1,4 @@
-import { publicKey, type ObjectStore } from "@rp/core";
+import { publicKey, type ObjectStore, systemClock } from "@rp/core";
 
 /** `CdnPurger` (m4-m5-spec 10.2): production = Cloudflare zone purge; dev/CI = a recording fake. */
 export interface CdnPurger {
@@ -90,7 +90,7 @@ export async function promoteMedia(d: PublishDeps, assetId: string, caseId: stri
     for (const k of Object.values(next)) await d.store.delete(d.buckets.public, k).catch(() => undefined); // never leave a half-public asset
     throw e; // BullMQ retries; the final failure raises PROMOTE_FAILED
   }
-  const now = (d.now ?? (() => new Date()))();
+  const now = (d.now ?? (() => systemClock.now()))();
   const res = await d.db.mediaAsset.updateMany({ where: { id: a.id, status: "READY", bucket: "PRIVATE" }, data: { bucket: "PUBLIC", promotedAt: now, moderationClearedAt: now, ...next } });
   if (res.count !== 1) {
     for (const k of Object.values(next)) await d.store.delete(d.buckets.public, k).catch(() => undefined);

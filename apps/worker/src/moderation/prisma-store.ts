@@ -115,7 +115,7 @@ export function prismaAssessPort(db: any, clock: Clock, route?: { burst: BurstPo
         const r = await db.review.findUnique({ where: { id: c.reviewId }, select: { id: true, status: true, currentVersion: true, title: true, body: true, rating: true, productId: true, authorId: true, language: true, author: { select: { trustBand: true } }, media: { select: { status: true, failureReason: true } } } });
         if (!r) return null;
         let extraForceUnsure: string[] = [];
-        if (route && r.status === "PENDING") extraForceUnsure = (await routeReview(route, clock, { productId: r.productId, reviewId: r.id, authorId: r.authorId, text: `${r.title} ${r.body}` })).extraForceUnsure;
+        if (route && r.status === "PENDING") extraForceUnsure = (await routeReview(route, clock, { productId: r.productId, reviewId: r.id, authorId: r.authorId, text: `${r.title} ${r.body}`, authorBand: r.author?.trustBand })).extraForceUnsure;
         const lastHour = await db.review.count({ where: { productId: r.productId, createdAt: { gte: new Date(clock.now().getTime() - 3_600_000) } } });
         const prior = await db.moderationCase.count({ where: { reviewId: r.id, id: { not: caseId }, status: "RESOLVED", decisions: { some: { source: "HUMAN" } } } }).catch(() => 0);
         return { ...base, ...extra, target: { type: "REVIEW", id: r.id }, targetVersion: r.currentVersion, targetStatus: r.status, content: { title: r.title, body: r.body, rating: r.rating }, trustBand: r.author?.trustBand ?? "NEW", contentType: "REVIEW", media: mediaState(r.media ?? []), hasExternalLink: LINK.test(`${r.title} ${r.body}`), productReviewsLastHour: lastHour, resubmitAfterHuman: prior > 0, unsupportedLanguage: false, ruleHits: [], extraForceUnsure };

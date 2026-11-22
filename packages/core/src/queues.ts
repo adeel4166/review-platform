@@ -69,3 +69,12 @@ export const m6JobSchemas = {
   "staff.anomaly-scan": z.object({}).strict(),
   "maintenance.break-glass-digest": z.object({}).strict(),
 } as const;
+
+/** M8 job payloads (spec §25.2): ids and a date only. */
+export const m8JobSchemas = {
+  "maintenance.retention": z.object({}).strict(),
+  "maintenance.audit-export": z.object({}).strict(),
+  "account.erase": z.object({ erasureRequestId: id }).strict(),
+  "maintenance.replay-deletions": z.object({ since: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }).strict(),
+  "security.totp-reencrypt": z.object({}).strict(),
+} as const;

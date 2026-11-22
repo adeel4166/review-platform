@@ -17,6 +17,7 @@
     "test": "pnpm -r test",
     "build": "pnpm -r build",
     "design:check": "node design/gen.cjs && git diff --exit-code design/tokens.css design/tailwind-preset.cjs && node design/check-contrast.cjs",
+    "ops003": "node scripts/ops003-no-test-hooks.mjs",
     "qa": "pnpm lint && pnpm typecheck && pnpm test && pnpm design:check",
     "coverage": "pnpm --filter @rp/core --filter @rp/worker --filter @rp/web exec vitest run --coverage"
   },

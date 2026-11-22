@@ -1,4 +1,4 @@
-import { QUARANTINE_PREFIX, QUARANTINE_RETENTION_DAYS, type ObjectStore } from "@rp/core";
+import { QUARANTINE_PREFIX, QUARANTINE_RETENTION_DAYS, type ObjectStore, systemClock } from "@rp/core";
 
 export const QUARANTINE_ALERT_THRESHOLD = 50;
 
@@ -9,7 +9,7 @@ export const QUARANTINE_ALERT_THRESHOLD = 50;
  */
 export async function sweepQuarantine(
   d: { store: ObjectStore; buckets: { private: string }; alert?: (kind: string, detail: Record<string, unknown>) => void },
-  now: Date = new Date(),
+  now: Date = systemClock.now(),
   opts: { days?: number; threshold?: number; limit?: number } = {},
 ): Promise<{ deleted: number; remaining: number }> {
   const cutoff = now.getTime() - (opts.days ?? QUARANTINE_RETENTION_DAYS) * 86_400_000;

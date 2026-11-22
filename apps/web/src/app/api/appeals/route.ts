@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { fileAppeal, type AppealDeps } from "@/server/appeals";
+import { fileAppeal, loadAppellant, type AppealDeps } from "@/server/appeals";
 import { handle, json, readJson } from "@/server/http";
 import { clock, m6db } from "@/server/m6-routes";
 import { limitAppeal } from "@/server/ratelimit";
@@ -15,7 +15,7 @@ export async function POST(req: Request) {
   return handle(async () => {
     const user = await requireUser();
     const body = input.parse(await readJson(req));
-    const deps: AppealDeps = { db: m6db, clock, config: await baseModerationConfig(), limit: async (key) => { await limitAppeal(key.split(":")[1] ?? user.id); return true; }, applyOverturn: async () => {} };
-    return json(await fileAppeal(deps, { id: user.id }, body), 201);
+    const deps: AppealDeps = { db: m6db, clock, config: await baseModerationConfig(), limit: async (_key, max, windowSeconds) => { await limitAppeal(user.id, max, windowSeconds * 1000); return true; }, applyOverturn: async () => {} };
+    return json(await fileAppeal(deps, await loadAppellant(m6db as never, user.id), body), 201);
   });
 }

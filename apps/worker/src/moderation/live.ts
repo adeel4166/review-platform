@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { Breaker, type NearDuplicateIndex, CATEGORIES, assess, createModerationProvider, systemClock, type AssessDeps, type Clock, type ModerationConfig, type ProviderCall } from "@rp/core";
+import type { DupIndex } from "../trust/routing";
+import { Breaker, CATEGORIES, assess, createModerationProvider, systemClock, type AssessDeps, type Clock, type ModerationConfig, type ProviderCall } from "@rp/core";
 import { runAssess, type AssessOutcome } from "./assess";
 import { ensureCase, loadActiveConfig, prismaAssessPort, prismaStore, REASON_CODES } from "./prisma-store";
 import type { BurstPort } from "../trust/routing";
@@ -20,7 +21,7 @@ export function liveProviderCall(env: { MODERATION_PROVIDER?: string; MODERATION
 }
 
 let breaker: Breaker | undefined;
-export interface LiveDeps { db: any; call: ProviderCall; clock?: Clock; burst?: BurstPort; dup?: { index: NearDuplicateIndex }; sleep?: (ms: number) => Promise<void> }
+export interface LiveDeps { db: any; call: ProviderCall; clock?: Clock; burst?: BurstPort; dup?: { index: DupIndex }; sleep?: (ms: number) => Promise<void> }
 
 /** `moderation.assess` for one queue job: ensure the M6 case, then `runAssess` (media wait, rules, provider, classify, transition). */
 export async function processAssessJob(d: LiveDeps, job: { subjectType: string; subjectId: string; version: number; trigger?: string }): Promise<AssessOutcome | { status: "skipped"; reason: string }> {

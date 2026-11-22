@@ -1,12 +1,30 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { NearDuplicateIndex, detectVoteAnomaly, type BurstState, type Clock, type RecentVote, type TrustBand } from "@rp/core";
+import { NearDuplicateIndex, detectVoteAnomaly, estimateJaccard, lshBuckets, minhash, systemClock, type BurstState, type Clock, type RecentVote, type TrustBand } from "@rp/core";
 import type { BurstExcludePort, BurstPort } from "./routing";
 import { applyBurst } from "./routing";
 import { nightlyDecay, recomputeSubject } from "./recompute";
 import { prismaTrustPort } from "./prisma-ports";
 
 /** Production adapters and job bodies for M7 (SEC-M7-01). Registered from core-main.ts / processors.ts. */
-export const nearDuplicateIndex = new NearDuplicateIndex(); // per-process (known residual, SEC-M7-03)
+export const nearDuplicateIndex = new NearDuplicateIndex(); // in-memory (tests only; production uses the shared adapter below)
+
+/**
+ * SEC-M7-03: near-duplicate index shared across processes and restarts, backed by `review_lsh_buckets`.
+ * Candidates come from the bucket table (other authors only); signatures are recomputed from the candidate review text, so no schema change.
+ */
+export const prismaNearDuplicateIndex = (db: any) => ({
+  async add(f: { reviewId: string; authorId: string; sig: Uint32Array }) {
+    const createdAt = systemClock.now();
+    await db.reviewLshBucket.createMany({ data: lshBuckets(f.sig).map((b) => ({ band: b.band, bucket: b.bucket, reviewId: f.reviewId, authorId: f.authorId, createdAt })), skipDuplicates: true });
+  },
+  async query(f: { reviewId: string; authorId: string; sig: Uint32Array }, threshold = 0.5) {
+    const rows: { reviewId: string; authorId: string }[] = await db.reviewLshBucket.findMany({ where: { OR: lshBuckets(f.sig).map((b) => ({ band: b.band, bucket: b.bucket })), authorId: { not: f.authorId }, reviewId: { not: f.reviewId } }, select: { reviewId: true, authorId: true }, take: 500 });
+    const byId = new Map(rows.map((r) => [r.reviewId, r.authorId]));
+    if (!byId.size) return [];
+    const reviews: { id: string; title: string; body: string }[] = await db.review.findMany({ where: { id: { in: [...byId.keys()] }, status: { in: ["PUBLISHED", "PENDING", "HIDDEN"] } }, select: { id: true, title: true, body: true } });
+    return reviews.map((r) => ({ reviewId: r.id, authorId: byId.get(r.id)!, jaccard: estimateJaccard(f.sig, minhash(`${r.title}\n${r.body}`)) })).filter((h) => h.jaccard >= threshold);
+  },
+});
 
 export const prismaBurstPort = (db: any): BurstPort => ({
   async recentReviews(productId, since) {

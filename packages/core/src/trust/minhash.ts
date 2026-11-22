@@ -2,7 +2,12 @@ import { createHash } from "node:crypto";
 
 export const MINHASH = { perms: 128, bands: 32, rows: 4, shingle: 3, threshold: 0.5 } as const;
 
-export const normalise = (t: string): string => t.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
+/** SEC-M7-03: Cyrillic/Greek look-alikes and zero-width characters are folded before shingling so homoglyph rewrites do not evade matching. */
+const HOMOGLYPHS: Record<string, string> = { а: "a", е: "e", о: "o", р: "p", с: "c", х: "x", у: "y", і: "i", ј: "j", ѕ: "s", һ: "h", ԁ: "d", ɡ: "g", α: "a", ο: "o", ρ: "p", ν: "v", ι: "i", κ: "k", τ: "t", υ: "u", χ: "x" };
+const foldHomoglyphs = (t: string): string => t.replace(/[\u200b-\u200f\u2060\ufeff\u00ad]/g, "").replace(/./gu, (c) => HOMOGLYPHS[c] ?? c);
+/** NEW/LOW authors are matched at a lower threshold than established authors. */
+export const nearDuplicateThreshold = (band?: string): number => (band === "NEW" || band === "LOW" ? 0.4 : MINHASH.threshold);
+export const normalise = (t: string): string => foldHomoglyphs(t.normalize("NFKC").toLowerCase()).replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
 export function shingles(text: string, k: number = MINHASH.shingle): Set<string> {
   const w = normalise(text).split(" ").filter(Boolean);
   const out = new Set<string>();

@@ -1,7 +1,7 @@
 import { Queue, Worker } from "bullmq";
 import { Redis } from "ioredis";
 import { prisma } from "@rp/db";
-import { assertIpHashKey, MEDIA_PUT_TTL_SECONDS, QUEUES, loadEnv, mediaJobSchema, moderationJobSchema, type Env, type QueueName } from "@rp/core";
+import { assertIpHashKey, MEDIA_PUT_TTL_SECONDS, QUEUES, loadEnv, mediaJobSchema, moderationJobSchema, type Env, type QueueName, systemClock } from "@rp/core";
 import { expireStaleUploads } from "./media";
 import { sweepQuarantine } from "./media/quarantine";
 import { assertMediaSandbox } from "./media/sandbox";
@@ -50,7 +50,7 @@ const store: OutboxStore = {
   fetchUnpublished: (limit) =>
     prisma.outboxEvent.findMany({ where: { publishedAt: null }, orderBy: { id: "asc" }, take: limit }),
   markPublished: async (ids) => {
-    await prisma.outboxEvent.updateMany({ where: { id: { in: ids } }, data: { publishedAt: new Date() } });
+    await prisma.outboxEvent.updateMany({ where: { id: { in: ids } }, data: { publishedAt: systemClock.now() } });
   },
 };
 
@@ -116,11 +116,20 @@ const m4Timers = [
 const trustQueue = () => getQueue(QUEUES.trust);
 const trustTimers = [
   setInterval(() => {
-    const minute = Math.floor(Date.now() / 60_000);
+    const minute = Math.floor(systemClock.now().getTime() / 60_000);
     trustQueue().add("trust.vote-freeze", {}, { jobId: `trust-vf__${minute}`, removeOnComplete: true }).catch(sweepErr("trust-vote-freeze"));
     trustQueue().add("trust.product-burst", {}, { jobId: `trust-pb__${minute}`, removeOnComplete: true }).catch(sweepErr("trust-product-burst"));
-    const now = new Date();
+    const now = systemClock.now();
     if (now.getUTCHours() === 2 && now.getUTCMinutes() === 0) trustQueue().add("trust.nightly-decay", {}, { jobId: `trust-decay__${now.toISOString().slice(0, 10)}`, removeOnComplete: true }).catch(sweepErr("trust-decay"));
+  }, 60_000),
+];
+
+// M8 (spec 25.2): maintenance.retention daily 03:30 UTC, maintenance.audit-export daily 04:00 UTC; deterministic job ids make overlap a no-op.
+const m8Timers = [
+  setInterval(() => {
+    const now = systemClock.now(); const d = now.toISOString().slice(0, 10);
+    if (now.getUTCHours() === 3 && now.getUTCMinutes() === 30) getQueue(QUEUES.maintenance).add("maintenance.retention", {}, { jobId: `retention__${d}`, removeOnComplete: true }).catch(sweepErr("retention"));
+    if (now.getUTCHours() === 4 && now.getUTCMinutes() === 0) getQueue(QUEUES.maintenance).add("maintenance.audit-export", {}, { jobId: `audit-export__${d}`, removeOnComplete: true }).catch(sweepErr("audit-export"));
   }, 60_000),
 ];
 
@@ -132,6 +141,7 @@ async function shutdown() {
   claimTimers.forEach(clearInterval);
   m4Timers.forEach(clearInterval);
   trustTimers.forEach(clearInterval);
+  m8Timers.forEach(clearInterval);
   mediaTimers.forEach(clearInterval);
   health?.close();
   await Promise.all(workers.map((w) => w.close()));

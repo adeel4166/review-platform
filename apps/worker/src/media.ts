@@ -13,8 +13,7 @@ import {
   variantKey,
   type MediaFailureReason,
   type ObjectStore,
-  type SignalStore,
-} from "@rp/core";
+  type SignalStore,systemClock } from "@rp/core";
 import { ScannerUnavailable, evaluateFreshness, type Scanner } from "./media/clamd";
 import { VideoReject, transcodeVideo } from "./media/video";
 import { detectType, findPolyglot, sha256Hex } from "./media/validate";
@@ -124,7 +123,7 @@ export async function processMedia(d: MediaDeps, assetId: string, opts: ProcessM
 
     // --- ClamAV (INF-003): signatures older than 72 h count as scanner-unavailable (retry, fail closed).
     const ver = await d.scanner.version();
-    const fresh = evaluateFreshness(ver, (d.now ?? (() => new Date()))());
+    const fresh = evaluateFreshness(ver, (d.now ?? (() => systemClock.now()))());
     if (fresh.state === "too_old") throw new ScannerUnavailable("scanner: signatures too old");
     if (fresh.state === "stale") d.alert?.("CLAMAV_STALE", { ageHours: Math.round(fresh.ageHours) });
     const res = await d.scanner.scan(bytes); // throws ScannerUnavailable -> retry
@@ -135,7 +134,7 @@ export async function processMedia(d: MediaDeps, assetId: string, opts: ProcessM
       throw new Reject("MALWARE");
     }
     await log(d, a.id, "VIRUS_SCAN", "CLEAN", scanLog);
-    const scannedAt = (d.now ?? (() => new Date()))();
+    const scannedAt = (d.now ?? (() => systemClock.now()))();
 
     // --- Sanitise (re-encode from pixels/frames only) and verify the outputs carry no metadata (MED-042).
     const keys: { thumbKey: string; mediumKey: string; videoKey?: string } = { thumbKey: variantKey(a.id, "thumb"), mediumKey: variantKey(a.id, "medium") };
@@ -184,7 +183,7 @@ export async function processMedia(d: MediaDeps, assetId: string, opts: ProcessM
     if (e.reason === "MALWARE" || e.reason === "BANNED_HASH") d.alert?.(e.reason, { assetId: a.id, ...(e.reason === "BANNED_HASH" ? { legalHold: true } : {}) });
     if (e.reason === "MALWARE" && d.signals && a.ownerId) {
       const uploaderId = a.ownerId;
-      const r = await recordSignals(d.signals.store, { now: d.now ?? (() => new Date()) }, { kind: "media.rejected", reason: "MALWARE", assetId: a.id, uploaderId } as never).catch((err: Error) => { d.alert?.("MALWARE_SIGNAL_FAILED", { assetId: a.id, err: err.message.slice(0, 120) }); return null; });
+      const r = await recordSignals(d.signals.store, { now: d.now ?? (() => systemClock.now()) }, { kind: "media.rejected", reason: "MALWARE", assetId: a.id, uploaderId } as never).catch((err: Error) => { d.alert?.("MALWARE_SIGNAL_FAILED", { assetId: a.id, err: err.message.slice(0, 120) }); return null; });
       if (r?.written.length) await d.signals.recompute?.(`U:${uploaderId}`).catch(() => undefined);
     }
     await markMediaFailed(d, a.id, e.reason);
@@ -205,7 +204,7 @@ async function variantsOrReject(input: Buffer) {
 export async function markMediaFailed(d: Pick<MediaDeps, "db">, assetId: string, reason: MediaFailureReason) {
   await d.db.mediaAsset.updateMany({
     where: { id: assetId, status: { in: ["PROCESSING", "UPLOADING"] } },
-    data: { status: "FAILED", failureReason: reason, processedAt: new Date() },
+    data: { status: "FAILED", failureReason: reason, processedAt: systemClock.now() },
   });
 }
 
@@ -214,7 +213,7 @@ export async function markMediaFailed(d: Pick<MediaDeps, "db">, assetId: string,
  * (FAILED / UPLOAD_EXPIRED). They keep counting toward the owner's daily quota (createdAt-based). Leftover ingest
  * objects are removed best-effort. Idempotent; the status guard avoids racing a concurrent confirm.
  */
-export async function expireStaleUploads(d: Pick<MediaDeps, "db" | "store" | "buckets">, ttlSeconds: number, now: Date = new Date(), batch = 500): Promise<number> {
+export async function expireStaleUploads(d: Pick<MediaDeps, "db" | "store" | "buckets">, ttlSeconds: number, now: Date = systemClock.now(), batch = 500): Promise<number> {
   const cutoff = new Date(now.getTime() - ttlSeconds * 1000);
   const stale = await d.db.mediaAsset.findMany!({ where: { status: "UPLOADING", createdAt: { lt: cutoff } }, select: { id: true, ingestKey: true }, orderBy: { createdAt: "asc" }, take: batch });
   if (!stale.length) return 0;

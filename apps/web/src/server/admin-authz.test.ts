@@ -43,6 +43,7 @@ const ADMIN_ROUTES: AdminRoute[] = [
   { file: "users/[id]/reply-restriction/route.ts", method: "POST", withId: true },
   { file: "users/[id]/reply-restriction/[enforcementId]/lift/route.ts", method: "POST", withId: true },
   // M4: report cases, proofs and the verified label (m4-m5-spec 4.2, 5.6)
+  { file: "erasures/route.ts", method: "GET", withId: false },
   { file: "moderation/[id]/dismiss-reports/route.ts", method: "POST", withId: true },
   { file: "moderation/[id]/remove/route.ts", method: "POST", withId: true },
   { file: "reports/[id]/reject/route.ts", method: "POST", withId: true },
@@ -102,24 +103,24 @@ describe("admin authz matrix (SEC-09a)", () => {
   });
 
   it.each(ADMIN_TIER)("AZ-025 $method /api/admin/$file: admin passes the guard (control)", async (route) => {
-    authMock.mockResolvedValue({ user: { id: "a1", role: "admin", twoFactor: { enrolled: true, verified: true }, stepUpAt: Date.now() } });
+    authMock.mockResolvedValue({ user: { id: "a1", role: "admin", sid: "sid1", twoFactor: { enrolled: true, verified: true }, stepUpAt: Date.now() } });
     const status = (await call(route)).status;
     // The DB is an empty stub, so the handler fails later; the point is that the guard let it through.
     expect([401, 403]).not.toContain(status);
   });
 
   it.each(ADMIN_TIER)("SEC-09e $method /api/admin/$file: super admin also passes the guard", async (route) => {
-    authMock.mockResolvedValue({ user: { id: "s1", role: "super_admin", twoFactor: { enrolled: true, verified: true }, stepUpAt: Date.now() } });
+    authMock.mockResolvedValue({ user: { id: "s1", role: "super_admin", sid: "sid1", twoFactor: { enrolled: true, verified: true }, stepUpAt: Date.now() } });
     expect([401, 403]).not.toContain((await call(route)).status);
   });
 
   it.each(SUPER_ONLY)("SEC-09e $method /api/admin/$file: ADMIN is refused -> 403", async (route) => {
-    authMock.mockResolvedValue({ user: { id: "a1", role: "admin", twoFactor: { enrolled: true, verified: true }, stepUpAt: Date.now() } });
+    authMock.mockResolvedValue({ user: { id: "a1", role: "admin", sid: "sid1", twoFactor: { enrolled: true, verified: true }, stepUpAt: Date.now() } });
     expect((await call(route)).status).toBe(403);
   });
 
   it.each(SUPER_ONLY)("SEC-09e $method /api/admin/$file: SUPER_ADMIN passes the guard (control)", async (route) => {
-    authMock.mockResolvedValue({ user: { id: "s1", role: "super_admin", twoFactor: { enrolled: true, verified: true }, stepUpAt: Date.now() } });
+    authMock.mockResolvedValue({ user: { id: "s1", role: "super_admin", sid: "sid1", twoFactor: { enrolled: true, verified: true }, stepUpAt: Date.now() } });
     expect([401, 403]).not.toContain((await call(route)).status);
   });
 });
@@ -132,7 +133,9 @@ describe("roleFrom (ADR-0003 tier split)", () => {
     vi.doUnmock("@/server/auth");
     const { roleFrom } = await import("@/server/auth");
     expect(roleFrom([])).toBe("user");
-    expect(roleFrom([{ role: "MODERATOR" }])).toBe("user");
+    expect(roleFrom([{ role: "MODERATOR" }])).toBe("moderator"); // SEC-M6-09: moderator tiers are live (admin gate still refuses them)
+    expect(roleFrom([{ role: "MODERATOR" }, { role: "SENIOR_MODERATOR" }])).toBe("senior_moderator");
+    expect(roleFrom([{ role: "ADMIN" }, { role: "MODERATOR" }])).toBe("admin");
     expect(roleFrom([{ role: "ADMIN" }])).toBe("admin");
     expect(roleFrom([{ role: "ADMIN" }, { role: "SUPER_ADMIN" }])).toBe("super_admin");
   });

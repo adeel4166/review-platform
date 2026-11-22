@@ -1,4 +1,4 @@
-import { assertAuditMetadataClean } from "@rp/core";
+import { assertAuditMetadataClean, systemClock } from "@rp/core";
 import type { Prisma } from "@rp/db";
 import { HttpError } from "./http";
 import type { Actor } from "./session";
@@ -25,7 +25,7 @@ function audit(tx: Tx, actor: Actor, action: string, targetId: string, metadata:
 }
 
 const revokeTargetSessions = (tx: Tx, userId: string) =>
-  tx.userSession.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: new Date(), revokeReason: "role_changed" } });
+  tx.userSession.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: systemClock.now(), revokeReason: "role_changed" } });
 
 export async function revokeStaffRole(db: unknown, actor: Actor, targetId: string, role: Role) {
   if (actor.role !== "super_admin") throw new HttpError(403, "forbidden", "Super admin access required");

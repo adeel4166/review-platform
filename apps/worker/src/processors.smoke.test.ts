@@ -18,7 +18,7 @@ describe("worker processors (smoke, SMK-003)", () => {
   });
 
   it("registers exactly the queues with validated skeleton processors", () => {
-    expect(Object.keys(processors).sort()).toEqual([QUEUES.media, QUEUES.moderation, QUEUES.notifications, QUEUES.trust, QUEUES.verification, QUEUES.verificationResult].sort());
+    expect(Object.keys(processors).sort()).toEqual([QUEUES.maintenance, QUEUES.media, QUEUES.moderation, QUEUES.notifications, QUEUES.trust, QUEUES.verification, QUEUES.verificationResult].sort());
   });
 
   it("accepts a valid moderation payload", async () => {

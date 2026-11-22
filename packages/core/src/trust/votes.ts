@@ -21,6 +21,14 @@ export function countVotes(votes: readonly CountedVote[]) {
   return { helpfulCount, notHelpfulCount, helpfulWeighted: Math.round(net * 100) / 100 };
 }
 
+/**
+ * SEC-M7-04: a vote written while >= `perIpDay` other accounts already voted on the review from the same ipHash in 24 h carries weight 0
+ * (the stored weight is the source of truth, so the 90-day `RET-IPHASH` nulling never changes a counted vote). A missing ipHash applies no penalty.
+ */
+export function sharedIpWeight(weight: number, otherVotesFromSameIpIn24h: number, cfg: { perIpDay: number } = VOTE_FREEZE): number {
+  return otherVotesFromSameIpIn24h >= cfg.perIpDay ? 0 : weight;
+}
+
 /** Re-weight window after a voter's band changes (spec 15.3). */
 export const REWEIGHT_DAYS = 30;
 export function reweight<T extends { weight: number; createdAt: Date }>(votes: readonly T[], band: TrustBand, now: Date): T[] {

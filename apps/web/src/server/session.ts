@@ -1,3 +1,4 @@
+import { systemClock } from "@rp/core";
 import { auth, type AppRole } from "./auth";
 import { HttpError } from "./http";
 import { assertFreshStepUp } from "./user-sessions";
@@ -29,6 +30,13 @@ export async function requireAdmin(): Promise<Actor> {
   return requireTwoFactor(a);
 }
 
+/** SEC-M6-09: moderation-desk gate (MODERATOR and above). Proofs, break-glass, config and role routes stay on `requireAdmin`. */
+export async function requireModerator(): Promise<Actor> {
+  const a = await requireUser();
+  if (!["moderator", "senior_moderator", "admin", "super_admin"].includes(a.role)) throw new HttpError(403, "forbidden", "Moderator access required");
+  return requireTwoFactor(a);
+}
+
 /** SUPER_ADMIN-only gate (staff role management, ADR-0003 `role.grant.*`): 401 signed out, 403 for everyone else, ADMIN included. */
 export async function requireSuperAdmin(): Promise<Actor> {
   const a = await requireUser();
@@ -43,7 +51,7 @@ export function requireTwoFactor(a: Actor): Actor {
 }
 
 /** Step-up helper for sensitive actions: 401 STEP_UP_REQUIRED unless re-authenticated within 10 minutes (ADR-0002 section 4). */
-export function requireStepUp(a: Actor, now = new Date()): Actor {
+export function requireStepUp(a: Actor, now = systemClock.now()): Actor {
   assertFreshStepUp(a.stepUpAt, now);
   return a;
 }

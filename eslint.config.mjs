@@ -16,14 +16,22 @@ export default tseslint.config(
     },
   },
   {
-    // CLK-001 / ADR-0024: M6 modules take time from the injected Clock; @rp/core/testing never reaches production code.
-    files: ["packages/core/src/moderation/**/*.ts", "packages/core/src/ai/**/*.ts", "packages/core/src/approvals.ts", "packages/core/src/break-glass.ts", "packages/core/src/authz/**/*.ts", "apps/worker/src/moderation/**/*.ts", "apps/worker/src/maintenance/**/*.ts", "apps/web/src/server/{approvals,appeals,break-glass}.ts"],
-    ignores: ["**/*.test.ts", "**/memory-store.ts", "**/test-config.ts", "**/test-ports.ts", "**/helpers.ts"],
+    // CLK-001 / OPS-008 / ADR-0024: time comes from the injected Clock everywhere (error, no exemptions for production code).
+    // Browser components only compute display-relative time; tests, fakes, e2e, seed and clock.ts own the real clock.
+    files: ["apps/**/*.{ts,tsx}", "packages/**/*.ts", "scripts/**/*.mjs"],
+    ignores: ["**/*.test.ts", "**/*.test.tsx", "**/e2e/**", "apps/web/src/components/**", "**/*fake-db.ts", "**/media-store-fake.ts", "**/test-helpers.ts", "packages/db/prisma/seed.ts", "packages/core/src/clock.ts", "packages/core/src/testing/**"],
     rules: {
       "no-restricted-syntax": ["error",
         { selector: "NewExpression[callee.name='Date'][arguments.length=0]", message: "Use the injected Clock (ADR-0024)." },
         { selector: "CallExpression[callee.object.name='Date'][callee.property.name='now']", message: "Use the injected Clock (ADR-0024)." },
       ],
+    },
+  },
+  {
+    // OPS-003: @rp/core/testing never reaches production code.
+    files: ["packages/core/src/moderation/**/*.ts", "packages/core/src/ai/**/*.ts", "packages/core/src/approvals.ts", "packages/core/src/break-glass.ts", "packages/core/src/authz/**/*.ts", "packages/core/src/retention/**/*.ts", "apps/worker/src/moderation/**/*.ts", "apps/worker/src/maintenance/**/*.ts", "apps/worker/src/account/**/*.ts", "apps/worker/src/security/**/*.ts", "apps/web/src/server/{approvals,appeals,break-glass}.ts"],
+    ignores: ["**/*.test.ts", "**/memory-store.ts", "**/test-config.ts", "**/test-ports.ts", "**/helpers.ts", "**/test-db.ts"],
+    rules: {
       "no-restricted-imports": ["error", { patterns: [{ group: ["@rp/core/testing", "**/testing/*"], message: "Test-only (CLK-001, OPS-003)." }] }],
     },
   },

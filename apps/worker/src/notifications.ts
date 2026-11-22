@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { NOTIFICATION_TYPES, dispatch, type Channel, type Clock, type NotificationPorts, type NotificationType } from "@rp/core";
+import { NOTIFICATION_TYPES, isMandatory, dispatch, type Channel, type Clock, type NotificationPorts, type NotificationType } from "@rp/core";
 
 /** Production notification dispatcher wiring (SEC-M7-01): outbox `notification.requested` -> dispatch() -> in-app row + email job. */
 const TYPE_MAP: Record<string, NotificationType> = { CONTENT_PUBLISHED: "REVIEW_PUBLISHED" };
@@ -14,6 +14,8 @@ export const prismaNotificationPorts = (db: any, enqueue: (name: string, data: u
     try { await db.notification.create({ data: { ...row, data: row.data as never } }); return true; }
     catch (e) { if ((e as { code?: string }).code === "P2002") return false; throw e; }
   },
+  /** Counts non-mandatory notifications created in the window (the row being dispatched included, so the cap is approximate and errs low). */
+  async recentEmails(recipientId, since) { return db.notification.count({ where: { recipientId, createdAt: { gte: since }, type: { in: NOTIFICATION_TYPES.filter((t) => !isMandatory(t)) } } }); },
   async enqueueEmail(jobId, e) { await enqueue("notification.email", { userId: e.recipientId, type: e.type }, { jobId }); },
 });
 

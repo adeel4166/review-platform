@@ -1,4 +1,4 @@
-import { CHALLENGE_PREFIX, DAY_MS, DomainNotAllowedError, assertHasMx, applyClaimTransition, decideReverify, dnsChallengeHost, evaluateObservedTokens, isRecheckDue, decideValidity, WORKER_CHECKED_METHODS, CLAIM_CONFIG, type CheckOutcome, type ClaimDb } from "@rp/core";
+import { CHALLENGE_PREFIX, DAY_MS, DomainNotAllowedError, assertHasMx, applyClaimTransition, decideReverify, dnsChallengeHost, evaluateObservedTokens, isRecheckDue, decideValidity, WORKER_CHECKED_METHODS, CLAIM_CONFIG, type CheckOutcome, type ClaimDb, systemClock } from "@rp/core";
 import { extractMetaTokens } from "./meta";
 import type { FetchError, FetchResult } from "./safe-fetch";
 
@@ -92,7 +92,7 @@ export async function runEgressCheck(d: CheckDeps, req: EgressRequest): Promise<
  * Core side, step 2: apply an observation returned by the egress worker to a PENDING claim (C2-C5) or a VERIFIED claim's
  * re-verification (C13/C14/C15). Egress errors never end a claim; they only record the outcome and back off.
  */
-export async function applyClaimObservation(db: CheckStore, claimId: string, obs: ObservedResult, now: Date = new Date()): Promise<string> {
+export async function applyClaimObservation(db: CheckStore, claimId: string, obs: ObservedResult, now: Date = systemClock.now()): Promise<string> {
   const c = await db.sellerOwnershipClaim.findUnique({ where: { id: claimId } });
   if (c?.method === "BUSINESS_EMAIL_DOMAIN") return applyMxObservation(db, c, obs, now);
   if (!c || !c.domain || !WORKER_CHECKED_METHODS.includes(c.method as never)) return "SKIPPED";
@@ -154,7 +154,7 @@ interface MxTx {
 }
 
 /** Single-process composition of the three steps (used by tests; production splits it across the two worker groups). */
-export async function processClaimCheck(db: CheckStore, d: CheckDeps, claimId: string, now: Date = new Date()): Promise<string> {
+export async function processClaimCheck(db: CheckStore, d: CheckDeps, claimId: string, now: Date = systemClock.now()): Promise<string> {
   const req = await prepareClaimCheck(db, claimId);
   if (!req) return "SKIPPED";
   return applyClaimObservation(db, claimId, await runEgressCheck(d, req), now);
@@ -168,7 +168,7 @@ export interface SweepStore extends CheckStore {
 export interface JobEnqueuer { add(name: string, data: unknown, opts: { jobId: string }): Promise<unknown> }
 
 /** claims-due-checks (1 min) + claims-reverify (daily): enqueue DNS/META checks. Deterministic job ids dedupe repeats. */
-export async function sweepDueChecks(db: SweepStore, q: JobEnqueuer, now: Date = new Date()): Promise<number> {
+export async function sweepDueChecks(db: SweepStore, q: JobEnqueuer, now: Date = systemClock.now()): Promise<number> {
   const pending = await db.sellerOwnershipClaim.findMany({ where: { status: "PENDING", method: { in: [...WORKER_CHECKED_METHODS, "BUSINESS_EMAIL_DOMAIN"] }, nextCheckAt: { lte: now } }, take: 200 });
   const verified = (await db.sellerOwnershipClaim.findMany({ where: { status: "VERIFIED", method: { in: [...WORKER_CHECKED_METHODS] } }, take: 500 })).filter((c) => isRecheckDue(c as never, now));
   let n = 0;
@@ -178,7 +178,7 @@ export async function sweepDueChecks(db: SweepStore, q: JobEnqueuer, now: Date =
 }
 
 /** claims-expire (15 min): challenge / info timeouts. Each call is a guarded, idempotent transition. */
-export async function sweepExpiry(db: SweepStore, now: Date = new Date()): Promise<number> {
+export async function sweepExpiry(db: SweepStore, now: Date = systemClock.now()): Promise<number> {
   const pending = await db.sellerOwnershipClaim.findMany({ where: { status: "PENDING" }, take: 500 });
   let n = 0;
   for (const c of pending) {
@@ -191,7 +191,7 @@ export async function sweepExpiry(db: SweepStore, now: Date = new Date()): Promi
 }
 
 /** claims-grace (hourly) + claims-validity (daily): start grace for lapsed EMAIL/DOCUMENT/MARKETPLACE validity, expire lapsed grace (downgrade). */
-export async function sweepGrace(db: SweepStore, now: Date = new Date()): Promise<{ graceStarted: number; expired: number }> {
+export async function sweepGrace(db: SweepStore, now: Date = systemClock.now()): Promise<{ graceStarted: number; expired: number }> {
   const verified = await db.sellerOwnershipClaim.findMany({ where: { status: "VERIFIED" }, take: 1000 });
   let graceStarted = 0;
   let expired = 0;

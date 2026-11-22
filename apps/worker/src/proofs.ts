@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { LedgerWriter } from "@rp/core";
 import sharp from "sharp";
 import { evaluateFreshness, ScannerUnavailable, type Scanner } from "./media/clamd";
 import { PdfReject, inspectPdf, rasterisePdf, type PdfRasteriser } from "./media/pdf";
@@ -6,8 +7,7 @@ import { detectType, findPolyglot } from "./media/validate";
 import type { PrismaClient } from "@rp/db";
 import {
   MEDIA_MAX_BYTES, MEDIA_MAX_PIXELS, PROOF_DRAFT_TTL_HOURS, appUrl, hashOrderRef, proofRetention, quarantineKey, renderMail, sanitizeAssessment,
-  type MailProvider, type ObjectStore, type OrderRefKey, type ProofAssessment, type ProofFlagT, type ProofOriginalRetention,
-} from "@rp/core";
+  type MailProvider, type ObjectStore, type OrderRefKey, type ProofAssessment, type ProofFlagT, type ProofOriginalRetention,systemClock } from "@rp/core";
 
 /** Verified Buyer proof jobs (ADR-0008 / ADR-0022, m4-m5-spec 5.5-5.8). The label is NEVER set here: only a staff decision sets it. */
 type Db = PrismaClient;
@@ -55,7 +55,7 @@ export const failClosedRedactor: Redactor = {
 const sha256 = (b: Buffer) => createHash("sha256").update(b).digest("hex");
 const origKey = (id: string) => `proof/${id}/orig`;
 const redKey = (id: string) => `proof/${id}/redacted.png`;
-const clock = (d: { now?: () => Date }) => (d.now ?? (() => new Date()))();
+const clock = (d: { now?: () => Date }) => (d.now ?? (() => systemClock.now()))();
 
 /** Validate -> store original privately -> redact -> derivative. Never persists OCR text, boxes or the raw order number (PRV-001). */
 export async function processProofFile(d: ProofDeps, fileId: string): Promise<"READY" | "REJECTED" | "FAILED" | "SKIPPED"> {
@@ -222,7 +222,7 @@ export async function assessProof(d: AssessDeps, proofId: string): Promise<"ASSE
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** Deletes the objects of a proof. `filesPurgedAt` is set only after a HEAD returns 404 for every key (PRV-006). Legal hold blocks. */
-export async function purgeProofFiles(d: Pick<ProofDeps, "db" | "store" | "buckets" | "now">, proofId: string, rule: "PROOF_ORIGINAL" | "ALL"): Promise<"PURGED" | "HELD" | "PARTIAL" | "NOOP"> {
+export async function purgeProofFiles(d: Pick<ProofDeps, "db" | "store" | "buckets" | "now"> & { ledger?: LedgerWriter }, proofId: string, rule: "PROOF_ORIGINAL" | "ALL"): Promise<"PURGED" | "HELD" | "PARTIAL" | "NOOP"> {
   const p = await d.db.purchaseProof.findUnique({ where: { id: proofId }, select: { id: true, legalHold: true, filesPurgedAt: true, files: { select: { id: true, isRedacted: true, storageKey: true, status: true } } } });
   if (!p) return "NOOP";
   if (p.legalHold) return "HELD";
@@ -235,6 +235,8 @@ export async function purgeProofFiles(d: Pick<ProofDeps, "db" | "store" | "bucke
     const gone = (await d.store.head(d.buckets.private, f.storageKey)) === null && (await d.store.head(d.buckets.ingest, `in/proof/${f.id}`)) === null;
     if (!gone) return "PARTIAL"; // retried by the sweep
   }
+  // OPS-001: the ledger line is written only after the HEAD-404 verification, before the row says "purged".
+  await d.ledger?.append(targets.flatMap((f) => [{ objectKey: `${d.buckets.private}/${f.storageKey}`, entity: "PurchaseProofFile", id: f.id, purgedAt: now.toISOString() }, { objectKey: `${d.buckets.ingest}/in/proof/${f.id}`, entity: "PurchaseProofFile", id: f.id, purgedAt: now.toISOString() }]));
   await d.db.purchaseProofFile.updateMany({ where: { id: { in: targets.map((t) => t.id) } }, data: { status: "PURGED", purgedAt: now } });
   await d.db.purchaseProof.updateMany({ where: { id: proofId }, data: rule === "ALL" ? { filesPurgedAt: now, originalPurgedAt: now } : { originalPurgedAt: now } });
   return "PURGED";
@@ -291,7 +293,7 @@ export async function reconcileVoteCounts(db: Db, log: (m: object) => void = (m)
 }
 
 /** L-11: ipHash on votes and reports is nulled after 90 days. */
-export async function nullOldIpHashes(db: Db, now = new Date()): Promise<number> {
+export async function nullOldIpHashes(db: Db, now = systemClock.now()): Promise<number> {
   const before = new Date(now.getTime() - 90 * 86_400_000);
   const [v, r] = await Promise.all([
     db.reviewVote.updateMany({ where: { createdAt: { lt: before }, ipHash: { not: null } }, data: { ipHash: null } }),

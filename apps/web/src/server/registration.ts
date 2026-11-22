@@ -1,4 +1,4 @@
-import { EMAIL_TOKEN_TTL_MS } from "@rp/core";
+import { EMAIL_TOKEN_TTL_MS, systemClock } from "@rp/core";
 import { HttpError } from "./http";
 import type { RegisterInput } from "./validation";
 
@@ -26,7 +26,7 @@ const uniqueTarget = (e: unknown): string | undefined => {
  * SEC-05 / ADR-0016 §3.2. Same status and body whether or not the email exists. The password is hashed on every path
  * and mail is sent by the worker, so neither argon2 nor SMTP latency distinguishes the cases.
  */
-export async function registerAccount(db: RegisterDb, input: RegisterInput, hash: (pw: string) => Promise<string>, now = new Date()) {
+export async function registerAccount(db: RegisterDb, input: RegisterInput, hash: (pw: string) => Promise<string>, now = systemClock.now()) {
   // Handles are public (profile URLs), so a handle conflict is not an email oracle.
   if (await db.user.findUnique({ where: { handle: input.handle }, select: { id: true } })) throw new HttpError(409, "handle_taken", "That handle is already taken");
   const passwordHash = await hash(input.password);

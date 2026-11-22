@@ -1,3 +1,4 @@
+import { systemClock } from "@rp/core";
 import NextAuth, { type DefaultSession } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { hashPassword, verifyPassword } from "@rp/db";
@@ -5,7 +6,7 @@ import { db } from "./db";
 import { loginInput } from "./validation";
 import { claimSuccessor, createSession, sessionVerdict, TOUCH_INTERVAL_MS } from "./user-sessions";
 
-export type AppRole = "user" | "admin" | "super_admin";
+export type AppRole = "user" | "moderator" | "senior_moderator" | "admin" | "super_admin";
 
 declare module "next-auth" {
   interface Session {
@@ -18,7 +19,9 @@ declare module "next-auth" {
 /** ADR-0003: SUPER_ADMIN > ADMIN > user (no implicit inheritance in the DB; this collapses to the highest admin tier). */
 export function roleFrom(roles: { role: string }[]): AppRole {
   if (roles.some((r) => r.role === "SUPER_ADMIN")) return "super_admin";
-  return roles.some((r) => r.role === "ADMIN") ? "admin" : "user";
+  if (roles.some((r) => r.role === "ADMIN")) return "admin";
+  if (roles.some((r) => r.role === "SENIOR_MODERATOR")) return "senior_moderator";
+  return roles.some((r) => r.role === "MODERATOR") ? "moderator" : "user";
 }
 
 /** Session version of an account: 0 while unverified, otherwise the verification time (ms). */
@@ -41,7 +44,7 @@ export async function authorizeCredentials(raw: unknown) {
   }
   if (!(await verifyPassword(user.passwordHash, parsed.data.password))) return null;
   if (user.status !== "ACTIVE") return null;
-  await db.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+  await db.user.update({ where: { id: user.id }, data: { lastLoginAt: systemClock.now() } });
   return { id: user.id, email: user.email, name: user.displayName, sessionVersion: sessionVersion(user.emailVerifiedAt) };
 }
 
@@ -52,7 +55,7 @@ interface Claims { sub?: string; sv?: unknown; sid?: unknown; role?: unknown; pn
  * Runs on every session read. Never copies anything from a client-supplied `session` argument (Auth.js `trigger: "update"`
  * payloads are attacker-controlled): sid, pending and role come only from the database (m3b-spec 2.1, AUT-019).
  */
-export async function refreshJwt<T extends Claims>(token: T, user?: { id?: string; sessionVersion?: number }, now = new Date()): Promise<T | null> {
+export async function refreshJwt<T extends Claims>(token: T, user?: { id?: string; sessionVersion?: number }, now = systemClock.now()): Promise<T | null> {
   const signingIn = !!user?.id;
   if (user?.id) {
     token.sub = user.id;

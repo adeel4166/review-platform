@@ -1,4 +1,4 @@
-import { assertAuditMetadataClean, checkReplyPolicy, type ReplySoftFlag } from "@rp/core";
+import { assertAuditMetadataClean, checkReplyPolicy, type ReplySoftFlag, systemClock } from "@rp/core";
 import type { Prisma } from "@rp/db";
 import type { z } from "zod";
 import type { Db } from "./db";
@@ -39,7 +39,7 @@ const submitted = (type: "seller_reply.submitted" | "seller_reply.edited", id: s
 
 /** R1 / R5: create a reply (or reuse a DELETED row). The reply is PENDING, non-public, until moderation approves it. */
 export async function createReply(db: Db, actor: Actor, reviewId: string, input: z.infer<typeof replyInput>, hooks: ReplyHooks = {}) {
-  const now = hooks.now ?? new Date();
+  const now = hooks.now ?? systemClock.now();
   const review = await db.review.findFirst({ where: { id: reviewId }, select: { id: true, status: true, authorId: true, product: { select: { sellerId: true } } } });
   const sellerId = review?.product?.sellerId;
   if (!review || !sellerId) throw notFound(); // step 3: unknown review or unclaimed product
@@ -93,7 +93,7 @@ async function loadReplyForActor(db: Db, actor: Actor, replyId: string, waiveRep
 
 /** R2: edit. The reply becomes non-public until the new version is approved. */
 export async function editReply(db: Db, actor: Actor, replyId: string, input: z.infer<typeof replyInput>, hooks: ReplyHooks = {}) {
-  const now = hooks.now ?? new Date();
+  const now = hooks.now ?? systemClock.now();
   const reply = await loadReplyForActor(db, actor, replyId, false, now);
   if (reply.status === "DELETED") throw notFound();
   if (reply.status === "REMOVED") throw new HttpError(409, "reply_removed", "Removed replies cannot be edited");
@@ -115,7 +115,7 @@ export async function editReply(db: Db, actor: Actor, replyId: string, input: z.
 }
 
 /** R4: delete (soft). Allowed while restricted or when the seller is no longer VERIFIED. */
-export async function deleteReply(db: Db, actor: Actor, replyId: string, now = new Date()) {
+export async function deleteReply(db: Db, actor: Actor, replyId: string, now = systemClock.now()) {
   const reply = await loadReplyForActor(db, actor, replyId, true, now);
   if (reply.status === "DELETED") throw notFound();
   if (reply.status === "REMOVED") throw new HttpError(409, "reply_removed", "Removed replies cannot be deleted");
@@ -198,7 +198,7 @@ async function assertIssuerNotConflicted(tx: Tx, actorId: string, subject: { sel
   if (mine) throw new HttpError(403, "CONFLICT_OF_INTEREST", "You are a member of an affected seller");
 }
 
-export async function issueReplyRestriction(db: Db, actor: Actor, subject: { sellerId: string } | { userId: string }, input: z.infer<typeof replyRestrictionInput>, now = new Date()) {
+export async function issueReplyRestriction(db: Db, actor: Actor, subject: { sellerId: string } | { userId: string }, input: z.infer<typeof replyRestrictionInput>, now = systemClock.now()) {
   requireAdminTier(actor);
   if (input.endsAt && input.endsAt <= now) throw new HttpError(400, "validation_error", "endsAt must be in the future");
   return db.$transaction(async (tx) => {
@@ -220,7 +220,7 @@ export async function issueReplyRestriction(db: Db, actor: Actor, subject: { sel
   });
 }
 
-export async function liftReplyRestriction(db: Db, actor: Actor, enforcementId: string, now = new Date()) {
+export async function liftReplyRestriction(db: Db, actor: Actor, enforcementId: string, now = systemClock.now()) {
   requireAdminTier(actor);
   return db.$transaction(async (tx) => {
     const e = await tx.enforcementAction.findFirst({ where: { id: enforcementId, type: "SELLER_REPLY_RESTRICTION", status: "ACTIVE" }, select: { id: true, subjectSellerId: true, subjectUserId: true } });

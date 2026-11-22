@@ -19,6 +19,7 @@ async function loadOriginal(tx: BreakGlassTx, proofId: string, fileId: string) {
 }
 
 export async function requestOriginalAccess(db: BreakGlassDb, staff: Staff & { sessionId: string }, i: { proofId: string; fileId: string; reasonCode: string; reasonText: string }, clock: Clock, alert: (k: string, d: Record<string, unknown>) => void) {
+  if (!staff.sessionId) throw new HttpError(401, "unauthenticated", "Sign in required"); // SEC-M6-08: an empty session id would match itself
   return db.$transaction(async (tx) => {
     const proof = await tx.purchaseProof.findUnique({ where: { id: i.proofId }, select: { id: true, submittedById: true } });
     if (!proof) throw new HttpError(404, "not_found", "Proof not found");

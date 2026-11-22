@@ -6,8 +6,7 @@ import {
   MEDIA_PUT_TTL_SECONDS,
   ingestKey,
   type ObjectStore,
-  type UploadSlotInput,
-} from "@rp/core";
+  type UploadSlotInput,systemClock } from "@rp/core";
 import type { Db } from "./db";
 import { HttpError } from "./http";
 
@@ -38,7 +37,7 @@ export async function createUploadSlot(db: Db, st: Storage, userId: string, revi
   if (!review) throw new HttpError(404, "not_found", "Review not found"); // also hides other users' reviews
   assertPendingForMedia(review.status);
   // SEC-03: per-user rolling-24h quota over ALL statuses, so FAILED/expired slots still count (no slot->junk->FAILED loop).
-  const today = await db.mediaAsset.count({ where: { ownerId: userId, createdAt: { gte: new Date(Date.now() - 24 * 3600 * 1000) } } });
+  const today = await db.mediaAsset.count({ where: { ownerId: userId, createdAt: { gte: new Date(systemClock.now().getTime() - 24 * 3600 * 1000) } } });
   if (today >= dailyQuota) throw new HttpError(429, "upload_quota", "Daily upload limit reached, try again later", { "Retry-After": "3600" });
   // 10 photos + 2 videos per review (m4-m5-spec 6.1). Video slots are told apart by their declared MIME type.
   const used = await db.mediaAsset.count({ where: { reviewId, status: { in: ["UPLOADING", "PROCESSING", "READY"] }, declaredMime: video ? { startsWith: "video/" } : { startsWith: "image/" } } });
@@ -65,7 +64,7 @@ export async function createUploadSlot(db: Db, st: Storage, userId: string, revi
  * Existence, exact size and type are checked by the worker's scan step (missing -> NOT_CONFIRMED). Content-type and
  * content-length are signed into the PUT, so storage already refuses a different type or size.
  */
-export async function confirmUpload(db: Db, _st: Storage, userId: string, assetId: string, now: Date = new Date()) {
+export async function confirmUpload(db: Db, _st: Storage, userId: string, assetId: string, now: Date = systemClock.now()) {
   const a = await db.mediaAsset.findFirst({ where: { id: assetId, ownerId: userId }, select: { id: true, status: true, createdAt: true, review: { select: { status: true } } } });
   if (!a) throw new HttpError(404, "not_found", "Media not found");
   if (a.status !== "UPLOADING") return db.mediaAsset.findUniqueOrThrow({ where: { id: assetId }, select: ownSelect }); // idempotent: no event
