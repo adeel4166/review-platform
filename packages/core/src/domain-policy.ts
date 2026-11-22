@@ -151,7 +151,9 @@ export async function assertHasMx(domain: string, lookupMx: (d: string) => Promi
   } catch {
     records = [];
   }
-  if (records.length === 0) throw new DomainNotAllowedError("no_mx");
+  // RFC 7505 null MX ("0 ."): the domain states that it accepts no mail, so it is the same as no MX at all.
+  const usable = records.filter((r) => !(r && typeof r === "object" && "exchange" in r && ["", "."].includes(String((r as { exchange: unknown }).exchange))));
+  if (usable.length === 0) throw new DomainNotAllowedError("no_mx");
 }
 
 // ---------------------------------------------------------------------------------------------------------------

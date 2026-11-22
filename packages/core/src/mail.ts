@@ -1,7 +1,7 @@
 import nodemailer from "nodemailer";
 
 /** Mail provider interface (ADR-0016 §3.5). Only the worker sends mail; the web app never holds SMTP credentials. */
-export type MailTemplateId = "verify_account" | "account_exists" | "seller_invitation" | "claim_notice";
+export type MailTemplateId = "verify_account" | "account_exists" | "seller_invitation" | "claim_notice" | "ownership_transfer" | "claim_business_email";
 
 export interface RenderedMail { to: string; subject: string; text: string; html: string }
 
@@ -56,6 +56,27 @@ export function renderMail(template: MailTemplateId, to: string, vars: Record<st
         subject: headline,
         text: `${headline}\n\nOpen your seller dashboard for details: ${url}`,
         html: `<p>${esc(headline)}</p><p><a href="${esc(url)}">Open seller dashboard</a></p>`,
+      };
+    }
+    case "ownership_transfer": {
+      // Fixed template (m3b-spec 3.5): seller public URL, kind, handles and UTC time only. `url` is the cancel link with the token in the fragment.
+      const body = `${vars.kind ?? ""} for ${vars.sellerUrl ?? ""}. Requested by @${vars.initiator ?? ""}, target @${vars.target ?? ""}. It takes effect no earlier than ${vars.executeAfter ?? ""} (UTC).`;
+      return {
+        to,
+        subject: vars.reminder === "1" ? "Reminder: a seller ownership change takes effect in 24 hours" : "A seller ownership change was requested",
+        text: `${body}\n\nIf you did not expect this, cancel it here (this link replaces any earlier one):\n${url}`,
+        html: `<p>${esc(body)}</p><p><a href="${esc(url)}">Cancel this ownership change</a> (this link replaces any earlier one)</p>`,
+      };
+    }
+    case "claim_business_email": {
+      // Fixed template, no seller-controlled free text (m3b-spec 4.7). `vars.sellerUrl` is our own /sellers/<slug> page.
+      const domain = vars.domain ?? "";
+      const sellerUrl = vars.sellerUrl ?? "";
+      return {
+        to,
+        subject: "Confirm your ownership claim by email",
+        text: `Someone asked to claim a seller profile on Review Platform using an address at ${domain} (link valid for 24 hours).\n\nSeller page: ${sellerUrl}\n\nConfirm, or tell us this was not you, here:\n${url}\n\nIf you do not recognise this, open the link and choose "This wasn't me".`,
+        html: `<p>Someone asked to claim a seller profile on Review Platform using an address at ${esc(domain)} (link valid for 24 hours).</p><p>Seller page: <a href="${esc(sellerUrl)}">${esc(sellerUrl)}</a></p><p><a href="${esc(url)}">Confirm or deny this claim</a></p><p>If you do not recognise this, open the link and choose "This wasn't me".</p>`,
       };
     }
   }

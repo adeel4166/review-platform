@@ -16,6 +16,8 @@ export const routes: Record<string, QueueName> = {
   "user.email_verification_requested": QUEUES.notifications,
   "user.registration_conflict": QUEUES.notifications,
   "seller.invitation_created": QUEUES.notifications,
+  "claim.business_email_token_requested": QUEUES.notifications,
+  "seller.ownership_transfer_requested": QUEUES.notifications,
   // M3-05 ownership claims (spec §7)
   "claim.submitted": QUEUES.verification,
   "claim.check_due": QUEUES.verification,

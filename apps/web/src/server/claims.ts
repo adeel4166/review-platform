@@ -116,18 +116,18 @@ export async function submitClaim(db: Db, actor: Actor, sellerId: string, input:
           sellerId, scope: input.scope, productId: input.productId ?? null, method: input.method, domain, businessEmail, challengeValue, challengeExpiresAt,
           evidenceUrl: input.evidenceUrl ?? null, requiresHumanReview: req.requiresHumanReview, humanReviewReason: req.reason, requiredApprovals: req.requiredApprovals,
           conflictClaimId: incumbent?.id ?? null, activeKey, submittedById: actor.id,
-          nextCheckAt: input.method === "DNS_TXT" || input.method === "META_TAG" ? now : null,
+          nextCheckAt: input.method === "DNS_TXT" || input.method === "META_TAG" || input.method === "BUSINESS_EMAIL_DOMAIN" ? now : null, // the email claim waits for the egress MX check
         },
         select: { id: true, status: true, method: true, scope: true, domain: true, challengeValue: true, challengeExpiresAt: true, requiresHumanReview: true },
       });
       await tx.outboxEvent.create({ data: { type: "claim.submitted", aggregateId: claim.id, payload: { claimId: claim.id } } });
       if (businessEmail) {
-        // The token row carries the address and is bound to the submitting user. The worker mints and mails the raw token (hash only is stored); payloads never carry the address.
+        // The token row carries the address and is bound to the submitting user. It is NOT mailed yet: the verification-egress MX check
+        // must pass first (SEL-035); the core worker then emits `claim.business_email_token_requested` (applyMxObservation, C22).
         const tok = await tx.emailVerificationToken.create({
           data: { userId: actor.id, purpose: "CLAIM_BUSINESS_EMAIL", email: businessEmail, claimId: claim.id, expiresAt: new Date(now.getTime() + EMAIL_TOKEN_TTL_MS) },
           select: { id: true },
         });
-        await tx.outboxEvent.create({ data: { type: "claim.business_email_token_requested", aggregateId: claim.id, payload: { claimId: claim.id, tokenId: tok.id } } });
         await tx.auditLog.create({ data: { actorType: "USER", actorId: actor.id, action: "claim.email_token_issued", entityType: "SellerOwnershipClaim", entityId: claim.id, metadata: { claimId: claim.id, tokenId: tok.id } } });
       }
       const meta = { claimId: claim.id, sellerId, scope: input.scope, method: input.method, requiresHumanReview: req.requiresHumanReview, requiredApprovals: req.requiredApprovals };

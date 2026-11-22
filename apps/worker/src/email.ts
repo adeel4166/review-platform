@@ -4,7 +4,7 @@ const NOTICE_INTERVAL_MS = 60 * 60 * 1000;
 
 export interface EmailDb {
   emailVerificationToken: {
-    findUnique(args: unknown): Promise<{ id: string; email: string; purpose: string; sentAt: Date | null; consumedAt: Date | null; invalidatedAt: Date | null; expiresAt: Date } | null>;
+    findUnique(args: unknown): Promise<{ id: string; email: string; purpose: string; claimId?: string | null; sentAt: Date | null; consumedAt: Date | null; invalidatedAt: Date | null; expiresAt: Date } | null>;
     updateMany(args: unknown): Promise<{ count: number }>;
   };
   user: {
@@ -75,5 +75,33 @@ export async function sendSellerInvitationEmail(d: EmailDeps, invitationId: stri
   if (claimed.count !== 1) return "SKIPPED";
   await d.mail.send(renderMail("seller_invitation", row.email, { url: `${d.baseUrl ?? appUrl()}/invitations/accept?token=${raw}` }), { idempotencyKey: jobKey });
   await inv.updateMany({ where: { id: row.id }, data: { sentAt: now } });
+  return "SENT";
+}
+
+export interface ClaimEmailDeps {
+  db: EmailDb & {
+    sellerOwnershipClaim: { findUnique(args: unknown): Promise<{ domain: string | null; status: string; seller: { slug: string } } | null> };
+  };
+  mail: MailProvider; baseUrl?: string; now?: () => Date;
+}
+
+/**
+ * notifications `claim.business_email_token_requested` {claimId, tokenId} (m3b-spec 4.4 / 4.7). Same pattern as the account token:
+ * raw token only in the mail, SHA-256 at rest, a retry rotates the hash. The mail is `Auto-Submitted: auto-generated` (SEL-036).
+ */
+export async function sendClaimBusinessEmail(d: ClaimEmailDeps, tokenId: string, jobKey: string): Promise<EmailOutcome> {
+  const now = (d.now ?? (() => new Date()))();
+  const row = await d.db.emailVerificationToken.findUnique({ where: { id: tokenId }, select: { id: true, email: true, purpose: true, claimId: true, sentAt: true, consumedAt: true, invalidatedAt: true, expiresAt: true } });
+  if (!row || row.purpose !== "CLAIM_BUSINESS_EMAIL" || row.consumedAt || row.invalidatedAt || row.expiresAt <= now) return "SKIPPED";
+  const claimId = row.claimId;
+  if (!claimId) return "SKIPPED";
+  const claim = await d.db.sellerOwnershipClaim.findUnique({ where: { id: claimId }, select: { domain: true, status: true, seller: { select: { slug: true } } } });
+  if (!claim || claim.status !== "PENDING") return "SKIPPED";
+  const raw = generateEmailToken();
+  const claimed = await d.db.emailVerificationToken.updateMany({ where: { id: row.id, consumedAt: null, invalidatedAt: null }, data: { tokenHash: hashEmailToken(raw) } });
+  if (claimed.count !== 1) return "SKIPPED";
+  const base = d.baseUrl ?? appUrl();
+  await d.mail.send(renderMail("claim_business_email", row.email, { url: `${base}/claims/email-verify?token=${raw}`, domain: claim.domain ?? row.email.split("@")[1] ?? "", sellerUrl: `${base}/sellers/${claim.seller.slug}` }), { idempotencyKey: jobKey });
+  await d.db.emailVerificationToken.updateMany({ where: { id: row.id }, data: { sentAt: now } });
   return "SENT";
 }
