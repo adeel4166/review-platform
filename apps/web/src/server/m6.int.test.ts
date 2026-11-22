@@ -9,7 +9,7 @@ import { approveRequest, rejectOrCancel, requestConfigActivation, requestRoleGra
 import { requestOriginalAccess, serveOriginal } from "./break-glass";
 import { appealDto, claimAppeal, decideAppeal, fileAppeal, getOwnAppeal, withdrawAppeal, type AppealDeps } from "./appeals";
 
-const NAMES = ["staffApprovalRequest", "moderationConfig", "userRole", "userSession", "twoFactorTotp", "twoFactorRecoveryCode", "auditLog", "outboxEvent", "user", "breakGlassAccess", "purchaseProof", "proofFile", "appeal", "moderationCase", "moderationDecision", "enforcementAction", "report"];
+const NAMES = ["staffApprovalRequest", "moderationConfig", "userRole", "userSession", "twoFactorTotp", "twoFactorRecoveryCode", "auditLog", "outboxEvent", "user", "breakGlassAccess", "purchaseProof", "purchaseProofFile", "appeal", "moderationCase", "moderationDecision", "enforcementAction", "report"];
 const staff = (id: string, roles: Staff["roles"], clock: FakeClock): Staff => ({ id, roles, stepUpAt: clock.now().getTime() - 1000 });
 const mk = () => { const clock = new FakeClock(); const f = makeFakeDb(NAMES); return { clock, db: f.db as any, t: f.t as any }; }; // eslint-disable-line @typescript-eslint/no-explicit-any
 const seedUser = (t: any, id: string) => { t.user.push({ id, status: "ACTIVE", emailVerifiedAt: new Date() }); t.twoFactorTotp.push({ id: `tf${id}`, userId: id, confirmedAt: new Date() }); }; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -74,7 +74,7 @@ describe("AZ-015 / SEC-010 role grants, AZ-024 2FA reset", () => {
 });
 
 describe("PRV-003 / BGL-001 break-glass", () => {
-  const seed = (t: any) => { t.purchaseProof.push({ id: "p1", submittedById: "buyer" }); t.proofFile.push({ id: "f1", originalKey: "proof/p1/orig/f1" }); }; // eslint-disable-line @typescript-eslint/no-explicit-any
+  const seed = (t: any) => { t.purchaseProof.push({ id: "p1", submittedById: "buyer" }); t.purchaseProofFile.push({ id: "f1", proofId: "p1", isRedacted: false, purgedAt: null }); }; // eslint-disable-line @typescript-eslint/no-explicit-any
   const reason = "Order id on the proof does not match the dispute";
   it("writes the access + audit row, serves once, then refuses (single use, session bound, 60 s)", async () => {
     const { clock, db, t } = mk(); seed(t);
@@ -83,7 +83,7 @@ describe("PRV-003 / BGL-001 break-glass", () => {
     const r = await requestOriginalAccess(db, s, { proofId: "p1", fileId: "f1", reasonCode: "DISPUTE", reasonText: reason }, clock, (k) => void alerts.push(k));
     expect(r.status).toBe(201);
     expect(t.auditLog.map((a: any) => a.action)).toEqual(["proof.view_original"]); // eslint-disable-line @typescript-eslint/no-explicit-any
-    const store = { getObject: async (key: string) => { expect(key).toBe("proof/p1/orig/f1"); return { body: new Uint8Array([1]), contentType: "image/png" }; } };
+    const store = { getObject: async (key: string) => { expect(key).toBe("proof/f1/orig"); return { body: new Uint8Array([1]), contentType: "image/png" }; } };
     const id = (r as { accessId: string }).accessId;
     await expect(serveOriginal(db, store, { staffId: "smod", sessionId: "other" }, id, clock)).rejects.toMatchObject({ status: 404 });
     const out = await serveOriginal(db, store, { staffId: "smod", sessionId: "sess1" }, id, clock);
@@ -101,9 +101,9 @@ describe("PRV-003 / BGL-001 break-glass", () => {
     await expect(serveOriginal(db, { getObject: async () => ({ body: new Uint8Array(), contentType: "x" }) }, { staffId: "smod", sessionId: "sess1" }, first.accessId, clock)).rejects.toMatchObject({ code: "access_expired" });
     expect((await call()).status).toBe(202); // same submitter within 7 d
     await expect(call({ reasonText: "short" })).rejects.toMatchObject({ status: 400 });
-    t.proofFile[0].originalPurgedAt = new Date();
+    t.purchaseProofFile[0].purgedAt = new Date();
     await expect(call()).rejects.toMatchObject({ status: 410, code: "original_purged" });
-    t.proofFile[0].originalPurgedAt = null;
+    t.purchaseProofFile[0].purgedAt = null;
     for (let i = 0; i < 20; i++) t.breakGlassAccess.push({ staffId: "smod", submitterId: `x${i}`, createdAt: clock.now() });
     await expect(call()).rejects.toMatchObject({ status: 429, code: "break_glass_cap" });
   });
@@ -187,5 +187,53 @@ describe("appeals (APL-001..004, TMR-011, MOD-013/025)", () => {
     expect(over).toEqual([]);
     expect(t.appeal[0].status).toBe("IN_REVIEW");
     expect(t.staffApprovalRequest[0]).toMatchObject({ kind: "ENFORCEMENT_OVERTURN_MAJOR", status: "PENDING" });
+  });
+});
+
+describe("CLOSE-01 (task #83): SEC-M6-01/03/04/05/06", () => {
+  it("SEC-M6-01/06: unknown role is refused at request time; target drift (2FA removed) is refused at execution, userRole untouched", async () => {
+    const { clock, db, t } = mk();
+    seedUser(t, "u1");
+    const s1 = staff("s1", ["SUPER_ADMIN"], clock), s2 = staff("s2", ["SUPER_ADMIN"], clock);
+    await expect(requestRoleGrant(db, s1, "u1", "ROOT" as never, "x", clock)).rejects.toMatchObject({ status: 400, code: "invalid_role" });
+    const r = await requestRoleGrant(db, s1, "u1", "ADMIN", "needed", clock) as { approvalRequestId: string };
+    t.twoFactorTotp.length = 0; // target lost 2FA between request and approval
+    await expect(approveRequest(db, s2, r.approvalRequestId, clock)).rejects.toMatchObject({ status: 409, code: "target_two_factor_missing" });
+    expect(t.userRole).toHaveLength(0);
+    t.twoFactorTotp.push({ id: "tf", userId: "u1", confirmedAt: new Date() });
+    t.user[0].status = "SUSPENDED";
+    await expect(approveRequest(db, s2, r.approvalRequestId, clock)).rejects.toMatchObject({ status: 409, code: "target_not_eligible" });
+    expect(t.userRole).toHaveLength(0);
+  });
+  it("SEC-M6-05: ADMINs cannot reset a staff member's 2FA; a SUPER_ADMIN requester + approver can; alert kind is TWO_FACTOR_RESET", async () => {
+    const { clock, db, t } = mk();
+    seedUser(t, "boss"); t.userRole.push({ userId: "boss", role: "SUPER_ADMIN" });
+    await expect(requestTwoFactorReset(db, staff("a1", ["ADMIN"], clock), "boss", clock)).rejects.toMatchObject({ status: 403 });
+    const { approvalRequestId } = await requestTwoFactorReset(db, staff("s1", ["SUPER_ADMIN"], clock), "boss", clock);
+    await expect(approveRequest(db, staff("a2", ["ADMIN"], clock), approvalRequestId, clock)).rejects.toMatchObject({ status: 403 });
+    expect(t.twoFactorTotp).toHaveLength(1);
+    await approveRequest(db, staff("s2", ["SUPER_ADMIN"], clock), approvalRequestId, clock);
+    expect(t.twoFactorTotp).toHaveLength(0);
+    expect(t.outboxEvent.find((o: any) => o.type === "auth.security_alert").payload.kind).toBe("TWO_FACTOR_RESET"); // eslint-disable-line @typescript-eslint/no-explicit-any
+  });
+  it("SEC-M6-04: the worker mails TWO_FACTOR_RESET (not SKIPPED) and an unknown kind is skipped but logged", async () => {
+    const { sendSecurityAlertEmail } = await import("../../../worker/src/email");
+    const sent: unknown[] = [];
+    const d = { db: { user: { findUnique: async () => ({ email: "u@example.test", status: "ACTIVE" }) } }, mail: { send: async (m: unknown) => void sent.push(m) } } as never;
+    expect(await sendSecurityAlertEmail(d, { userId: "u", kind: "TWO_FACTOR_RESET" }, "k1")).toBe("SENT");
+    expect(sent).toHaveLength(1);
+  });
+  it("SEC-M6-03: break-glass has no fallback record; the file must belong to the proof and be unredacted; the key is built from the DB file id", async () => {
+    const { clock, db, t } = mk();
+    t.purchaseProof.push({ id: "p1", submittedById: "buyer" }, { id: "p2", submittedById: "buyer" });
+    t.purchaseProofFile.push({ id: "f1", proofId: "p1", isRedacted: false, purgedAt: null }, { id: "fr", proofId: "p1", isRedacted: true, purgedAt: null }, { id: "../x", proofId: "p1", isRedacted: false, purgedAt: null });
+    const s = { ...staff("smod", ["SENIOR_MODERATOR"], clock), sessionId: "sess1" };
+    const call = (proofId: string, fileId: string) => requestOriginalAccess(db, s, { proofId, fileId, reasonCode: "DISPUTE", reasonText: "Order id on the proof does not match the dispute" }, clock, () => {});
+    await expect(call("p1", "missing")).rejects.toMatchObject({ status: 404 }); // no fallback "exists" record
+    await expect(call("p2", "f1")).rejects.toMatchObject({ status: 404 }); // fileId bound to proofId
+    await expect(call("p1", "fr")).rejects.toMatchObject({ status: 404 }); // redacted derivative is not the original
+    const r = await call("p1", "../x") as { accessId: string }; // an odd id is stored but can never be turned into a key
+    const store = { getObject: async () => { throw new Error("must not read"); } };
+    await expect(serveOriginal(db, store, { staffId: "smod", sessionId: "sess1" }, r.accessId, clock)).rejects.toMatchObject({ status: 404 });
   });
 });

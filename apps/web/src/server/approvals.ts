@@ -10,6 +10,20 @@ export interface ApprovalTx { staffApprovalRequest: Model; moderationConfig: Mod
 export interface Staff { id: string; roles: readonly StaffRole[]; stepUpAt?: number | null }
 type Json = Record<string, string | number | boolean | null>;
 
+const STAFF_ROLE_SET: ReadonlySet<string> = new Set(["MODERATOR", "SENIOR_MODERATOR", "ADMIN", "SUPER_ADMIN"]);
+/** Role enum guard (SEC-M6-01/06): a non-enum role must never reach userRole.upsert, at request time or at execution. */
+const assertStaffRole = (role: unknown): StaffRole => {
+  if (typeof role !== "string" || !STAFF_ROLE_SET.has(role)) throw new HttpError(400, "invalid_role", "Unknown staff role");
+  return role as StaffRole;
+};
+/** Target must be ACTIVE, email-verified and hold confirmed 2FA (T-06); re-run inside the executing transaction (SEC-M6-06). */
+async function assertGrantableTarget(tx: ApprovalTx, targetId: string) {
+  const target = await tx.user.findUnique({ where: { id: targetId }, select: { id: true, status: true, emailVerifiedAt: true } });
+  if (!target) throw new HttpError(404, "not_found", "User not found");
+  if (target.status !== "ACTIVE" || !target.emailVerifiedAt) throw new HttpError(409, "target_not_eligible", "Target must be an active, verified account");
+  if (!(await tx.twoFactorTotp.findUnique({ where: { userId: targetId } }))?.confirmedAt) throw new HttpError(409, "target_two_factor_missing", "Target must have two-factor authentication enabled");
+}
+
 export const hashPayload = (p: unknown): string => createHash("sha256").update(canonicalJson(p)).digest("hex");
 const audit = (tx: ApprovalTx, actor: string, action: string, entityType: string, entityId: string, metadata: Json) => {
   assertAuditMetadataClean(metadata);
@@ -44,13 +58,11 @@ export async function requestConfigActivation(db: ApprovalDb, actor: Staff, vers
 /** Role grants: MODERATOR is single-actor (SUPER_ADMIN or ADMIN, step-up); the other roles create a request (`202`). */
 export async function requestRoleGrant(db: ApprovalDb, actor: Staff, targetId: string, role: StaffRole, reason: string, clock: Clock): Promise<{ status: 202; approvalRequestId: string } | { status: 201; granted: true }> {
   requireStepUp(actor, clock);
+  assertStaffRole(role);
   const isSuper = actor.roles.includes("SUPER_ADMIN");
   if (actor.id === targetId) throw new HttpError(403, "forbidden", "Cannot change your own roles");
   return db.$transaction(async (tx) => {
-    const target = await tx.user.findUnique({ where: { id: targetId }, select: { id: true, status: true, emailVerifiedAt: true } });
-    if (!target) throw new HttpError(404, "not_found", "User not found");
-    if (target.status !== "ACTIVE" || !target.emailVerifiedAt) throw new HttpError(409, "target_not_eligible", "Target must be an active, verified account");
-    if (!(await tx.twoFactorTotp.findUnique({ where: { userId: targetId } }))?.confirmedAt) throw new HttpError(409, "target_two_factor_missing", "Target must have two-factor authentication enabled");
+    await assertGrantableTarget(tx, targetId);
     if (!roleGrantNeedsFourEyes(role)) {
       if (!isSuper && !actor.roles.includes("ADMIN")) throw new HttpError(403, "forbidden", "Not allowed");
       await grant(tx, targetId, role, actor.id, reason, clock);
@@ -65,7 +77,14 @@ export async function requestRoleGrant(db: ApprovalDb, actor: Staff, targetId: s
 export async function requestTwoFactorReset(db: ApprovalDb, actor: Staff, targetId: string, clock: Clock) {
   requireStepUp(actor, clock);
   if (!actor.roles.some((r) => r === "ADMIN" || r === "SUPER_ADMIN")) throw new HttpError(403, "forbidden", "user.manage required");
-  return db.$transaction(async (tx) => ({ approvalRequestId: (await createRequest(tx, clock, "TWO_FACTOR_RESET", actor.id, targetKeyFor.twoFa(targetId), { userId: targetId })).id }));
+  return db.$transaction(async (tx) => {
+    // SEC-M6-05: staff accounts (SUPER_ADMIN above all) can only be reset by a SUPER_ADMIN requester and approver.
+    if (await targetHoldsStaffRole(tx, targetId) && !actor.roles.includes("SUPER_ADMIN")) throw new HttpError(403, "forbidden", "Super admin required to reset staff two-factor");
+    return { approvalRequestId: (await createRequest(tx, clock, "TWO_FACTOR_RESET", actor.id, targetKeyFor.twoFa(targetId), { userId: targetId })).id };
+  });
+}
+async function targetHoldsStaffRole(tx: ApprovalTx, userId: string): Promise<boolean> {
+  return (await tx.userRole.count({ where: { userId, role: { in: [...STAFF_ROLE_SET] } } })) > 0;
 }
 /** Used by A4/A5 on BAN / SELLER_SUSPENSION (AP-1) and by break-glass repeat access. */
 export async function requestApproval(tx: ApprovalTx, clock: Clock, kind: "ENFORCEMENT_OVERTURN_MAJOR" | "BREAK_GLASS_REPEAT", requestedById: string, targetKey: string, payload: Json) {
@@ -90,6 +109,10 @@ export async function approveRequest(db: ApprovalDb, approver: Staff, id: string
     }
     try { assertCanApprove({ kind: a.kind, status: a.status, requestedById: a.requestedById, expiresAt: a.expiresAt, payloadHash: a.payloadHash }, approver, clock, currentHash); }
     catch (e) { if (e instanceof ApprovalError) throw new HttpError(e.status, e.code, e.code); throw e; }
+    // Execution-time re-checks run BEFORE the conditional claim so a refusal leaves the request PENDING (SEC-M6-05/06).
+    const pre = a.payload as Record<string, string>;
+    if (a.kind === "ROLE_GRANT") { assertStaffRole(pre.role); await assertGrantableTarget(tx, pre.userId!); }
+    if (a.kind === "TWO_FACTOR_RESET" && (await targetHoldsStaffRole(tx, pre.userId!)) && !approver.roles.includes("SUPER_ADMIN")) throw new HttpError(403, "forbidden", "Super admin required to reset staff two-factor");
     const won = await tx.staffApprovalRequest.updateMany({ where: { id, status: "PENDING" }, data: { status: "EXECUTED", decidedById: approver.id, decidedAt: clock.now(), executedAt: clock.now(), openKey: null } });
     if (won.count !== 1) throw new HttpError(409, "not_pending", "Already decided");
     const p = a.payload as Record<string, string>;
@@ -105,7 +128,7 @@ export async function approveRequest(db: ApprovalDb, approver: Staff, id: string
       await tx.twoFactorTotp.deleteMany({ where: { userId: p.userId } });
       await tx.twoFactorRecoveryCode?.deleteMany({ where: { userId: p.userId } });
       await tx.userSession.updateMany({ where: { userId: p.userId, revokedAt: null }, data: { revokedAt: clock.now(), revokeReason: "two_factor_reset" } });
-      await tx.outboxEvent.create({ data: { type: "auth.security_alert", aggregateId: p.userId!, payload: { userId: p.userId, kind: "two_factor_reset" } } });
+      await tx.outboxEvent.create({ data: { type: "auth.security_alert", aggregateId: p.userId!, payload: { userId: p.userId, kind: "TWO_FACTOR_RESET" } } });
       await audit(tx, approver.id, "user.2fa_reset", "User", p.userId!, { requestedById: a.requestedById });
     } else await audit(tx, approver.id, "approval.executed", "StaffApprovalRequest", id, { kind: a.kind });
     await tx.outboxEvent.create({ data: { type: "approval.executed", aggregateId: id, payload: { approvalRequestId: id, kind: a.kind } } });

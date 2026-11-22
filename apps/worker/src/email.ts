@@ -113,6 +113,7 @@ export const SECURITY_ALERT_COPY: Record<string, { headline: string; detail: str
   STAFF_RECOVERY_USED: { headline: "A recovery code was used on a staff account", detail: "A two-factor recovery code was used to sign in to your staff account." },
   TWO_FACTOR_ENABLED: { headline: "Two-factor authentication was turned on", detail: "Two-factor authentication was enabled on your account." },
   TWO_FACTOR_REPLACED: { headline: "Your two-factor authenticator was replaced", detail: "The authenticator app linked to your account was replaced." },
+  TWO_FACTOR_RESET: { headline: "Your two-factor authentication was reset by staff", detail: "Two-factor authentication was removed from your account by an administrator after a four-eyes approval, and your sessions were signed out. If you did not expect this, contact support immediately." },
   TWO_FACTOR_DISABLED: { headline: "Two-factor authentication was turned off", detail: "Two-factor authentication was disabled on your account." },
 };
 
@@ -121,10 +122,30 @@ export interface SecurityAlertDb { user: { findUnique(args: unknown): Promise<{ 
 /** notifications `auth.security_alert` {userId, kind, remaining?}: one fixed-text mail to the account address. Skips unknown kinds and inactive accounts. */
 export async function sendSecurityAlertEmail(d: { db: SecurityAlertDb; mail: MailProvider; baseUrl?: string }, payload: { userId?: string; kind?: string; remaining?: number }, jobKey: string): Promise<EmailOutcome> {
   const copy = payload.kind ? SECURITY_ALERT_COPY[payload.kind] : undefined;
+  if (payload.userId && !copy) console.error(JSON.stringify({ msg: "security.alert.unknown_kind", kind: String(payload.kind ?? "").slice(0, 64) })); // never a silent drop (SEC-M6-04)
   if (!payload.userId || !copy) return "SKIPPED";
   const u = await d.db.user.findUnique({ where: { id: payload.userId }, select: { email: true, status: true } });
   if (!u || (u.status ?? "ACTIVE") !== "ACTIVE") return "SKIPPED";
   const detail = payload.kind === "RECOVERY_CODE_USED" && Number.isInteger(payload.remaining) ? `${copy.detail} Unused recovery codes left: ${payload.remaining}.` : copy.detail;
   await d.mail.send(renderMail("security_alert", u.email, { url: `${d.baseUrl ?? appUrl()}/account`, headline: copy.headline, detail }), { idempotencyKey: jobKey });
+  return "SENT";
+}
+
+/** Fixed one-line copy per notification type for the `notification.email` job (NTF-001): no review text, no names. Mail is resolved from the DB by userId. */
+const NOTIFICATION_COPY: Record<string, { headline: string; detail: string }> = {
+  CONTENT_HELD: { headline: "Your content is under review", detail: "Your content is being checked by our team before it is shown. You can see the status in your account." },
+  CONTENT_REJECTED: { headline: "Your content was not published", detail: "Your content did not meet our guidelines. The reason and how to appeal are in your account." },
+  CONTENT_REMOVED: { headline: "Your content was removed", detail: "Your content was removed. The reason and how to appeal are in your account." },
+  CONTENT_RESTORED: { headline: "Your content was restored", detail: "Your content has been restored after a review." },
+  REVIEW_PUBLISHED: { headline: "Your review is live", detail: "Your review has been published." },
+  APPEAL_RECEIVED: { headline: "We received your appeal", detail: "Your appeal was received and will be reviewed." },
+  APPEAL_DECIDED: { headline: "Your appeal has a decision", detail: "A decision on your appeal is available in your account." },
+};
+export async function sendNotificationEmail(d: { db: SecurityAlertDb; mail: MailProvider; baseUrl?: string }, payload: { userId?: string; type?: string }, jobKey: string): Promise<EmailOutcome> {
+  const copy = payload.type ? NOTIFICATION_COPY[payload.type] : undefined;
+  if (!payload.userId || !copy) return "SKIPPED";
+  const u = await d.db.user.findUnique({ where: { id: payload.userId }, select: { email: true, status: true } });
+  if (!u || (u.status ?? "ACTIVE") !== "ACTIVE") return "SKIPPED";
+  await d.mail.send(renderMail("security_alert", u.email, { url: `${d.baseUrl ?? appUrl()}/account/notifications`, headline: copy.headline, detail: copy.detail }), { idempotencyKey: jobKey });
   return "SENT";
 }

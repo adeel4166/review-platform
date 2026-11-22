@@ -33,28 +33,25 @@ describe("MOD-022 report flood (F-9)", () => {
   });
 });
 
-/**
- * These pin the SEC-M5-M7 closure. They are `it.fails`: green while the defect is open (QA-M6-01/02, QA-M7-01 in
- * docs/qa/m6-gate-report.md), and they turn RED the moment the fix lands, so whoever fixes it must drop `.fails`.
- */
+/** SEC-M5-M7 closure (task #83): QA-M6-01/02 and QA-M7-01 wiring is live; these are normal assertions now. */
 describe("SEC-M6-01 (P0) role grants go through four-eyes", () => {
-  it.fails("the staff roles route must call requestRoleGrant and not grantStaffRole", () => {
+  it("the staff roles route must call requestRoleGrant and not grantStaffRole", () => {
     const route = src("apps/web/src/app/api/admin/staff/[id]/roles/route.ts");
     expect(route).toContain("requestRoleGrant");
     expect(route).not.toMatch(/grantStaffRole\(/);
   });
-  it.fails("userRole.upsert/create appears only in approvals.ts (and the MODERATOR path)", () => {
+  it("userRole.upsert/create appears only in approvals.ts (and the MODERATOR path)", () => {
     const hits = nonTestFiles("apps/web/src").filter((f) => /userRole\.(upsert|create)\(/.test(src(f)));
     expect(hits.filter((f) => !/server\/approvals\.ts$/.test(f))).toEqual([]);
   });
 });
 
 describe("SEC-M6-02 (P0) production moderation is not the mock blocklist", () => {
-  it.fails("createModerationProvider refuses mock/unset in production", () => {
+  it("createModerationProvider refuses mock/unset in production", () => {
     const s = src("packages/core/src/moderation-provider.ts");
     expect(s).toMatch(/NODE_ENV[^\n]*production|production[^\n]*NODE_ENV/);
   });
-  it.fails("the moderation queue handler publishes through runAssess, not the legacy decideVerdict", () => {
+  it("the moderation queue handler publishes through runAssess, not the legacy decideVerdict", () => {
     const s = src("apps/worker/src/processors.ts");
     expect(s).toContain("runAssess");
     expect(s).not.toContain("processModeration(getDb()");
@@ -64,7 +61,7 @@ describe("SEC-M6-02 (P0) production moderation is not the mock blocklist", () =>
 describe("SEC-M7-01 (P1) M7 entry points have a production caller", () => {
   const files = () => [...nonTestFiles("apps/worker/src"), ...nonTestFiles("apps/web/src")];
   for (const fn of ["routeReview", "recomputeSubject", "nightlyDecay", "detectVoteAnomaly"]) {
-    it.fails(`${fn} is referenced outside tests and its own definition`, () => {
+    it(`${fn} is referenced outside tests and its own definition`, () => {
       const def = new RegExp(`(function|const)\\s+${fn}\\b`);
       const refs = files().filter((f) => { const t = src(f); return !def.test(t) && new RegExp(`\\b${fn}\\b`).test(t); });
       expect(refs.length).toBeGreaterThan(0);

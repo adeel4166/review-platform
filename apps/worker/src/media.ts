@@ -8,16 +8,18 @@ import {
   MEDIA_VARIANTS,
   MediaTooLargeError,
   quarantineKey,
+  recordSignals,
   variantKey,
   type MediaFailureReason,
   type ObjectStore,
+  type SignalStore,
 } from "@rp/core";
 import { ScannerUnavailable, evaluateFreshness, type Scanner } from "./media/clamd";
 import { VideoReject, transcodeVideo } from "./media/video";
 import { detectType, findPolyglot, sha256Hex } from "./media/validate";
 import type { MetadataVerifier } from "./media/verify";
 
-type AssetRow = { id: string; status: string; declaredMime: string; ingestKey: string; sizeBytes?: number };
+type AssetRow = { id: string; status: string; declaredMime: string; ingestKey: string; sizeBytes?: number; ownerId?: string };
 export interface MediaDb {
   mediaAsset: {
     findUnique(args: unknown): Promise<AssetRow | null>;
@@ -28,6 +30,8 @@ export interface MediaDb {
   mediaProcessingLog?: { create(args: unknown): Promise<unknown> };
   bannedMediaHash?: { findUnique(args: unknown): Promise<unknown | null> };
 }
+/** QA-M7-02: MALWARE verdicts write the MALWARE_UPLOAD trust signal (idempotent per asset) and ask for a recompute of the uploader. */
+export interface MalwareSignals { store: SignalStore; recompute?: (subjectKey: string) => Promise<unknown> }
 export interface MediaDeps {
   db: MediaDb;
   store: ObjectStore;
@@ -38,6 +42,7 @@ export interface MediaDeps {
   alert?: (kind: string, detail: Record<string, unknown>) => void;
   now?: () => Date;
   transcode?: typeof transcodeVideo;
+  signals?: MalwareSignals;
 }
 export type MediaOutcome = "READY" | "FAILED" | "SKIPPED";
 
@@ -73,7 +78,7 @@ export async function buildVariants(input: Buffer) {
  * Permanent problems mark FAILED and return; transient (storage/infra/scanner) errors throw so BullMQ retries.
  */
 export async function processMedia(d: MediaDeps, assetId: string): Promise<MediaOutcome> {
-  const a = await d.db.mediaAsset.findUnique({ where: { id: assetId }, select: { id: true, status: true, declaredMime: true, ingestKey: true, sizeBytes: true } });
+  const a = await d.db.mediaAsset.findUnique({ where: { id: assetId }, select: { id: true, status: true, declaredMime: true, ingestKey: true, sizeBytes: true, ownerId: true } });
   if (!a || a.status !== "PROCESSING") return "SKIPPED";
   const declaredVideo = (MEDIA_ALLOWED_VIDEO_MIME as readonly string[]).includes(a.declaredMime);
   try {
@@ -153,6 +158,11 @@ export async function processMedia(d: MediaDeps, assetId: string): Promise<Media
     if (!(e instanceof Reject)) throw e;
     if (e.alertKind) d.alert?.(e.alertKind, { assetId: a.id });
     if (e.reason === "MALWARE" || e.reason === "BANNED_HASH") d.alert?.(e.reason, { assetId: a.id });
+    if (e.reason === "MALWARE" && d.signals && a.ownerId) {
+      const uploaderId = a.ownerId;
+      const r = await recordSignals(d.signals.store, { now: d.now ?? (() => new Date()) }, { kind: "media.rejected", reason: "MALWARE", assetId: a.id, uploaderId } as never).catch((err: Error) => { d.alert?.("MALWARE_SIGNAL_FAILED", { assetId: a.id, err: err.message.slice(0, 120) }); return null; });
+      if (r?.written.length) await d.signals.recompute?.(`U:${uploaderId}`).catch(() => undefined);
+    }
     await markMediaFailed(d, a.id, e.reason);
     await d.store.delete(d.buckets.ingest, a.ingestKey).catch(() => undefined);
     return "FAILED";

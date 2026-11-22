@@ -4,7 +4,7 @@ import { QUEUES, mediaJobSchema } from "@rp/core";
 import { processors } from "./processors";
 
 vi.mock("@rp/db", () => ({ prisma: {} }));
-vi.mock("./moderation", () => ({ processModeration: vi.fn(async () => "SKIPPED") }));
+vi.mock("./moderation/live", () => ({ liveProviderCall: vi.fn(() => async () => ({})), processAssessJob: vi.fn(async () => ({ status: "skipped", reason: "test" })) }));
 
 /** SMK-003: worker smoke. Skeleton processors must validate payloads and fail closed. */
 const job = (data: unknown) => ({ id: "j1", data }) as unknown as Job;
@@ -18,7 +18,7 @@ describe("worker processors (smoke, SMK-003)", () => {
   });
 
   it("registers exactly the queues with validated skeleton processors", () => {
-    expect(Object.keys(processors).sort()).toEqual([QUEUES.media, QUEUES.moderation, QUEUES.notifications, QUEUES.verification, QUEUES.verificationResult].sort());
+    expect(Object.keys(processors).sort()).toEqual([QUEUES.media, QUEUES.moderation, QUEUES.notifications, QUEUES.trust, QUEUES.verification, QUEUES.verificationResult].sort());
   });
 
   it("accepts a valid moderation payload", async () => {
