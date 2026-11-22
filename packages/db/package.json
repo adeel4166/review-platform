@@ -10,7 +10,7 @@
     "push": "prisma db push --skip-generate",
     "validate": "prisma validate",
     "typecheck": "prisma generate && tsc -p .",
-    "test": "prisma validate",
+    "test": "DATABASE_URL=\"${DATABASE_URL:-mysql://placeholder:placeholder@localhost:3306/placeholder}\" prisma validate",
     "migrate:deploy": "prisma migrate deploy",
     "migrate:dev": "prisma migrate dev",
     "seed": "tsx prisma/seed.ts",

@@ -1,17 +1,20 @@
 import { prisma } from "@rp/db";
-import { expect, type Browser, type BrowserContext } from "@playwright/test";
-import { PRODUCT_SLUG, newUser, registerUser, signInInContext, uniqueTag, type TestUser } from "./helpers";
+import { expect, type Browser, type BrowserContext, type Page } from "@playwright/test";
+import { PRODUCT_SLUG, enrolTwoFactor, newUser, registerUser, signInInContext, uniqueTag, type TestUser, type Totp } from "./helpers";
 
 /**
  * M6 journeys seed their own deadlines straight into the database (ADR-0024: no runtime test clock). The tests only ever write
  * rows they created themselves (unique tags), so they stay parallel-safe. Needs DATABASE_URL in the Playwright environment.
  */
-export async function makeStaff(browser: Browser, baseURL: string | undefined): Promise<{ context: BrowserContext; user: TestUser; id: string }> {
+export async function makeStaff(browser: Browser, baseURL: string | undefined): Promise<{ context: BrowserContext; user: TestUser; id: string; page: Page; totp: Totp }> {
   const context = await browser.newContext({ baseURL });
   const user = await registerUser(context.request, newUser(`mod${uniqueTag()}`));
   const row = await prisma.user.update({ where: { email: user.email }, data: { emailVerifiedAt: new Date(), roles: { create: { role: "ADMIN", reason: "e2e" } } } });
   await signInInContext(context, user.email, user.password);
-  return { context, user, id: row.id };
+  // DEF-LIVE-05: enrol TOTP through the real setup wizard (same as social-helpers makeStaffWith2fa) so the 2FA gate is exercised.
+  const page = await context.newPage();
+  const { totp } = await enrolTwoFactor(page, user.password);
+  return { context, user, id: row.id, page, totp };
 }
 
 /** An author with a PENDING review and an OPEN hold-lane case (UNSURE verdict). `holdExpiresAt` is absolute UTC. */
