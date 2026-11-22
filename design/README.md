@@ -4,6 +4,7 @@ Wireframes, design tokens and accessibility baseline for the Review Platform (Ph
 
 | File | Purpose |
 |---|---|
+| [`hifi/`](./hifi/README.md) | **Hi-fi UI design v2 (LIVE-02):** foundations, states/toasts, per-screen specs, old→new page map for every route |
 | [`wireframes/`](./wireframes/00-conventions.md) | Responsive low-fi wireframes: 00 conventions/shell · 01 sign-in/2FA · 02 product page (rating breakdown, verified-only filter) · 03 write review + media upload · 04 seller reply (+ verification claim) · 05 comparison · 06 profile/social/account/appeals · 07 admin moderation, appeal and seller queues · 08 analytics dashboards · 09 home/search · 10 seller dashboard · 11 appeal flow |
 | [`tokens.json`](./tokens.json) | Source of truth for colour (light + dark), type, spacing, radius, shadow, breakpoints, targets, motion |
 | `tokens.css`, `tailwind-preset.cjs` | **Generated** by `node design/gen.cjs`; CSS variables (+ focus ring, reduced-motion) and a Tailwind preset using them |
