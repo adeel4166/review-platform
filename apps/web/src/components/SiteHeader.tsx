@@ -2,6 +2,7 @@ import Link from "next/link";
 import { t } from "@/i18n/en";
 import { HeaderAuth } from "./HeaderAuth";
 import { ThemeToggle } from "./ThemeToggle";
+import { CommandPaletteTrigger } from "./CommandPaletteTrigger";
 
 const navLink = "inline-flex min-h-target items-center rounded-md px-3 font-medium text-text hover:bg-bg-subtle";
 
@@ -19,7 +20,7 @@ export function SiteHeader() {
           <label htmlFor="hdr-q" className="sr-only">{t("products.search.label")}</label>
           <input id="hdr-q" name="q" type="search" maxLength={100} placeholder={t("products.search.label")} className="min-h-target w-full rounded-md border border-border-strong bg-surface px-3" />
         </form>
-        <div className="ml-auto flex items-center gap-1 md:ml-0"><ThemeToggle /><HeaderAuth /></div>
+        <div className="ml-auto flex items-center gap-1 md:ml-0"><CommandPaletteTrigger /><ThemeToggle /><HeaderAuth /></div>
       </div>
     </header>
   );
