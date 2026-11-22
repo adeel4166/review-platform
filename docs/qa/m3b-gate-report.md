@@ -1,4 +1,37 @@
-# M3b QA gate report (task #63, re-run after M3b-11)
+# M3b QA gate report
+
+## Re-run 2026-11-22 (task #66, after M3b-fix-01): verdict PASS
+
+**PASS. Zero open P0 defects.** Judged on branch `task/66` (main at `5792ec5`, includes #61, #62, #63, #64). Per the 2026-11-22 update, T-08 (MinIO) and the E2E specs are **NOT RUN (runtime pending CI)**, because this host has no Docker (task #65 is parked). They are not counted as failures, and they are not claimed as passed. `docs/qa/t08-runtime-check.md` does not exist in the repo, so there are no T-08 runtime results to import.
+
+| Check | Result |
+|---|---|
+| QA-M3B-01..05 | **closed** (re-verified in the previous run; no regressions in the suites) |
+| QA-M3B-06 (AUT-022) | **closed**. `two-factor.test.ts` "AUT-022: the alert is limited to one per account per hour, not one per session" is a plain `it`, passes. No `it.fails` remains in the repo |
+| QA-M3B-07 (SEL-023, SEL-024) | **closed**. `ownership-transfer-email.test.ts`: one token per recipient, hash only, retry does not re-mail, T-24h reminder invalidates the earlier link, schedule exactly 24 h before. The `it.todo` is gone |
+| QA-M3B-08 (SEL-035) | **closed**. `verification/mx-check.test.ts` and `claim-email.gate.test.ts`: MX present, no MX / null MX / NXDOMAIN gives REJECTED `no_mx` by RULE, DNS error backs off then EXPIRES, T-01 isolation holds |
+| `pnpm qa` (lint, typecheck, test, design:check) | **pass**, exit 0. core 374, worker 166, web 582 passed + 1 todo |
+| `pnpm coverage` | **pass**, exit 0. Lines: core 85.69%, worker 75.33%, web 90.44% |
+| T-08 MinIO runtime | **NOT RUN** (runtime pending CI job `t08-minio`) |
+| E2E (Playwright) | **NOT RUN** (runtime pending CI job `e2e`) |
+
+### P0 totals (48 cases, m3b-spec §10)
+
+43 PASS (the 40 earlier plus AUT-022, SEL-023, SEL-035), 0 FAIL, 5 NOT RUN. Each NOT RUN case has a passing static or unit part and a remaining part that needs MySQL, a route harness or E2E:
+
+- SEL-022: live CHECK `chk_transfer_delay` rejecting a raw insert (MySQL).
+- SEL-026: true concurrent interleaving under row locks (MySQL).
+- RPL-011: live refusal of a review delete with open cases (MySQL).
+- SEL-034: signed-out request gives 401 (`it.todo` in `claim-email.test.ts:171`, route and session harness / E2E).
+- RPL-006: E2E DOM check.
+
+These are runtime items, not product defects. The gate must still be confirmed in CI (`e2e`, `t08-minio`, and a live-MySQL run) before release. A CI failure there reopens it.
+
+Notes: web test output prints expected `ratelimit.error`, ioredis ECONNREFUSED and "unhandled route error" lines, because Redis is absent and error paths are exercised. They do not fail a test. No production source was changed in this task.
+
+---
+
+# M3b QA gate report (task #63 run, historical)
 
 | | |
 |---|---|
@@ -148,3 +181,4 @@ pnpm --filter @rp/core exec vitest run src/domain-policy.test.ts
 
 
 - **task #64 (M3b-fix-01):** QA-M3B-06 (hourly per-account alert limit, `it.fails` now plain `it`), QA-M3B-07 (worker consumer mints/mails/reminds transfer cancel links, hash only) and QA-M3B-08 (MX enforced in the verification-egress group, no_mx -> REJECTED by RULE) closed. AUT-022, SEL-023, SEL-035 re-test PASS; verdict to be re-issued by the next gate run.
+- **task #66 (M3b-gate-rerun):** QA-M3B-06..08 re-tested and closed. `pnpm qa` and `pnpm coverage` exit 0. 43/48 P0 PASS, 5 NOT RUN (live DB, E2E). T-08 and E2E NOT RUN (runtime pending CI). Verdict **PASS**, zero open P0 defects.
