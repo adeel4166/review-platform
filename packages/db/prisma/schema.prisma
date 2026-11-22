@@ -83,6 +83,7 @@ enum ModerationTrigger {
   USER_REPORT
   STAFF_FLAG
   STAFF_INITIATED
+  VOTE_ANOMALY
 }
 
 enum MediaStatus {
@@ -122,6 +123,16 @@ model User {
   lastLoginAt           DateTime?
   /// Throttle for the "someone tried to register" mail (ADR-0016): at most one per hour.
   accountExistsNoticeAt DateTime?
+  trustScore            Decimal?               @db.Decimal(5, 2)
+  trustBand             TrustBand              @default(NEW)
+  trustComputedAt       DateTime?              @db.DateTime(3)
+  handleChangedAt       DateTime?              @db.DateTime(3)
+  followsMade           Follow[]               @relation("Follower")
+  followsReceived       Follow[]               @relation("FollowedUser")
+  blocksMade            UserBlock[]            @relation("Blocker")
+  blocksReceived        UserBlock[]            @relation("Blocked")
+  notifications         Notification[]         @relation("NotificationRecipient")
+  notificationPrefs     NotificationPreference[]
   createdAt             DateTime               @default(now())
   updatedAt             DateTime               @updatedAt
 
@@ -213,6 +224,10 @@ model Product {
   ratingAverage Decimal?      @db.Decimal(3, 2) // cache, maintained by the worker
   ratingCount   Int           @default(0)
   reviewCount   Int           @default(0)
+  verifiedRatingAverage Decimal? @db.Decimal(3, 2)
+  verifiedRatingCount   Int      @default(0)
+  ratingHistogram       Json?
+  aggregateComputedAt   DateTime? @db.DateTime(3)
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
@@ -245,6 +260,10 @@ model Review {
   currentVersion     Int                  @default(1)
   publishedVersion   Int?
   helpfulCount       Int                  @default(0)
+  helpfulWeighted    Decimal              @default(0) @db.Decimal(10, 2)
+  votesFrozenAt      DateTime?            @db.DateTime(3)
+  /// Set while the review belongs to an open ProductBurst window; excluded from aggregates until a human decision (TRS-004).
+  aggregateExcludedAt DateTime?           @db.DateTime(3)
   notHelpfulCount    Int                  @default(0)
   commentCount       Int                  @default(0)
   verifiedBuyer      Boolean              @default(false)
@@ -276,6 +295,7 @@ model Review {
   @@unique([productId, authorId])
   @@index([productId, status, verifiedPurchaseAt])
   @@index([productId, status, publishedAt])
+  @@index([productId, createdAt])
   @@index([authorId, createdAt])
   @@index([status, createdAt])
   @@map("reviews")
@@ -623,6 +643,9 @@ model Seller {
   verifiedDomain  String?      @db.VarChar(253)
   verifiedAt      DateTime?    @db.DateTime(3)
   nameReviewFlag  Boolean      @default(false)
+  trustScore      Decimal?     @db.Decimal(5, 2)
+  trustBand       TrustBand    @default(LOW)
+  trustComputedAt DateTime?    @db.DateTime(3)
   closedAt        DateTime?    @db.DateTime(3)
   createdById     String
   createdAt       DateTime     @default(now()) @db.DateTime(3)
@@ -1080,6 +1103,63 @@ enum TrustSignalType {
   DUPLICATE_PROOF_DETECTED
   VERIFIED_PURCHASE
   PROOF_REJECTED_FRAUD
+  REVIEW_PUBLISHED
+  REVIEW_REMOVED
+  HELPFUL_VOTE_RECEIVED
+  NOT_HELPFUL_VOTE_RECEIVED
+  REPORT_UPHELD
+  REPORT_REJECTED
+  CONTENT_ACTIONED_AGAINST
+  ENFORCEMENT_ACTION
+  APPEAL_OVERTURNED
+  SELLER_REPLY_PUBLISHED
+  SELLER_REPLY_REMOVED
+  VELOCITY_ANOMALY
+  NEAR_DUPLICATE_TEXT
+  LINKED_ACCOUNT_SUSPECTED
+}
+
+enum TrustBand {
+  NEW
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum FollowTargetType {
+  USER
+  SELLER
+  PRODUCT
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+}
+
+/// No messaging types in Phase 1 (SCOPE-001). Mandatory subset lives in packages/core/src/notifications/types.ts.
+enum NotificationType {
+  CONTENT_HELD
+  CONTENT_REJECTED
+  CONTENT_REMOVED
+  CONTENT_RESTORED
+  MEDIA_REJECTED
+  APPEAL_RECEIVED
+  APPEAL_DECIDED
+  ENFORCEMENT_ISSUED
+  SECURITY_ALERT
+  PROOF_VERIFIED
+  PROOF_REJECTED
+  VERIFIED_LABEL_REVOKED
+  REVIEW_PUBLISHED
+  REVIEW_VOTED_HELPFUL
+  SELLER_REPLIED
+  NEW_FOLLOWER
+  FOLLOWED_PRODUCT_REVIEWED
+  REPORT_RESOLVED
+  CLAIM_VERIFIED
+  CLAIM_REJECTED
+  SYSTEM_ANNOUNCEMENT
 }
 
 model ReviewVote {
@@ -1087,6 +1167,10 @@ model ReviewVote {
   userId    String
   value     VoteValue
   ipHash    String?   @db.Char(64)
+  /// Voter-band weight at write time (TRS-001): NEW 0, LOW 0.5, MEDIUM 1, HIGH 1.5.
+  weight    Decimal   @default(0) @db.Decimal(3, 2)
+  /// Stored during a velocity freeze (TRS-002); not counted.
+  frozen    Boolean   @default(false)
   createdAt DateTime  @default(now()) @db.DateTime(3)
   updatedAt DateTime  @updatedAt @db.DateTime(3)
 
@@ -1217,13 +1301,21 @@ model PurchaseProofFile {
 model TrustSignal {
   id         BigInt          @id @default(autoincrement())
   type       TrustSignalType
-  userId     String          @db.VarChar(32)
+  userId     String?         @db.VarChar(32)
+  sellerId   String?         @db.VarChar(32)
+  /// "U:<id>" | "S:<id>" (chk_trust_signal_subject). Null only on pre-M7 rows.
+  subjectKey String?         @db.VarChar(40)
   sourceType String          @db.VarChar(32)
   sourceId   String          @db.VarChar(32)
+  value      Decimal         @default(1) @db.Decimal(8, 2)
+  occurredAt DateTime        @default(now()) @db.DateTime(3)
+  voidedAt   DateTime?       @db.DateTime(3)
   createdAt  DateTime        @default(now()) @db.DateTime(3)
 
   @@unique([type, sourceType, sourceId, userId])
+  @@unique([type, sourceType, sourceId, subjectKey])
   @@index([userId, createdAt])
+  @@index([subjectKey, occurredAt])
   @@map("trust_signals")
 }
 
@@ -1238,6 +1330,7 @@ enum ModerationLane {
   HOLD
   POST_REVIEW
   REPORTED
+  INTEGRITY
 }
 
 enum ModerationVerdict {
@@ -1454,4 +1547,121 @@ model BulkOperationItem {
 
   @@id([bulkOperationId, caseId])
   @@map("moderation_bulk_items")
+}
+
+model TrustScoreSnapshot {
+  id              String    @id @default(cuid())
+  subjectUserId   String?   @db.VarChar(32)
+  subjectSellerId String?   @db.VarChar(32)
+  score           Decimal   @db.Decimal(5, 2)
+  band            TrustBand
+  algorithmVersion String   @db.VarChar(32)
+  components      Json
+  computedAt      DateTime  @db.DateTime(3)
+
+  @@index([subjectUserId, computedAt])
+  @@index([subjectSellerId, computedAt])
+  @@map("trust_score_snapshots")
+}
+
+model ReviewFingerprint {
+  reviewId  String
+  version   Int
+  minhash   Bytes    @db.VarBinary(512)
+  createdAt DateTime @db.DateTime(3)
+
+  @@id([reviewId, version])
+  @@map("review_fingerprints")
+}
+
+model ReviewLshBucket {
+  band      Int      @db.TinyInt
+  bucket    String   @db.Char(16)
+  reviewId  String
+  authorId  String
+  createdAt DateTime @db.DateTime(3)
+
+  @@id([band, bucket, reviewId])
+  @@index([reviewId])
+  @@map("review_lsh_buckets")
+}
+
+model ProductBurst {
+  id             String   @id @default(cuid())
+  productId      String
+  startedAt      DateTime @db.DateTime(3)
+  lastReviewAt   DateTime @db.DateTime(3)
+  endsAt         DateTime @db.DateTime(3)
+  reviewCount    Int
+  lowTrustCount  Int
+
+  @@index([productId, endsAt])
+  @@map("product_bursts")
+}
+
+model Follow {
+  id                String           @id @default(cuid())
+  followerId        String
+  targetType        FollowTargetType
+  followedUserId    String?
+  followedSellerId  String?
+  followedProductId String?
+  createdAt         DateTime         @default(now()) @db.DateTime(3)
+
+  follower     User  @relation("Follower", fields: [followerId], references: [id], onDelete: Cascade)
+  followedUser User? @relation("FollowedUser", fields: [followedUserId], references: [id], onDelete: Cascade)
+
+  @@unique([followerId, followedUserId])
+  @@unique([followerId, followedSellerId])
+  @@unique([followerId, followedProductId])
+  @@index([followedUserId])
+  @@index([followedSellerId])
+  @@index([followedProductId])
+  @@map("follows")
+}
+
+model UserBlock {
+  blockerId String
+  blockedId String
+  createdAt DateTime @default(now()) @db.DateTime(3)
+
+  blocker User @relation("Blocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked User @relation("Blocked", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@id([blockerId, blockedId])
+  @@index([blockedId])
+  @@map("user_blocks")
+}
+
+model Notification {
+  id          String           @id @default(cuid())
+  recipientId String
+  actorId     String?
+  type        NotificationType
+  entityType  String?          @db.VarChar(50)
+  entityId    String?          @db.VarChar(191)
+  data        Json?
+  groupKey    String           @db.VarChar(191)
+  readAt      DateTime?        @db.DateTime(3)
+  emailedAt   DateTime?        @db.DateTime(3)
+  createdAt   DateTime         @default(now()) @db.DateTime(3)
+
+  recipient User @relation("NotificationRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+
+  @@unique([recipientId, groupKey])
+  @@index([recipientId, createdAt])
+  @@index([recipientId, readAt])
+  @@map("notifications")
+}
+
+model NotificationPreference {
+  userId  String
+  type    NotificationType
+  channel NotificationChannel
+  enabled Boolean             @default(true)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, type, channel])
+  @@map("notification_preferences")
 }

@@ -1,4 +1,4 @@
-import { authorizeVote, isNewAccount, voteDelta, type VoteValue } from "@rp/core";
+import { authorizeVote, isNewAccount, voteDelta, voteWeight, type TrustBand, type VoteValue } from "@rp/core";
 import type { Db } from "./db";
 import { HttpError } from "./http";
 
@@ -21,8 +21,8 @@ const DENY: Record<string, [number, string, string]> = {
 /** Shared authorisation: loads the review (+ seller scope), the caller and any active VOTING_RESTRICTION. */
 async function authorise(db: Db, userId: string, reviewId: string, now: Date) {
   const [review, user, restriction, memberships] = await Promise.all([
-    db.review.findUnique({ where: { id: reviewId }, select: { id: true, authorId: true, status: true, helpfulCount: true, notHelpfulCount: true, product: { select: { sellerId: true } } } }),
-    db.user.findUnique({ where: { id: userId }, select: { emailVerifiedAt: true, createdAt: true, status: true } }),
+    db.review.findUnique({ where: { id: reviewId }, select: { id: true, authorId: true, status: true, helpfulCount: true, notHelpfulCount: true, votesFrozenAt: true, product: { select: { sellerId: true } } } }),
+    db.user.findUnique({ where: { id: userId }, select: { emailVerifiedAt: true, createdAt: true, status: true, trustBand: true } }),
     db.enforcementAction.findFirst({ where: { subjectUserId: userId, type: "VOTING_RESTRICTION", status: "ACTIVE" }, select: { endsAt: true } }),
     db.sellerMember.findMany({ where: { userId }, select: { sellerId: true } }),
   ]);
@@ -38,8 +38,12 @@ async function authorise(db: Db, userId: string, reviewId: string, now: Date) {
     const [status, code, msg] = DENY[verdict.deny]!;
     throw new HttpError(status, code, msg);
   }
-  return { review: review!, newAccount: user?.createdAt ? isNewAccount(user.createdAt, now) : true };
+  return { review: review!, newAccount: user?.createdAt ? isNewAccount(user.createdAt, now) : true, weight: voteWeight((user?.trustBand ?? "NEW") as TrustBand), frozen: !!(review as { votesFrozenAt?: Date | null }).votesFrozenAt };
 }
+
+/** A stored vote moves the counters only when counted (weight > 0 and not frozen). Rows without the M7 columns count (legacy). */
+const countedValue = (v: { value: VoteValue; weight?: unknown; frozen?: boolean } | null): VoteValue | null =>
+  v && (v.weight === undefined || Number(v.weight) > 0) && !v.frozen ? v.value : null;
 
 function isUniqueViolation(e: unknown): boolean {
   return typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002";
@@ -52,8 +56,9 @@ function isUniqueViolation(e: unknown): boolean {
  */
 export async function putVote(db: Db, userId: string, reviewId: string, value: VoteValue, ctx: VoteCtx = {}): Promise<VoteResult> {
   const now = ctx.now ?? new Date();
-  const { review, newAccount } = await authorise(db, userId, reviewId, now);
-  const pre = await db.reviewVote.findUnique({ where: { reviewId_userId: { reviewId, userId } }, select: { value: true } });
+  const { review, newAccount, weight, frozen } = await authorise(db, userId, reviewId, now);
+  const counted = weight > 0 && !frozen; // TRS-001/002: only counted votes move the public counters
+  const pre = await db.reviewVote.findUnique({ where: { reviewId_userId: { reviewId, userId } }, select: { value: true, weight: true, frozen: true } });
   if (pre?.value === value) return { value, helpfulCount: review.helpfulCount, notHelpfulCount: review.notHelpfulCount };
   await ctx.charge?.({ newAccount });
   return db.$transaction(async (tx) => {
@@ -61,16 +66,16 @@ export async function putVote(db: Db, userId: string, reviewId: string, value: V
       const r = await tx.review.findUniqueOrThrow({ where: { id: reviewId }, select: { helpfulCount: true, notHelpfulCount: true } });
       return { value: v, ...r };
     };
-    const prev = await tx.reviewVote.findUnique({ where: { reviewId_userId: { reviewId, userId } }, select: { value: true } });
+    const prev = await tx.reviewVote.findUnique({ where: { reviewId_userId: { reviewId, userId } }, select: { value: true, weight: true, frozen: true } });
     if (prev?.value === value) return current(value); // a concurrent identical PUT already applied
     if (prev) {
-      const res = await tx.reviewVote.updateMany({ where: { reviewId, userId, value: prev.value }, data: { value, ipHash: ctx.ipHash ?? null } });
+      const res = await tx.reviewVote.updateMany({ where: { reviewId, userId, value: prev.value }, data: { value, ipHash: ctx.ipHash ?? null, weight, frozen } });
       if (res.count !== 1) return current(null); // lost a race with another switch or retract: apply nothing
     } else {
-      try { await tx.reviewVote.create({ data: { reviewId, userId, value, ipHash: ctx.ipHash ?? null } }); }
+      try { await tx.reviewVote.create({ data: { reviewId, userId, value, ipHash: ctx.ipHash ?? null, weight, frozen } }); }
       catch (e) { if (isUniqueViolation(e)) return current(null); throw e; } // concurrent first vote
     }
-    const d = voteDelta(prev?.value ?? null, value);
+    const d = voteDelta(countedValue(prev), counted ? value : null);
     const r = await tx.review.update({ where: { id: reviewId }, data: { helpfulCount: { increment: d.h }, notHelpfulCount: { increment: d.n } }, select: { helpfulCount: true, notHelpfulCount: true } });
     return { value, ...r };
   });
@@ -80,13 +85,13 @@ export async function putVote(db: Db, userId: string, reviewId: string, value: V
 export async function deleteVote(db: Db, userId: string, reviewId: string, ctx: VoteCtx = {}): Promise<VoteResult> {
   const now = ctx.now ?? new Date();
   const { review, newAccount } = await authorise(db, userId, reviewId, now);
-  const prev = await db.reviewVote.findUnique({ where: { reviewId_userId: { reviewId, userId } }, select: { value: true } });
+  const prev = await db.reviewVote.findUnique({ where: { reviewId_userId: { reviewId, userId } }, select: { value: true, weight: true, frozen: true } });
   if (!prev) return { value: null, helpfulCount: review.helpfulCount, notHelpfulCount: review.notHelpfulCount };
   await ctx.charge?.({ newAccount });
   return db.$transaction(async (tx) => {
     const res = await tx.reviewVote.deleteMany({ where: { reviewId, userId, value: prev.value } });
     if (res.count !== 1) return { value: null as VoteValue | null, helpfulCount: review.helpfulCount, notHelpfulCount: review.notHelpfulCount }; // lost a race with another retract
-    const d = voteDelta(prev.value, null);
+    const d = voteDelta(countedValue(prev), null);
     const r = await tx.review.update({ where: { id: reviewId }, data: { helpfulCount: { increment: d.h }, notHelpfulCount: { increment: d.n } }, select: { helpfulCount: true, notHelpfulCount: true } });
     return { value: null as VoteValue | null, ...r };
   });
