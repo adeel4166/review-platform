@@ -1,4 +1,4 @@
-import type { ImageUrlResolver } from "@rp/core";
+import { summaryEnabled, type ImageUrlResolver } from "@rp/core";
 import type { Db } from "./db";
 import { loadProductImages } from "./product-images";
 import { HttpError } from "./http";
@@ -38,5 +38,13 @@ export async function getProduct(db: Db, idOrSlug: string, images: ImageUrlResol
   });
   if (!p) throw new HttpError(404, "not_found", "Product not found");
   const imgs = (await loadProductImages(db, [p.id], images)).get(p.id);
-  return { ...p, primaryImage: imgs?.primaryImage ?? null, gallery: imgs?.gallery ?? [] };
+  return { ...p, primaryImage: imgs?.primaryImage ?? null, gallery: imgs?.gallery ?? [], aiSummary: await loadAiSummary(db, p.id) };
+}
+
+/** V3-06: only a READY summary is public, and only while the feature flag is on. Always labelled `aiGenerated: true`; no reviewer data is stored in it. */
+export async function loadAiSummary(db: Db, productId: string, language = "en", env: Record<string, string | undefined> = process.env) {
+  if (!summaryEnabled(env)) return null;
+  const s = await db.productReviewSummary.findFirst({ where: { productId, language, status: "READY" }, select: { pros: true, cons: true, summary: true, sourceReviewCount: true, model: true, generatedAt: true } });
+  if (!s) return null;
+  return { aiGenerated: true as const, pros: s.pros as string[], cons: s.cons as string[], overview: s.summary, sourceReviewCount: s.sourceReviewCount, model: s.model, generatedAt: s.generatedAt };
 }

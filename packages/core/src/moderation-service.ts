@@ -194,6 +194,9 @@ export async function transitionCase(db: ModerationDb, input: TransitionInput): 
       for (const m of visible) await tx.outboxEvent?.create({ data: { type: "media.promote_requested", aggregateId: m.id, payload: { assetId: m.id, caseId: c.id } } });
     }
 
+    // V3-06: approval (new publication or approved revision) changes the AI summary input. Ids only; the worker debounces.
+    if (input.to === "APPROVED" && !isReply) await tx.outboxEvent?.create({ data: { type: "review.summary_requested", aggregateId: c.reviewId as string, payload: { reviewId: c.reviewId } } });
+
     const metadata = { caseId: c.id, version: c.version, from: c.state, to: input.to, reason: input.reason ?? null, ...input.meta };
     assertAuditMetadataClean(metadata);
     await tx.auditLog.create({

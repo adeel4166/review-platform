@@ -714,3 +714,13 @@ Migration `20270401000000_product_images` (authored for review; applied only wit
 | `POST /api/admin/product-images/:id/decide` | ADMIN (2FA) | `{decision: approve\|reject}`; approve writes an APPROVED `MEDIA` moderation case and queues `media.promote_requested`. Cannot approve own upload |
 
 Seed: `seed-demo` creates two placeholder images per product (`placeholder/<category>-<n>`, served from `apps/web/public/placeholders`, no network or third-party licence).
+
+## AI review summaries (V3-06, ADR-0034 D12)
+
+`product_review_summaries` (migration `20270501000000_product_review_summaries`, authored, applied only with an approved DB_MIGRATION proposal). One row per (product, language).
+
+- **Trigger:** review approval / publish / unpublish (both the M6 transition engine and the legacy decide path) writes outbox `review.summary_requested` (review id only) -> queue `ai-summary` -> a delayed (15 min) `summary.generate` job with `jobId = summary__<productId>__<lang>` (debounce). Concurrency 1.
+- **Gate:** only PUBLISHED, non-deleted, non-burst-excluded reviews; fewer than 5 means no summary (a previous one is set `HIDDEN`/`SOURCE_REMOVED`). Input is capped at 50 (25 most helpful + 25 most recent); same input hash means no regeneration.
+- **Safety:** review text is cleaned (links/emails/phones stripped), clipped and sent only as JSON-escaped data with a pinned system prompt; Gemini is forced to a JSON schema; output is zod-validated (3-5 pros/cons <= 120 chars, <= 2 sentence overview), stripped of links/PII, checked for injection canaries, then scored by the moderation provider (all categories <= 0.2) before saving. Any failure keeps the previous READY row; retryable failures are retried by BullMQ (3 attempts, exponential), 429 honours Retry-After.
+- **API:** `GET /api/products/:id` returns `aiSummary: { aiGenerated: true, pros, cons, overview, sourceReviewCount, model, generatedAt } | null` (READY rows only, and only while the flag is on).
+- **Config (env only):** `AI_REVIEW_SUMMARY_ENABLED` (flag, default off; set on both web and worker), `SUMMARY_MODEL` (default `MODERATION_MODEL`), `SUMMARY_API_KEY` (default `MODERATION_API_KEY`), `SUMMARY_DAILY_CAP` (default 500). Requires `MODERATION_PROVIDER=gemini`; otherwise the job is skipped.

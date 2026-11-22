@@ -104,6 +104,7 @@ model User {
   assignedCases         ModerationCase[]       @relation("CaseAssignee")
   decisionsMade         ModerationDecision[]   @relation("DecisionModerator")
   appealsFiled          Appeal[]               @relation("AppealAppellant")
+  hiddenReviewSummaries ProductReviewSummary[] @relation("ReviewSummaryHiddenBy")
   appealsReviewed       Appeal[]               @relation("AppealReviewer")
   approvalsRequested    StaffApprovalRequest[] @relation("ApprovalRequester")
   approvalsDecided      StaffApprovalRequest[] @relation("ApprovalDecider")
@@ -242,6 +243,7 @@ model Product {
   reviews         Review[]
   ownershipClaims SellerOwnershipClaim[]
   images          ProductImage[]
+  reviewSummaries ProductReviewSummary[]
 
   @@index([sellerId])
   @@index([categoryId, status])
@@ -1723,4 +1725,42 @@ model ProductImage {
 
   @@index([productId, publishedAt, position])
   @@map("product_images")
+}
+
+enum ReviewSummaryStatus {
+  READY
+  HIDDEN
+  FAILED
+}
+
+/// AI-generated pros/cons/summary of a product's PUBLISHED reviews (ADR-0034 D12). One row per (product, language); regenerated, never versioned.
+/// CHECKs live in the migration SQL.
+model ProductReviewSummary {
+  id                String              @id @default(cuid())
+  productId         String
+  language          String              @default("en") @db.VarChar(16)
+  status            ReviewSummaryStatus @default(READY)
+  /// JSON arrays of 3..5 plain-text strings, each <= 120 chars, validated by zod before write.
+  pros              Json
+  cons              Json
+  summary           String              @db.VarChar(600)
+  sourceReviewCount Int
+  /// IDs of the reviews used as input (<= 50).
+  sourceReviewIds   Json
+  /// sha256 of the sorted "reviewId:publishedVersion" input list; same hash -> no regeneration.
+  inputHash         String              @db.Char(64)
+  model             String              @db.VarChar(64)
+  promptSha256      String              @db.Char(64)
+  generatedAt       DateTime            @db.DateTime(3)
+  hiddenAt          DateTime?           @db.DateTime(3)
+  hiddenReason      String?             @db.VarChar(32)
+  hiddenById        String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  product  Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  hiddenBy User?   @relation("ReviewSummaryHiddenBy", fields: [hiddenById], references: [id], onDelete: SetNull)
+
+  @@unique([productId, language])
+  @@map("product_review_summaries")
 }
