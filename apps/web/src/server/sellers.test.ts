@@ -81,7 +81,7 @@ describe("cross-seller authz, table-driven over every permission (AZ-010, P-2)",
   const members = [["ownerA", "OWNER"], ["managerA", "MANAGER"], ["responderA", "RESPONDER"]] as const;
   const allowed: Record<SellerPermission, string[]> = {
     "seller.profile.update": ["OWNER", "MANAGER"], "seller.member.invite": ["OWNER", "MANAGER"], "seller.member.manage": ["OWNER"],
-    "seller.claim.submit": ["OWNER", "MANAGER"], "seller.claim.review": [], "product.update": ["OWNER", "MANAGER"],
+    "seller.claim.submit": ["OWNER", "MANAGER"], "seller.claim.review": [], "product.update": ["OWNER", "MANAGER"], "product.image.manage": ["OWNER", "MANAGER"],
     "seller.reply": ["OWNER", "MANAGER", "RESPONDER"], "seller.reply.manage": ["OWNER", "MANAGER", "RESPONDER"],
   };
   beforeEach(() => { for (const s of h.t.seller!) s.status = "VERIFIED"; }); // reply permissions additionally need a VERIFIED seller

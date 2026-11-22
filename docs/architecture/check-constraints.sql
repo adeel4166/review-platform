@@ -269,3 +269,7 @@ ALTER TABLE `moderation_cases` ADD CONSTRAINT `chk_case_subject`
 -- reports:           chk_report_one_target, chk_report_details_len
 -- reviews:           chk_review_verified_label (verifiedPurchaseAt / verificationMethod / verifiedProofId all NULL or all set)
 -- purchase_proofs:   chk_proof_open_key, chk_proof_decision, chk_proof_reject_reason, chk_proof_close, chk_proof_marketplace
+
+-- V3-04 (ADR-0034 D11), applied by migration 20270401000000_product_images:
+-- media_assets:   chk_media_purpose_owner
+-- product_images: chk_product_images_position, chk_product_images_alt, chk_product_images_published, chk_product_images_color

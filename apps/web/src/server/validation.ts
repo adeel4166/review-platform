@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MEDIA_ALLOWED_MIME, MEDIA_MAX_BYTES, PRODUCT_IMAGE_MAX, altTextSchema } from "@rp/core";
 
 const id = z.string().min(1).max(64);
 
@@ -41,6 +42,16 @@ export const loginInput = z.object({
 });
 
 export const idParam = id;
+
+export const productImageSlotInput = z.object({
+  mimeType: z.enum(MEDIA_ALLOWED_MIME),
+  sizeBytes: z.number().int().min(1).max(MEDIA_MAX_BYTES),
+  alt: altTextSchema,
+}).strict();
+export const productImagePatchInput = z.object({ alt: altTextSchema.optional(), isPrimary: z.literal(true).optional() }).strict()
+  .refine((v) => v.alt !== undefined || v.isPrimary !== undefined, { message: "Nothing to update" });
+export const productImageOrderInput = z.object({ imageIds: z.array(id).min(1).max(PRODUCT_IMAGE_MAX) }).strict();
+export const productImageDecisionInput = z.object({ decision: z.enum(["approve", "reject"]) }).strict();
 export type ReviewInput = z.infer<typeof reviewInput>;
 
 export const moderationQueueQuery = pageQuery.extend({

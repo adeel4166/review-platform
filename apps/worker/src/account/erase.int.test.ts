@@ -21,7 +21,7 @@ async function world(legalHold = false) {
   t.purchaseProofFile!.push(...files);
   t.purchaseProof!.push({ id: "p1", submittedById: "u1", status: "VERIFIED", legalHold, filesPurgedAt: null, merchantName: "Shop", purchaseDate: new Date(), decisionNote: "ok", files });
   await store.put("private", "proof/f1", Buffer.from("orig"), "image/png"); await store.put("private", "proof/f2", Buffer.from("red"), "image/png"); await store.put("ingest", "in/proof/f1", Buffer.from("o"), "image/png");
-  t.mediaAsset!.push({ id: "m1", ownerId: "u1", ingestKey: "in/m1", thumbKey: "pub/m1.webp", mediumKey: null, status: "READY" });
+  t.mediaAsset!.push({ id: "m1", ownerId: "u1", purpose: "REVIEW", ingestKey: "in/m1", thumbKey: "pub/m1.webp", mediumKey: null, status: "READY" });
   await store.put("ingest", "in/m1", Buffer.from("m"), "image/png"); await store.put("public", "pub/m1.webp", Buffer.from("m"), "image/webp"); await store.put("private", "pub/m1.webp", Buffer.from("m"), "image/webp");
   t.follow!.push({ id: "f", followerId: "u1", followedUserId: "u2" }, { id: "f2", followerId: "u3", followedUserId: "u1" }, { id: "f3", followerId: "u3", followedUserId: "u4" });
   t.userBlock!.push({ id: "b", blockerId: "u1", blockedId: "u9" });

@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { assertDemoSeedAllowed } from "../../../packages/db/prisma/seed-demo-guard";
 import { DEMO_ACCOUNTS, buildDemoData } from "../../../packages/db/prisma/seed-demo-data";
@@ -34,6 +35,20 @@ describe("LIVE-01 demo seed: production guard", () => {
 
 describe("LIVE-01 demo seed: dataset", () => {
   const d = buildDemoData();
+  it("V3-04: every product has a primary image plus a gallery, with required alt text (placeholder, no network)", () => {
+    for (const p of d.products) {
+      const imgs = d.productImages.filter((i) => i.productId === p.id);
+      expect(imgs.length).toBeGreaterThanOrEqual(1);
+      expect(imgs.filter((i) => i.isPrimary)).toHaveLength(1);
+      expect(imgs.map((i) => i.position).sort()).toEqual(imgs.map((_, k) => k));
+      for (const i of imgs) {
+        expect(i.alt.trim().length).toBeGreaterThan(0);
+        expect(i.publicId.startsWith("placeholder/")).toBe(true);
+        expect(existsSync(new URL(`../../web/public/placeholders/${i.publicId.slice("placeholder/".length)}.${i.format}`, import.meta.url))).toBe(true);
+      }
+    }
+    expect(new Set(d.productImages.map((i) => i.id)).size).toBe(d.productImages.length);
+  });
   it("is deterministic (idempotent upserts by id)", () => expect(JSON.stringify(buildDemoData())).toBe(JSON.stringify(d)));
   it("8 categories, 40 products, ~200 reviews, 6 sellers (some verified)", () => {
     expect(d.categories).toHaveLength(8);

@@ -426,3 +426,12 @@ original and sets `READY`; permanent problems set `FAILED` + `failureReason`; in
 `FAILED/PROCESSING_ERROR`. `GET /api/reviews/:id/media` shows the owner every asset incl. failures. Public review reads
 return presigned GET URLs only for `READY` media of `PUBLISHED` reviews. Virus scan, video, promote/demote and the
 separate public bucket are deferred (the migration `20261123000000_media` is not yet applied).
+
+## Product images (V3-04, ADR-0034 D11)
+
+Product images use the same pipeline as review media: presign, confirm, worker scan (ClamAV) and sanitise into private variants, then **promotion to the public tier** (S3/CDN or Cloudinary, per `MEDIA_PUBLIC_STORE`). Differences:
+
+- The asset has `purpose = PRODUCT_IMAGE` and no review. `promotable()` requires a `product_images` row and an APPROVED `MEDIA` moderation case for that very asset (a review's case can never clear it). Staff uploads are not auto-cleared (MED-037); a different admin approves via `POST /api/admin/product-images/:id/decide`.
+- `media.promote` also publishes the gallery row (`publicId`, `format`, `width`, `height`, `publishedAt`). `media.demote` clears `publishedAt` first. `reconcilePublication` demotes public product images whose gallery row is gone.
+- Account erasure does not purge product images (catalogue content, not the uploader's personal data).
+- Not yet implemented: automatic AI media moderation for product images (human approval only), dominant-colour extraction, HEIC input.

@@ -14,6 +14,7 @@ function fakeDb() {
   };
   const db = {
     product: { findFirst: vi.fn(), findMany: vi.fn(), count: vi.fn() },
+    productImage: { findMany: vi.fn().mockResolvedValue([]) },
     review: { findFirst: vi.fn(), findMany: vi.fn(), count: vi.fn(), updateMany: vi.fn() },
     $transaction: vi.fn((fn: (t: typeof tx) => unknown) => fn(tx)),
   };

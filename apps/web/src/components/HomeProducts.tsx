@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { db } from "@/server/db";
+import { getImageResolver } from "@/server/storage";
 import { listProducts } from "@/server/products";
 import { productListQuery } from "@/server/validation";
 import { t } from "@/i18n/en";
@@ -13,7 +14,7 @@ export function HomeProductsFallback() {
 /** Section hides itself when there is nothing to show or the query fails (the hero never depends on it). */
 export async function HomeProducts() {
   let items: Awaited<ReturnType<typeof listProducts>>["items"] = [];
-  try { items = (await listProducts(db, productListQuery.parse({ pageSize: 4 }))).items; } catch { return null; }
+  try { items = (await listProducts(db, productListQuery.parse({ pageSize: 4 }), getImageResolver())).items; } catch { return null; }
   if (items.length === 0) return null;
   return (
     <section aria-labelledby="home-top" className="mx-auto max-w-content px-4 py-10 md:px-6 lg:px-8">

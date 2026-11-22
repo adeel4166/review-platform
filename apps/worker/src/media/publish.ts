@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { publicKey, type ObjectStore, systemClock } from "@rp/core";
+import { productImagePublicId, publicKey, type ObjectStore, systemClock } from "@rp/core";
 
 /** `CdnPurger` (m4-m5-spec 10.2): production = Cloudflare zone purge; dev/CI = a recording fake. */
 export interface CdnPurger {
@@ -13,13 +13,18 @@ interface PublishRow {
   kind: "IMAGE" | "VIDEO";
   virusScannedAt: Date | null;
   metadataStripped: boolean;
-  reviewId: string;
+  /** NULL for purpose = PRODUCT_IMAGE (ADR-0034 D11). */
+  reviewId: string | null;
+  purpose?: "REVIEW" | "PRODUCT_IMAGE";
+  width?: number | null;
+  height?: number | null;
+  productImage?: { id: string } | null;
   attachedInVersion: number | null;
   detachedInVersion: number | null;
   thumbKey: string | null;
   mediumKey: string | null;
   videoKey: string | null;
-  review: { status: string; publishedVersion: number | null };
+  review: { status: string; publishedVersion: number | null } | null;
 }
 export interface PublishDb {
   mediaAsset: {
@@ -28,9 +33,10 @@ export interface PublishDb {
     updateMany(args: unknown): Promise<{ count: number }>;
   };
   moderationCase: {
-    findUnique(args: unknown): Promise<{ state: string; reviewId: string | null; version: number } | null>;
+    findUnique(args: unknown): Promise<{ state: string; reviewId: string | null; version: number; subjectType?: string; mediaAssetId?: string | null } | null>;
     findFirst?(args: unknown): Promise<{ id: string } | null>;
   };
+  productImage?: { updateMany(args: unknown): Promise<{ count: number }> };
   mediaProcessingLog?: { create(args: unknown): Promise<unknown> };
 }
 export interface PublishDeps {
@@ -43,7 +49,7 @@ export interface PublishDeps {
   alert?: (kind: string, detail: Record<string, unknown>) => void;
 }
 
-const select = { id: true, status: true, bucket: true, kind: true, virusScannedAt: true, metadataStripped: true, reviewId: true, attachedInVersion: true, detachedInVersion: true, thumbKey: true, mediumKey: true, videoKey: true, review: { select: { status: true, publishedVersion: true } } };
+const select = { id: true, status: true, bucket: true, kind: true, virusScannedAt: true, metadataStripped: true, reviewId: true, purpose: true, width: true, height: true, productImage: { select: { id: true } }, attachedInVersion: true, detachedInVersion: true, thumbKey: true, mediumKey: true, videoKey: true, review: { select: { status: true, publishedVersion: true } } };
 const keyFields = ["thumbKey", "mediumKey", "videoKey"] as const;
 /** Fixed object names, so private and public keys map to each other without a variants column. */
 const NAME: Record<(typeof keyFields)[number], string> = { thumbKey: "thumb.webp", mediumKey: "medium.webp", videoKey: "video.mp4" };
@@ -57,10 +63,17 @@ const wrote = (d: PublishDeps, assetId: string, step: string, outcome: string, d
   d.db.mediaProcessingLog?.create({ data: { assetId, step, outcome, ...(detail ? { detail } : {}) } }).catch(() => undefined) ?? Promise.resolve();
 
 /** Pure gate (m4-m5-spec 10.1 minus the moderation field, which promote sets itself). */
-export function promotable(a: PublishRow, approved: { state: string; reviewId: string | null; version: number } | null): string | null {
+export function promotable(a: PublishRow, approved: { state: string; reviewId: string | null; version: number; subjectType?: string; mediaAssetId?: string | null } | null): string | null {
   if (a.status !== "READY") return "not_ready";
   if (!a.virusScannedAt) return "not_scanned";
   if (!a.metadataStripped) return "not_sanitised";
+  if (a.purpose === "PRODUCT_IMAGE") {
+    // Product images have no review: they need a gallery row and an APPROVED MEDIA case for this very asset (never a review's case).
+    if (a.kind !== "IMAGE" || !a.productImage) return "no_gallery_row";
+    if (!approved || approved.state !== "APPROVED" || approved.subjectType !== "MEDIA" || approved.mediaAssetId !== a.id) return "case_not_approved";
+    return null;
+  }
+  if (!a.review) return "review_not_published";
   if (a.review.status !== "PUBLISHED" || a.review.publishedVersion == null) return "review_not_published";
   const v = a.review.publishedVersion;
   if (a.attachedInVersion == null || a.attachedInVersion > v || (a.detachedInVersion != null && a.detachedInVersion <= v)) return "not_visible_in_published_version";
@@ -72,7 +85,7 @@ export function promotable(a: PublishRow, approved: { state: string; reviewId: s
 export async function promoteMedia(d: PublishDeps, assetId: string, caseId: string): Promise<"PROMOTED" | "SKIPPED"> {
   const a = await d.db.mediaAsset.findUnique({ where: { id: assetId }, select });
   if (!a || a.bucket !== "PRIVATE") return "SKIPPED"; // unknown, still ingest, or already public (idempotent)
-  const c = await d.db.moderationCase.findUnique({ where: { id: caseId }, select: { state: true, reviewId: true, version: true } });
+  const c = await d.db.moderationCase.findUnique({ where: { id: caseId }, select: { state: true, reviewId: true, version: true, subjectType: true, mediaAssetId: true } });
   const why = promotable(a, c);
   if (why) { await wrote(d, a.id, "PROMOTE", "SKIPPED", { why }); return "SKIPPED"; }
   const next: Record<string, string> = {};
@@ -110,6 +123,8 @@ export async function promoteMedia(d: PublishDeps, assetId: string, caseId: stri
     for (const k of written) await d.store.delete(d.buckets.public, k).catch(() => undefined);
     return "SKIPPED";
   }
+  // Product image: the gallery row becomes public in the same step. publicId equals the Cloudinary public_id; the URL is derived at read time.
+  if (a.purpose === "PRODUCT_IMAGE") await d.db.productImage?.updateMany({ where: { mediaAssetId: a.id }, data: { publicId: productImagePublicId(a.id), format: "webp", width: a.width, height: a.height, publishedAt: now } });
   for (const f of keyFields) if (a[f]) await d.store.delete(d.buckets.private, a[f]!).catch(() => undefined);
   await wrote(d, a.id, "PROMOTE", "OK");
   return "PROMOTED";
@@ -135,6 +150,8 @@ export async function demoteMedia(d: PublishDeps, assetId: string, reason: strin
     for (const n of names) await d.store.delete(d.buckets.public, publicKey(a.id, n));
     const next: Record<string, string> = {};
     for (const f of keyFields) if (a[f]) next[f] = privateKeyOf(a.id, NAME[f]);
+    // Unpublish the gallery row first so a failure afterwards never leaves a published row pointing at a removed object.
+    await d.db.productImage?.updateMany({ where: { mediaAssetId: a.id }, data: { publishedAt: null } });
     await d.db.mediaAsset.updateMany({ where: { id: a.id, bucket: "PUBLIC" }, data: { bucket: "PRIVATE", moderationClearedAt: null, promotedAt: null, ...next } });
   } else if (a.bucket !== "PRIVATE") {
     return "SKIPPED"; // never public
@@ -159,12 +176,15 @@ export async function reconcilePublication(d: PublishDeps, batch = 100): Promise
   let demoted = 0, promoted = 0;
   const pub = (await d.db.mediaAsset.findMany?.({ where: { bucket: "PUBLIC" }, select, take: batch, orderBy: { updatedAt: "asc" } })) ?? [];
   for (const a of pub) {
+    if (a.purpose === "PRODUCT_IMAGE") { if (!a.productImage) { await demoteMedia(d, a.id, "RECONCILE"); demoted++; } continue; } // removed from the gallery
+    if (!a.review) continue;
     const v = a.review.publishedVersion;
     const visible = a.review.status === "PUBLISHED" && v != null && a.attachedInVersion != null && a.attachedInVersion <= v && (a.detachedInVersion == null || a.detachedInVersion > v);
     if (!visible) { await demoteMedia(d, a.id, "RECONCILE"); demoted++; }
   }
   const priv = (await d.db.mediaAsset.findMany?.({ where: { bucket: "PRIVATE", status: "READY", review: { status: "PUBLISHED" } }, select, take: batch, orderBy: { updatedAt: "asc" } })) ?? [];
   for (const a of priv) {
+    if (!a.review || !a.reviewId) continue;
     const v = a.review.publishedVersion;
     if (v == null) continue;
     const c = await d.db.moderationCase.findFirst?.({ where: { reviewId: a.reviewId, version: v, state: "APPROVED" }, select: { id: true }, orderBy: { decidedAt: "desc" } });

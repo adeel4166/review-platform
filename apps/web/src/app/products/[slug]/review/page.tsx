@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { db } from "@/server/db";
+import { getImageResolver } from "@/server/storage";
 import { auth } from "@/server/auth";
 import { getProduct } from "@/server/products";
 import { HttpError } from "@/server/http";
@@ -12,7 +13,7 @@ export const metadata = { title: `${t("product.writeReview")} · ${t("app.name")
 
 export default async function WriteReviewPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const product = await getProduct(db, slug).catch((e) => { if (e instanceof HttpError && e.status === 404) return null; throw e; });
+  const product = await getProduct(db, slug, getImageResolver()).catch((e) => { if (e instanceof HttpError && e.status === 404) return null; throw e; });
   if (!product) notFound();
   const href = `/products/${product.slug}`;
   const session = await auth();

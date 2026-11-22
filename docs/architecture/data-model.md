@@ -692,3 +692,25 @@ Nothing else is pre-built. In particular there are no empty messaging tables (YA
     - no CHECK column has a `CASCADE`/`SET NULL` FK (MySQL ER 3823)
     - all 354 generated identifiers are ≤ 64 chars (longest 57)
 - **Still required (M2, needs MySQL):** apply that DDL plus `check-constraints.sql` to a disposable MySQL 8.0.16+ container, which also verifies the InnoDB 3072-byte index key limit.
+
+## Product images (V3-04, task #103, ADR-0034 D11)
+
+Migration `20270401000000_product_images` (authored for review; applied only with an approved DB_MIGRATION proposal; `down.sql` beside it reverses it by hand).
+
+- `media_assets.purpose` (`REVIEW` default | `PRODUCT_IMAGE`) and `reviewId` now nullable. `chk_media_purpose_owner`: REVIEW needs a review; PRODUCT_IMAGE has no review and is an IMAGE.
+- `product_images`: one row per gallery image. Bytes, scan and moderation stay on `media_assets`. `alt` is required (`VARCHAR(250)`, plain text, no URLs/e-mail/markup, validated by `validateAltText`). `publicId` (`m/<assetId>/medium`, the Cloudinary public_id) is set at promotion together with `width`/`height`/`publishedAt`. The URL is derived at read time, never stored.
+- At most one primary per product: stored generated column `primaryProductId` + UNIQUE (never written by the app). `position` 0..11 has no unique constraint; the service renumbers inside one transaction. Max 12 images per product.
+- CHECKs: `chk_product_images_position`, `_alt`, `_published`, `_color`.
+- Rollback order: drop `product_images`, delete PRODUCT_IMAGE media rows (demote their public objects first), drop the CHECK, make `reviewId` NOT NULL, drop `purpose`.
+
+### API
+
+| Route | Who | Notes |
+|---|---|---|
+| `GET /api/products`, `GET /api/products/:id`, `GET /api/compare` | public | each item gets `primaryImage` (`{url,width,height,alt}` or `null`) and `gallery` (published only, ordered). Compare keeps `image` = primary url |
+| `GET/POST /api/products/:id/images` | ADMIN/SUPER_ADMIN staff (2FA), or OWNER/MANAGER of the VERIFIED seller in `Product.sellerId` | POST body `{mimeType, sizeBytes, alt}` returns a presigned PUT; then `POST /api/media/:assetId/confirm` (existing flow). Everyone else gets **403** |
+| `PATCH/DELETE /api/products/:id/images/:imageId` | same | `{alt}` and/or `{isPrimary:true}`; DELETE queues `media.demote_requested` (Cloudinary `destroy` with `invalidate`) |
+| `PUT /api/products/:id/images/order` | same | `{imageIds}` = every image exactly once |
+| `POST /api/admin/product-images/:id/decide` | ADMIN (2FA) | `{decision: approve\|reject}`; approve writes an APPROVED `MEDIA` moderation case and queues `media.promote_requested`. Cannot approve own upload |
+
+Seed: `seed-demo` creates two placeholder images per product (`placeholder/<category>-<n>`, served from `apps/web/public/placeholders`, no network or third-party licence).
