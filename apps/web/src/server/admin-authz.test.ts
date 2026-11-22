@@ -16,6 +16,13 @@ interface AdminRoute { file: string; method: Method; withId: boolean; superOnly?
 /** Every /api/admin/* route handler. The discovery test below fails if a route file is missing from this table. */
 const ADMIN_ROUTES: AdminRoute[] = [
   { file: "audit/route.ts", method: "GET", withId: false },
+  { file: "approvals/[id]/approve/route.ts", method: "POST", withId: true },
+  { file: "approvals/[id]/reject/route.ts", method: "POST", withId: true },
+  { file: "approvals/[id]/cancel/route.ts", method: "POST", withId: true },
+  { file: "users/[id]/2fa-reset-requests/route.ts", method: "POST", withId: true },
+  { file: "config/moderation/[version]/activation-requests/route.ts", method: "POST", withId: true },
+  { file: "proofs/[proofId]/files/[fileId]/original-access/route.ts", method: "POST", withId: true },
+  { file: "break-glass/[accessId]/content/route.ts", method: "GET", withId: true },
   { file: "moderation/route.ts", method: "GET", withId: false },
   { file: "moderation/[id]/route.ts", method: "GET", withId: true },
   { file: "moderation/[id]/approve/route.ts", method: "POST", withId: true },

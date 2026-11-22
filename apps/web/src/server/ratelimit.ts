@@ -110,3 +110,8 @@ export const limitProofCreate = (userId: string) => enforce([{ key: `proof:u:d:$
 
 /** Keyed hash of the client IP for anti-abuse data (L-11: nulled after 90 days by the retention sweep). */
 export { hashIp } from "@rp/core";
+
+/** AP-3: `appeal.create` 3 per day per user. Fails closed (appeals are rare and abuse-prone). */
+export const limitAppeal = (userId: string) => enforce([closed({ key: `appeal:${userId}`, rule: rule(3, DAY) })]);
+/** SEC-M4-06 / MOD-015: author edits and resubmits share `content.edit`, 5 per rolling 24 h. */
+export const limitContentEdit = (userId: string) => enforce([{ key: `content.edit:${userId}`, rule: rule(5, DAY) }]);

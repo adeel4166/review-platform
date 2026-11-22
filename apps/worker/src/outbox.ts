@@ -9,6 +9,21 @@ export interface OutboxRow {
 
 /** Maps outbox event types to a target queue. Extend as features add events. */
 export const routes: Record<string, QueueName> = {
+  // M6 (spec §13): moderation lifecycle, appeals and four-eyes. Unrouted types are retried and alerted, never marked published.
+  "moderation.assess_requested": QUEUES.moderation,
+  "moderation.hold_started": QUEUES.moderation,
+  "moderation.post_review_opened": QUEUES.moderation,
+  "moderation.rescan_requested": QUEUES.moderation,
+  "moderation.bulk_requested": QUEUES.moderation,
+  "moderation.decided": QUEUES.notifications,
+  "moderation.strike_requested": QUEUES.trust,
+  "enforcement.zero_tolerance_hold": QUEUES.moderation,
+  "notification.requested": QUEUES.notifications,
+  "trust.signal": QUEUES.trust,
+  "appeal.submitted": QUEUES.notifications,
+  "appeal.decided": QUEUES.notifications,
+  "approval.requested": QUEUES.notifications,
+  "approval.executed": QUEUES.notifications,
   "review.submitted": QUEUES.moderation,
   "review.edited": QUEUES.moderation, // m4-m5-spec 16.1: R1 live edit of a PUBLISHED review
   "seller_reply.submitted": QUEUES.moderation,

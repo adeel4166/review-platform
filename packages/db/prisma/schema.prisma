@@ -65,6 +65,7 @@ enum RevisionStatus {
 enum ModerationSubjectType {
   REVIEW
   SELLER_REPLY
+  MEDIA
 }
 
 enum ModerationState {
@@ -80,6 +81,8 @@ enum ModerationTrigger {
   SUBMISSION
   EDIT
   USER_REPORT
+  STAFF_FLAG
+  STAFF_INITIATED
 }
 
 enum MediaStatus {
@@ -97,23 +100,30 @@ enum AuditActorType {
 }
 
 model User {
-  id                    String        @id @default(cuid())
-  sellerReplies         SellerReply[] @relation("ReplyAuthor")
-  repliesDeleted        SellerReply[] @relation("ReplyDeletedBy")
-  email                 String        @unique
+  assignedCases         ModerationCase[]       @relation("CaseAssignee")
+  decisionsMade         ModerationDecision[]   @relation("DecisionModerator")
+  appealsFiled          Appeal[]               @relation("AppealAppellant")
+  appealsReviewed       Appeal[]               @relation("AppealReviewer")
+  approvalsRequested    StaffApprovalRequest[] @relation("ApprovalRequester")
+  approvalsDecided      StaffApprovalRequest[] @relation("ApprovalDecider")
+  breakGlassAccesses    BreakGlassAccess[]     @relation("BreakGlassStaff")
+  id                    String                 @id @default(cuid())
+  sellerReplies         SellerReply[]          @relation("ReplyAuthor")
+  repliesDeleted        SellerReply[]          @relation("ReplyDeletedBy")
+  email                 String                 @unique
   emailVerifiedAt       DateTime?
-  passwordHash          String?       @db.VarChar(255)
-  handle                String        @unique @db.VarChar(32)
-  displayName           String        @db.VarChar(64)
-  bio                   String?       @db.Text
-  locale                String?       @db.VarChar(16)
-  timeZone              String?       @db.VarChar(64)
-  status                UserStatus    @default(ACTIVE)
+  passwordHash          String?                @db.VarChar(255)
+  handle                String                 @unique @db.VarChar(32)
+  displayName           String                 @db.VarChar(64)
+  bio                   String?                @db.Text
+  locale                String?                @db.VarChar(16)
+  timeZone              String?                @db.VarChar(64)
+  status                UserStatus             @default(ACTIVE)
   lastLoginAt           DateTime?
   /// Throttle for the "someone tried to register" mail (ADR-0016): at most one per hour.
   accountExistsNoticeAt DateTime?
-  createdAt             DateTime      @default(now())
-  updatedAt             DateTime      @updatedAt
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
 
   roles           UserRole[]               @relation("UserRoles")
   rolesGranted    UserRole[]               @relation("RoleGrantedBy")
@@ -304,36 +314,70 @@ model OutboxEvent {
 
 /// One case per (review, version). `state` is the moderation workflow; Review.status mirrors it (ADR-0005).
 model ModerationCase {
-  id             String                @id @default(cuid())
-  subjectType    ModerationSubjectType @default(REVIEW)
-  reviewId       String?
-  sellerReplyId  String?
-  version        Int
-  state          ModerationState       @default(PENDING)
-  aiScore        Decimal?              @db.Decimal(4, 3)
-  aiConfidence   Decimal?              @db.Decimal(4, 3)
-  aiReasons      Json?
-  aiProvider     String?               @db.VarChar(64)
-  decisionReason String?               @db.VarChar(500)
-  decidedById    String?
-  decidedAt      DateTime?
-  trigger        ModerationTrigger     @default(SUBMISSION)
-  seq            Int                   @default(1)
+  id                   String                @id @default(cuid())
+  subjectType          ModerationSubjectType @default(REVIEW)
+  reviewId             String?
+  sellerReplyId        String?
+  version              Int
+  state                ModerationState       @default(PENDING)
+  aiScore              Decimal?              @db.Decimal(4, 3)
+  aiConfidence         Decimal?              @db.Decimal(4, 3)
+  aiReasons            Json?
+  aiProvider           String?               @db.VarChar(64)
+  decisionReason       String?               @db.VarChar(500)
+  decidedById          String?
+  decidedAt            DateTime?
+  trigger              ModerationTrigger     @default(SUBMISSION)
+  seq                  Int                   @default(1)
   /// `R:<reviewId>` / `S:<sellerReplyId>` while a report case is open (NEEDS_HUMAN), NULL once resolved (m4-m5-spec 4.3).
-  openReportKey  String?               @unique @db.VarChar(40)
-  reportCount    Int                   @default(0)
-  reportWeight   Int                   @default(0)
-  createdAt      DateTime              @default(now())
-  updatedAt      DateTime              @updatedAt
+  openReportKey        String?               @unique @db.VarChar(40)
+  reportCount          Int                   @default(0)
+  reportWeight         Int                   @default(0)
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  // ---- M6 (ADR-0025): status + lane model. Legacy `state` & friends stay until call sites are re-pointed (step 2 of the migration). ----
+  mediaAssetId         String?
+  status               CaseStatus            @default(OPEN)
+  lane                 ModerationLane?
+  priority             Int                   @default(0)
+  assignedToId         String?
+  leaseExpiresAt       DateTime?             @db.DateTime(3)
+  slaDueAt             DateTime?             @db.DateTime(3)
+  outcome              DecisionOutcome?
+  resolutionCode       String?               @db.VarChar(64)
+  resolvedAt           DateTime?             @db.DateTime(3)
+  contentSnapshot      Json?
+  aiVerdict            ModerationVerdict?
+  aiTopCategory        String?               @db.VarChar(64)
+  aiReason             String?               @db.VarChar(500)
+  configVersion        String?               @db.VarChar(32)
+  holdExpiresAt        DateTime?             @db.DateTime(3)
+  postReviewDueAt      DateTime?             @db.DateTime(3)
+  postReviewBreachedAt DateTime?             @db.DateTime(3)
+  appealableUntil      DateTime?             @db.DateTime(3)
+  legalHold            Boolean               @default(false)
+  rescanCount          Int                   @default(0)
+  /// "<lane>:<R|S|M>:<id>" while not RESOLVED, NULL after (one open case per target and lane).
+  openKey              String?               @unique @db.VarChar(48)
 
   reports            Report[]
-  review             Review?             @relation(fields: [reviewId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  sellerReply        SellerReply?        @relation(fields: [sellerReplyId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  decidedBy          User?               @relation("CaseDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+  review             Review?              @relation(fields: [reviewId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  sellerReply        SellerReply?         @relation(fields: [sellerReplyId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  decidedBy          User?                @relation("CaseDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
   enforcementActions EnforcementAction[]
+  mediaAsset         MediaAsset?          @relation(fields: [mediaAssetId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  assignedTo         User?                @relation("CaseAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  decisions          ModerationDecision[]
+  appeals            Appeal[]
 
+  @@unique([mediaAssetId, version, trigger, seq])
   @@unique([reviewId, version, trigger, seq])
   @@unique([sellerReplyId, version, trigger, seq])
+  @@index([lane, status, holdExpiresAt])
+  @@index([lane, status, postReviewDueAt])
+  @@index([lane, status, priority, createdAt])
+  @@index([assignedToId, status])
+  @@index([status, appealableUntil])
   @@index([state, createdAt])
   @@index([trigger, state, reportWeight])
   @@map("moderation_cases")
@@ -361,41 +405,44 @@ model AuditLog {
 /// content, strips metadata, writes thumb/medium variants to the private bucket and sets READY or FAILED.
 /// Public visibility = status READY AND the parent review PUBLISHED (enforced in the read queries).
 model MediaAsset {
-  id                String      @id @default(cuid())
-  ownerId           String
-  reviewId          String
-  status            MediaStatus @default(UPLOADING)
-  declaredMime      String      @db.VarChar(64)
-  sizeBytes         Int
-  detectedMime      String?     @db.VarChar(64)
-  width             Int?
-  height            Int?
-  ingestKey         String      @db.VarChar(255)
-  thumbKey          String?     @db.VarChar(255)
-  mediumKey         String?     @db.VarChar(255)
-  failureReason     String?     @db.VarChar(64)
-  processedAt       DateTime?
+  appealId            String?
+  appeal              Appeal?          @relation("AppealEvidence", fields: [appealId], references: [id], onDelete: SetNull, onUpdate: Restrict)
+  moderationCases     ModerationCase[]
+  id                  String           @id @default(cuid())
+  ownerId             String
+  reviewId            String
+  status              MediaStatus      @default(UPLOADING)
+  declaredMime        String           @db.VarChar(64)
+  sizeBytes           Int
+  detectedMime        String?          @db.VarChar(64)
+  width               Int?
+  height              Int?
+  ingestKey           String           @db.VarChar(255)
+  thumbKey            String?          @db.VarChar(255)
+  mediumKey           String?          @db.VarChar(255)
+  failureReason       String?          @db.VarChar(64)
+  processedAt         DateTime?
   /// First review version whose moderation covered this asset; NULL = staged for the next edit (m4-m5-spec 3.4).
-  attachedInVersion Int?
+  attachedInVersion   Int?
   /// First version that no longer shows it.
-  detachedInVersion Int?
+  detachedInVersion   Int?
   /// M5 pipeline (m4-m5-spec 7-10). `bucket` says where the bytes live; PUBLIC only after scan + sanitise + moderation (MED-037).
-  kind              MediaKind   @default(IMAGE)
-  bucket            MediaBucket @default(INGEST)
-  sha256            String?     @db.VarChar(64)
-  virusScannedAt    DateTime?
-  metadataStripped  Boolean     @default(false)
+  kind                MediaKind        @default(IMAGE)
+  bucket              MediaBucket      @default(INGEST)
+  sha256              String?          @db.VarChar(64)
+  virusScannedAt      DateTime?
+  metadataStripped    Boolean          @default(false)
   moderationClearedAt DateTime?
-  promotedAt        DateTime?
+  promotedAt          DateTime?
   /// Video only: transcoded MP4 and its poster frame (same bucket as thumbKey/mediumKey).
-  videoKey          String?     @db.VarChar(255)
-  posterKey         String?     @db.VarChar(255)
-  createdAt         DateTime    @default(now())
-  updatedAt         DateTime    @updatedAt
+  videoKey            String?          @db.VarChar(255)
+  posterKey           String?          @db.VarChar(255)
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
 
-  logs MediaProcessingLog[]
-  owner  User   @relation("MediaOwner", fields: [ownerId], references: [id], onDelete: Restrict)
-  review Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  logs   MediaProcessingLog[]
+  owner  User                 @relation("MediaOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  review Review               @relation(fields: [reviewId], references: [id], onDelete: Cascade)
 
   @@index([reviewId, status])
   @@index([ownerId, createdAt])
@@ -646,6 +693,7 @@ model SellerInvitation {
 }
 
 model SellerOwnershipClaim {
+  appeals              Appeal[]
   id                   String               @id @default(cuid())
   sellerId             String
   scope                OwnershipClaimScope
@@ -723,6 +771,10 @@ model SellerClaimDecision {
 }
 
 model EnforcementAction {
+  appeals            Appeal[]
+  strike             Boolean           @default(false)
+  decisionId         String?
+  appealableUntil    DateTime?         @db.DateTime(3)
   id                 String            @id @default(cuid())
   type               EnforcementType
   status             EnforcementStatus @default(ACTIVE)
@@ -1075,6 +1127,8 @@ model Report {
 }
 
 model PurchaseProof {
+  appeals                Appeal[]
+  breakGlassAccesses     BreakGlassAccess[]
   id                     String               @id @default(cuid())
   reviewId               String
   submittedById          String
@@ -1171,4 +1225,233 @@ model TrustSignal {
   @@unique([type, sourceType, sourceId, userId])
   @@index([userId, createdAt])
   @@map("trust_signals")
+}
+
+enum CaseStatus {
+  OPEN
+  IN_REVIEW
+  ESCALATED
+  RESOLVED
+}
+
+enum ModerationLane {
+  HOLD
+  POST_REVIEW
+  REPORTED
+}
+
+enum ModerationVerdict {
+  CLEAN
+  VIOLATION
+  UNSURE
+}
+
+enum DecisionSource {
+  AI
+  RULE
+  HUMAN
+}
+
+enum DecisionOutcome {
+  APPROVE
+  RESTRICT
+  REMOVE
+  ESCALATE
+}
+
+enum AppealStatus {
+  SUBMITTED
+  IN_REVIEW
+  UPHELD
+  OVERTURNED
+  PARTIALLY_OVERTURNED
+  WITHDRAWN
+}
+
+enum ModerationConfigStatus {
+  DRAFT
+  SHADOW
+  ACTIVE
+  RETIRED
+}
+
+enum ApprovalKind {
+  CONFIG_ACTIVATION
+  ROLE_GRANT
+  TWO_FACTOR_RESET
+  ENFORCEMENT_OVERTURN_MAJOR
+  BREAK_GLASS_REPEAT
+}
+
+enum ApprovalStatus {
+  PENDING
+  EXECUTED
+  REJECTED
+  EXPIRED
+  CANCELLED
+}
+
+enum BulkItemResult {
+  PENDING
+  APPLIED
+  SKIPPED
+  FAILED
+}
+
+model ModerationDecision {
+  id                 String             @id @default(cuid())
+  caseId             String
+  transition         String             @db.VarChar(8) // "T6", "R4", "A4", "T4r"
+  contentVersion     Int
+  source             DecisionSource
+  moderatorId        String? // = HUMAN actor
+  outcome            DecisionOutcome
+  verdict            ModerationVerdict?
+  reasonCode         String?            @db.VarChar(64)
+  publicReason       String?            @db.Text // statement of reasons (REJECT/REMOVE)
+  publicReasonLocale String             @default("en") @db.VarChar(16)
+  labels             Json? // category -> score
+  ruleHits           Json? // rule ids only
+  rationale          String?            @db.VarChar(280) // provider display text, escaped on render
+  policyVersion      String             @db.VarChar(32)
+  configVersion      String?            @db.VarChar(32)
+  aiProvider         String?            @db.VarChar(64)
+  aiModel            String?            @db.VarChar(128)
+  failureCode        String?            @db.VarChar(32) // timeout|http_5xx|http_429|network|schema|unsupported_language|breaker|lost_job
+  latencyMs          Int?
+  bulkOperationId    String?            @db.VarChar(32)
+  approvalRequestId  String?
+  createdAt          DateTime           @db.DateTime(3) // from clock.now()
+
+  moderationCase ModerationCase @relation(fields: [caseId], references: [id], onDelete: Restrict)
+  moderator      User?          @relation("DecisionModerator", fields: [moderatorId], references: [id], onDelete: Restrict)
+
+  @@index([caseId, createdAt])
+  @@index([moderatorId, createdAt])
+  @@index([bulkOperationId])
+  @@map("moderation_decisions")
+}
+
+model Appeal {
+  id                  String       @id @default(cuid())
+  appellantId         String
+  caseId              String? // exclusive arc (chk_appeal_one_target)
+  enforcementActionId String?
+  purchaseProofId     String?
+  ownershipClaimId    String?
+  contentVersion      Int? // AP-2
+  statement           String       @db.Text
+  status              AppealStatus @default(SUBMITTED)
+  reviewerId          String?
+  leaseExpiresAt      DateTime?    @db.DateTime(3)
+  decisionNote        String?      @db.Text
+  priority            Int          @default(0)
+  slaDueAt            DateTime     @db.DateTime(3)
+  submittedAt         DateTime     @db.DateTime(3) // from clock.now()
+  decidedAt           DateTime?    @db.DateTime(3)
+  updatedAt           DateTime     @updatedAt @db.DateTime(3)
+
+  appellant         User                  @relation("AppealAppellant", fields: [appellantId], references: [id], onDelete: Restrict)
+  reviewer          User?                 @relation("AppealReviewer", fields: [reviewerId], references: [id], onDelete: SetNull)
+  moderationCase    ModerationCase?       @relation(fields: [caseId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  enforcementAction EnforcementAction?    @relation(fields: [enforcementActionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  purchaseProof     PurchaseProof?        @relation(fields: [purchaseProofId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ownershipClaim    SellerOwnershipClaim? @relation(fields: [ownershipClaimId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  evidence          MediaAsset[]          @relation("AppealEvidence") // MediaAsset.appealId (new nullable FK)
+
+  @@unique([appellantId, caseId])
+  @@unique([appellantId, enforcementActionId])
+  @@unique([appellantId, purchaseProofId])
+  @@unique([appellantId, ownershipClaimId])
+  @@index([status, priority, slaDueAt])
+  @@index([reviewerId, status])
+  @@map("appeals")
+}
+
+model ModerationConfig {
+  id            String                 @id @default(cuid())
+  version       String                 @unique @db.VarChar(32)
+  status        ModerationConfigStatus @default(DRAFT)
+  config        Json
+  checksum      String                 @db.Char(64)
+  note          String?                @db.Text
+  createdById   String
+  activatedById String?
+  approvedById  String? // four-eyes approver (CFG-004)
+  activatedAt   DateTime?              @db.DateTime(3)
+  retiredAt     DateTime?              @db.DateTime(3)
+  createdAt     DateTime               @db.DateTime(3)
+
+  @@index([status])
+  @@map("moderation_configs")
+}
+
+model StaffApprovalRequest {
+  id            String         @id @default(cuid())
+  kind          ApprovalKind
+  status        ApprovalStatus @default(PENDING)
+  requestedById String
+  decidedById   String?
+  targetKey     String         @db.VarChar(80) // "role:<userId>:<role>", "config:<version>", "2fa:<userId>", "appeal:<id>", "bg:<submitterId>"
+  openKey       String?        @unique @db.VarChar(80) // = targetKey while PENDING
+  payload       Json // ids/enums/numbers only
+  payloadHash   String         @db.Char(64)
+  note          String?        @db.VarChar(500)
+  expiresAt     DateTime       @db.DateTime(3)
+  decidedAt     DateTime?      @db.DateTime(3)
+  executedAt    DateTime?      @db.DateTime(3)
+  createdAt     DateTime       @db.DateTime(3)
+  requestedBy   User           @relation("ApprovalRequester", fields: [requestedById], references: [id], onDelete: Restrict)
+  decidedBy     User?          @relation("ApprovalDecider", fields: [decidedById], references: [id], onDelete: Restrict)
+
+  @@index([status, expiresAt])
+  @@index([kind, status])
+  @@map("staff_approval_requests")
+}
+
+model BreakGlassAccess {
+  id                String        @id @default(cuid())
+  staffId           String
+  sessionId         String        @db.VarChar(64)
+  proofId           String
+  fileId            String
+  submitterId       String // for the 7-day repeat rule
+  reasonCode        String        @db.VarChar(32)
+  reasonText        String        @db.VarChar(500)
+  approvalRequestId String?
+  expiresAt         DateTime      @db.DateTime(3)
+  usedAt            DateTime?     @db.DateTime(3)
+  createdAt         DateTime      @db.DateTime(3)
+  staff             User          @relation("BreakGlassStaff", fields: [staffId], references: [id], onDelete: Restrict)
+  proof             PurchaseProof @relation(fields: [proofId], references: [id], onDelete: Restrict)
+
+  @@index([staffId, createdAt])
+  @@index([submitterId, createdAt])
+  @@map("break_glass_accesses")
+}
+
+model BulkOperation {
+  id            String              @id @default(cuid())
+  requestedById String
+  lane          ModerationLane
+  action        String              @db.VarChar(16)
+  reasonCode    String?             @db.VarChar(64)
+  publicReason  String?             @db.Text
+  size          Int
+  createdAt     DateTime            @db.DateTime(3)
+  completedAt   DateTime?           @db.DateTime(3)
+  items         BulkOperationItem[]
+
+  @@map("moderation_bulk_operations")
+}
+
+model BulkOperationItem {
+  bulkOperationId String
+  caseId          String
+  result          BulkItemResult @default(PENDING)
+  reason          String?        @db.VarChar(32) // resolved|leased|coi|legal_hold|invalid_transition
+  bulk            BulkOperation  @relation(fields: [bulkOperationId], references: [id], onDelete: Cascade)
+
+  @@id([bulkOperationId, caseId])
+  @@map("moderation_bulk_items")
 }

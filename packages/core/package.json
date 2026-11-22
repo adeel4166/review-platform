@@ -18,7 +18,12 @@
   "devDependencies": {
     "@types/node": "^20.17.0",
     "@types/nodemailer": "^8.0.2",
+    "fast-check": "3.23.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing/index.ts"
   }
 }
