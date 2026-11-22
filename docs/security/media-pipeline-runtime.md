@@ -13,7 +13,10 @@ Only `media.promote` (event `media.promote_requested`, emitted by `transitionCas
 `zVERSION` on each scan and every 10 min. >24 h: `CLAMAV_STALE` alert (≤1 per 6 h), `/healthz` 503, scans continue. >72 h: scan treated as unavailable (retry, fail closed). `/healthz` on `WORKER_HEALTH_PORT`.
 
 ## Deviations from the spec (follow-ups)
-- Single job instead of `media.scan` → `media.image`: no staging copy / sha256 re-check is needed because nothing is read twice.
-- Parser sandbox (bwrap + prlimit, §8.4) is not wired; ffmpeg/ffprobe run with a kill timeout in a private temp dir. Must be added in the worker image before production.
-- PDF evidence, HEIC, `media.purge`, retention sweeps, MED-030 moderation wait, minio-init user creation, CDN purger API client: not in this task.
+- Single job instead of `media.scan` -> `media.image`. The staged original is read once; a job-recorded sha256 (`mediaJobSchema.sha256`) or a previously stored `MediaAsset.sha256` is compared and a mismatch is `FAILED (PROCESSING_ERROR)` + `STAGING_HASH_MISMATCH` (MED-043).
+- Parser sandbox (task #84): ffmpeg, ffprobe, pdfinfo and pdftoppm run through `apps/worker/src/media/sandbox.ts` (bwrap `--unshare-all` + prlimit, `-protocol_whitelist file`, forced `mov` demuxer). Startup self-test (`assertMediaSandbox`) exits 1 when `MEDIA_SANDBOX_REQUIRED=true` (default in production/CI) and bwrap is missing, the network is reachable or `/usr` is writable. The worker image must ship bwrap, prlimit, poppler-utils and the seccomp profile. **sharp/libvips still decodes in-process** (the separate decode child of spec 8.4 is a follow-up); it runs under the 50 MP limit.
+- Legal hold on a hash-list match: the original is copied to `rp-private/legal-hold/{assetId}` (never swept). A `legalHold` column on `MediaAsset` and a stored pHash need a DB_MIGRATION proposal (follow-up). `HashMatcher` (`media/hash-match.ts`) is the L-17 plug-in point; the stub matches `BannedMediaHash`.
+- `media` worker group (`WORKER_GROUPS=media`, INF-008) runs only the media queue and refuses to start with `MODERATION_API_KEY`/`ANTHROPIC_`/`OPENAI_`/`AI_`/`SMTP_` variables or auth/2FA secrets.
+- Quarantine retention: `sweepQuarantine` (daily) purges `quarantine/` after 30 days and alerts `QUARANTINE_COUNT_HIGH` above 50 objects (SEC-M5-03).
+- HEIC, `media.purge`, minio-init user creation, CDN purger API client: not done.
 - `scripts/inf002-bucket-check.sh` and `infra/minio/policies/*.json` are provided but `minio-init` does not create the users yet.

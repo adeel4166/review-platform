@@ -28,7 +28,7 @@ describe("SEC-M7-01 vote-anomaly freeze sets votesFrozenAt", () => {
     };
     const db = { reviewVote: { findMany: vi.fn(async (a: any) => (a.distinct ? [{ reviewId: "r1" }] : votes)) }, $transaction: async (fn: any) => fn(tx) };
     expect(await sweepVoteAnomalies(db, clock)).toBe(1);
-    expect(tx.review.updateMany.mock.calls[0]![0].data.votesFrozenAt).toEqual(clock.now());
+    expect((tx.review.updateMany.mock.calls as any)[0][0].data.votesFrozenAt).toEqual(clock.now());
     expect(calls).toEqual(["freeze", "votes.frozen", "recount", "audit"]);
   });
   it("does not freeze a calm review", async () => {

@@ -7,6 +7,7 @@ import {
   MEDIA_MAX_VIDEO_BYTES,
   MEDIA_VARIANTS,
   MediaTooLargeError,
+  legalHoldKey,
   quarantineKey,
   recordSignals,
   variantKey,
@@ -18,8 +19,9 @@ import { ScannerUnavailable, evaluateFreshness, type Scanner } from "./media/cla
 import { VideoReject, transcodeVideo } from "./media/video";
 import { detectType, findPolyglot, sha256Hex } from "./media/validate";
 import type { MetadataVerifier } from "./media/verify";
+import { bannedHashMatcher, perceptualHash, type HashMatcher } from "./media/hash-match";
 
-type AssetRow = { id: string; status: string; declaredMime: string; ingestKey: string; sizeBytes?: number; ownerId?: string };
+type AssetRow = { id: string; status: string; declaredMime: string; ingestKey: string; sizeBytes?: number; ownerId?: string; sha256?: string | null };
 export interface MediaDb {
   mediaAsset: {
     findUnique(args: unknown): Promise<AssetRow | null>;
@@ -43,6 +45,12 @@ export interface MediaDeps {
   now?: () => Date;
   transcode?: typeof transcodeVideo;
   signals?: MalwareSignals;
+  /** MED-036: defaults to the BannedMediaHash stub. */
+  hashMatcher?: HashMatcher;
+}
+export interface ProcessMediaOpts {
+  /** sha256 of the staged original recorded at enqueue time (MED-043). A mismatch means the object changed after confirm. */
+  expectedSha256?: string;
 }
 export type MediaOutcome = "READY" | "FAILED" | "SKIPPED";
 
@@ -77,8 +85,8 @@ export async function buildVariants(input: Buffer) {
  * Nothing here writes to the public bucket: only `promoteMedia` does, after moderation approves (MED-037).
  * Permanent problems mark FAILED and return; transient (storage/infra/scanner) errors throw so BullMQ retries.
  */
-export async function processMedia(d: MediaDeps, assetId: string): Promise<MediaOutcome> {
-  const a = await d.db.mediaAsset.findUnique({ where: { id: assetId }, select: { id: true, status: true, declaredMime: true, ingestKey: true, sizeBytes: true, ownerId: true } });
+export async function processMedia(d: MediaDeps, assetId: string, opts: ProcessMediaOpts = {}): Promise<MediaOutcome> {
+  const a = await d.db.mediaAsset.findUnique({ where: { id: assetId }, select: { id: true, status: true, declaredMime: true, ingestKey: true, sizeBytes: true, ownerId: true, sha256: true } });
   if (!a || a.status !== "PROCESSING") return "SKIPPED";
   const declaredVideo = (MEDIA_ALLOWED_VIDEO_MIME as readonly string[]).includes(a.declaredMime);
   try {
@@ -91,6 +99,9 @@ export async function processMedia(d: MediaDeps, assetId: string): Promise<Media
     }
     if (!bytes) throw new Reject("NOT_CONFIRMED");
     if (typeof a.sizeBytes === "number" && bytes.length !== a.sizeBytes) throw new Reject(bytes.length > a.sizeBytes ? "TOO_LARGE" : "TYPE_MISMATCH");
+    // MED-043 (U-5): the bytes read now must be the bytes recorded for this asset; otherwise nothing is decoded.
+    const expected = opts.expectedSha256 ?? a.sha256 ?? undefined;
+    if (expected && sha256Hex(bytes) !== expected) { await log(d, a.id, "VALIDATE", "STAGING_HASH_MISMATCH"); throw new Reject("PROCESSING_ERROR", "STAGING_HASH_MISMATCH"); }
     const detected = detectType(bytes);
     const allowed = [...MEDIA_ALLOWED_MIME, ...MEDIA_ALLOWED_VIDEO_MIME] as readonly string[];
     if (!detected || !allowed.includes(detected.mime)) throw new Reject("UNSUPPORTED_TYPE");
@@ -101,7 +112,15 @@ export async function processMedia(d: MediaDeps, assetId: string): Promise<Media
     if (poly) { await log(d, a.id, "VALIDATE", "REJECTED", { detail: { polyglot: poly } }); throw new Reject("TYPE_MISMATCH"); }
     const sha = sha256Hex(bytes);
     await log(d, a.id, "VALIDATE", "OK", { detail: { mime: detected.mime, size: bytes.length } });
-    if (await d.db.bannedMediaHash?.findUnique({ where: { sha256: sha } })) { await log(d, a.id, "BANNED_HASH", "REJECTED"); throw new Reject("BANNED_HASH"); }
+    const matcher = d.hashMatcher ?? bannedHashMatcher(d.db);
+    const hold = async (list?: string) => {
+      await log(d, a.id, "BANNED_HASH", "REJECTED", { detail: { list: list ?? null, legalHold: true } });
+      // Legal hold (MED-036): the original is retained outside the quarantine retention prefix; a DB flag needs a migration (follow-up).
+      await d.store.put(d.buckets.private, legalHoldKey(a.id), bytes!, "application/octet-stream").catch(() => undefined);
+      throw new Reject("BANNED_HASH");
+    };
+    const early = await matcher.check({ sha256: sha });
+    if (early.match) await hold(early.list);
 
     // --- ClamAV (INF-003): signatures older than 72 h count as scanner-unavailable (retry, fail closed).
     const ver = await d.scanner.version();
@@ -142,6 +161,11 @@ export async function processMedia(d: MediaDeps, assetId: string): Promise<Media
       writes = [[keys.videoKey, out.video, "video/mp4"], [keys.thumbKey, p.thumb, "image/webp"], [keys.mediumKey, p.medium, "image/webp"]];
       toVerify = [[out.video, "VIDEO"], [p.thumb, "IMAGE"], [p.medium, "IMAGE"]];
     }
+    if (detected.kind === "IMAGE") {
+      const pHash = await perceptualHash(writes[1]![1]);
+      const m = await matcher.check({ sha256: sha, pHash });
+      if (m.match) await hold(m.list);
+    }
     for (const [buf, kind] of toVerify) {
       const found = await d.verifier(buf, kind);
       if (found.length) { await log(d, a.id, "SANITISE", "METADATA_FOUND", { detail: { groups: found } }); throw new Reject("PROCESSING_ERROR", "METADATA_VERIFY_FAILED"); }
@@ -157,7 +181,7 @@ export async function processMedia(d: MediaDeps, assetId: string): Promise<Media
   } catch (e) {
     if (!(e instanceof Reject)) throw e;
     if (e.alertKind) d.alert?.(e.alertKind, { assetId: a.id });
-    if (e.reason === "MALWARE" || e.reason === "BANNED_HASH") d.alert?.(e.reason, { assetId: a.id });
+    if (e.reason === "MALWARE" || e.reason === "BANNED_HASH") d.alert?.(e.reason, { assetId: a.id, ...(e.reason === "BANNED_HASH" ? { legalHold: true } : {}) });
     if (e.reason === "MALWARE" && d.signals && a.ownerId) {
       const uploaderId = a.ownerId;
       const r = await recordSignals(d.signals.store, { now: d.now ?? (() => new Date()) }, { kind: "media.rejected", reason: "MALWARE", assetId: a.id, uploaderId } as never).catch((err: Error) => { d.alert?.("MALWARE_SIGNAL_FAILED", { assetId: a.id, err: err.message.slice(0, 120) }); return null; });

@@ -3,10 +3,12 @@ import { sniffImageMime } from "@rp/core";
 
 export const sha256Hex = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 
-export type DetectedType = { mime: "image/jpeg" | "image/png" | "image/webp" | "video/mp4" | "video/quicktime"; kind: "IMAGE" | "VIDEO" } | null;
+export type DetectedType = { mime: "image/jpeg" | "image/png" | "image/webp" | "video/mp4" | "video/quicktime"; kind: "IMAGE" | "VIDEO" } | { mime: "application/pdf"; kind: "DOCUMENT" } | null;
 
 /** Content-based type detection (the declared type and file name are never trusted). ISO-BMFF `ftyp` brand: `qt  ` = MOV, anything else mp4. */
-export function detectType(b: Buffer): DetectedType {
+export function detectType(b: Buffer, opts: { allowPdf?: boolean } = {}): DetectedType {
+  // PDF is only recognised for purchase-proof evidence (MED-024/046); review media never passes `allowPdf`, so a PDF there is UNSUPPORTED_TYPE.
+  if (opts.allowPdf && b.length >= 5 && b.toString("latin1", 0, 5) === "%PDF-") return { mime: "application/pdf", kind: "DOCUMENT" };
   const img = sniffImageMime(b);
   if (img) return { mime: img, kind: "IMAGE" };
   if (b.length >= 12 && b.toString("latin1", 4, 8) === "ftyp") {

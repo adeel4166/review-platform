@@ -96,7 +96,7 @@ export async function ensureCase(db: any, job: { subjectType: string; subjectId:
 }
 
 const mediaState = (rows: { status: string; failureReason: string | null }[]): AssessSubject["media"] =>
-  rows.some((m) => m.failureReason === "MALWARE") ? "MALWARE" : rows.some((m) => m.status === "UPLOADING" || m.status === "PROCESSING") ? "PENDING" : rows.length ? "READY" : "NONE";
+  rows.some((m) => m.failureReason === "MALWARE" || m.failureReason === "BANNED_HASH") ? "MALWARE" : rows.some((m) => m.status === "UPLOADING" || m.status === "PROCESSING") ? "PENDING" : rows.length ? "READY" : "NONE";
 const LINK = /https?:\/\/|www\./i;
 
 /** Loads everything runAssess needs; M7 routing (burst / near-duplicate) is step 1 for REVIEW targets and feeds `extraForceUnsure`. */

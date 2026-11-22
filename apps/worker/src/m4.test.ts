@@ -93,7 +93,7 @@ describe("proof pipeline", () => {
     expect(s.h.t.purchaseProof![0]).toMatchObject({ status: "EXPIRED", closeReason: "NO_VALID_FILES", openKey: null });
     expect(s.h.t.outboxEvent!.at(-1)).toMatchObject({ type: "proof.expired" });
   });
-  it("declared type must match the bytes; a missing object is NOT_CONFIRMED; PDFs fail closed without a rasteriser", async () => {
+  it("declared type must match the bytes; a missing object is NOT_CONFIRMED; an unparseable PDF is CORRUPT (MED-046)", async () => {
     const s = mk(); await upload(s, "f1", await png(), "image/jpeg");
     expect(await processProofFile(s.deps, "f1")).toBe("REJECTED");
     expect(s.h.t.purchaseProofFile![0]!.failureReason).toBe("TYPE_MISMATCH");
@@ -101,7 +101,8 @@ describe("proof pipeline", () => {
     expect(await processProofFile(s.deps, "f2")).toBe("REJECTED");
     expect(s.h.t.purchaseProofFile![1]!.failureReason).toBe("NOT_CONFIRMED");
     await upload(s, "f3", Buffer.from("%PDF-1.4 x"), "application/pdf");
-    expect(await processProofFile(s.deps, "f3")).toBe("FAILED");
+    expect(await processProofFile(s.deps, "f3")).toBe("REJECTED");
+    expect(s.h.t.purchaseProofFile!.find((f) => f.id === "f3")!.failureReason).toBe("CORRUPT");
   });
   it("PRV-020: no provider/budget -> hints skipped, flagged AI_SKIPPED, never decided; PRV-004: extractor sees redacted bytes only", async () => {
     const s = mk(); await upload(s, "f1", await png()); await processProofFile(s.deps, "f1");

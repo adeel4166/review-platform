@@ -3,6 +3,8 @@ import { Redis } from "ioredis";
 import { prisma } from "@rp/db";
 import { assertIpHashKey, MEDIA_PUT_TTL_SECONDS, QUEUES, loadEnv, mediaJobSchema, moderationJobSchema, type Env, type QueueName } from "@rp/core";
 import { expireStaleUploads } from "./media";
+import { sweepQuarantine } from "./media/quarantine";
+import { assertMediaSandbox } from "./media/sandbox";
 import { reconcilePublication } from "./media/publish";
 import { startMediaHealth } from "./media/health";
 import { getMediaDeps, getPublishDeps, getScanner, securityAlert, markMediaFailed, processors, setEgressQueue, setNotificationsQueue } from "./processors";
@@ -22,6 +24,14 @@ try {
   if (process.env.NODE_ENV === "production") throw e;
   console.warn(JSON.stringify({ msg: "worker.disabled", reason: (e as Error).message, hint: "copy .env.example to .env and run `pnpm infra:up` to enable background jobs" }));
   process.exit(0);
+}
+// MED-047: parser sandbox self-test. With MEDIA_SANDBOX_REQUIRED (default in production/CI) a missing bwrap or reachable network exits 1.
+try {
+  const sb = await assertMediaSandbox(process.env);
+  console.log(JSON.stringify({ msg: "media.sandbox", sandboxed: sb.sandboxed }));
+} catch (e) {
+  console.error(JSON.stringify({ msg: "worker.startup.refused", err: (e as Error).message }));
+  process.exit(1);
 }
 // BullMQ workers require maxRetriesPerRequest: null
 const connection = new Redis(env.REDIS_URL, { maxRetriesPerRequest: null });
@@ -82,6 +92,8 @@ const sweepTimer = setInterval(() => {
 const mediaTimers = [
   setInterval(() => { reconcilePublication(getPublishDeps()).then((r) => { if (r.demoted || r.promoted) console.log(JSON.stringify({ msg: "media.reconcile", ...r })); }).catch((e: Error) => console.error(JSON.stringify({ msg: "media.reconcile.error", err: e.message }))); }, 60_000),
 ];
+// SEC-M5-03: quarantine retention (30 days) + count alert, daily.
+mediaTimers.push(setInterval(() => { const d = getMediaDeps(); sweepQuarantine({ store: d.store, buckets: d.buckets, alert: securityAlert }).then((r) => { if (r.deleted) console.log(JSON.stringify({ msg: "media.quarantine_sweep", ...r })); }).catch((e: Error) => console.error(JSON.stringify({ msg: "media.quarantine_sweep.error", err: e.message }))); }, 24 * 60 * 60_000));
 const health = process.env.WORKER_HEALTH_PORT ? startMediaHealth(getScanner(), Number(process.env.WORKER_HEALTH_PORT), securityAlert) : null;
 const sweepDb = prisma as unknown as SweepStore;
 const logSweep = (name: string) => (r: unknown) => { if (r && JSON.stringify(r) !== "0" && JSON.stringify(r) !== '{"graceStarted":0,"expired":0}') console.log(JSON.stringify({ msg: `maintenance.${name}`, result: r })); };

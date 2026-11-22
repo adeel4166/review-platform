@@ -1,8 +1,11 @@
 import { createHash } from "node:crypto";
 import sharp from "sharp";
+import { evaluateFreshness, ScannerUnavailable, type Scanner } from "./media/clamd";
+import { PdfReject, inspectPdf, rasterisePdf, type PdfRasteriser } from "./media/pdf";
+import { detectType, findPolyglot } from "./media/validate";
 import type { PrismaClient } from "@rp/db";
 import {
-  MEDIA_MAX_BYTES, PROOF_DRAFT_TTL_HOURS, appUrl, hashOrderRef, proofRetention, renderMail, sanitizeAssessment, sniffImageMime,
+  MEDIA_MAX_BYTES, MEDIA_MAX_PIXELS, PROOF_DRAFT_TTL_HOURS, appUrl, hashOrderRef, proofRetention, quarantineKey, renderMail, sanitizeAssessment,
   type MailProvider, type ObjectStore, type OrderRefKey, type ProofAssessment, type ProofFlagT, type ProofOriginalRetention,
 } from "@rp/core";
 
@@ -13,6 +16,10 @@ export interface ProofDeps {
   store: ObjectStore;
   buckets: { ingest: string; private: string };
   redactor: Redactor;
+  /** SEC-M5-02: every proof original is AV-scanned before it is stored. */
+  scanner?: Scanner;
+  /** MED-046: PDF page rasteriser (default: sandboxed pdfinfo + pdftoppm). */
+  rasterise?: PdfRasteriser;
   keys: OrderRefKey[];
   now?: () => Date;
 }
@@ -27,14 +34,20 @@ export interface RedactionResult {
   orderRef?: string;
   merchantSlug?: string;
 }
+/** Longest side of a redacted master (m4-m5-spec 8.3). */
+export const PROOF_MASK_MAX_SIDE = 4096;
 export interface Redactor { redact(input: { bytes: Buffer; mime: string }): Promise<RedactionResult> }
 
 /** Fail-closed default (PRV-005): without a trained OCR adapter every page is fully masked. PDFs need the rasteriser (M5-02) and fail. */
 export const failClosedRedactor: Redactor = {
   async redact({ bytes, mime }) {
     if (mime === "application/pdf") throw new Error("pdf_rasteriser_unavailable");
-    const m = await sharp(bytes, { failOn: "error" }).rotate().metadata();
-    const png = await sharp({ create: { width: m.width ?? 1, height: m.height ?? 1, channels: 3, background: "#000" } }).png().toBuffer();
+    // SEC-M5-02: header-only metadata read under the shared pixel limit; the mask canvas is capped (long side 4096, spec 8.3), never the decoded size.
+    const m = await sharp(bytes, { failOn: "error", limitInputPixels: MEDIA_MAX_PIXELS }).rotate().metadata();
+    const swap = (m.orientation ?? 1) >= 5;
+    const w = (swap ? m.height : m.width) ?? 1, h = (swap ? m.width : m.height) ?? 1;
+    const k = Math.min(1, PROOF_MASK_MAX_SIDE / Math.max(w, h));
+    const png = await sharp({ create: { width: Math.max(1, Math.round(w * k)), height: Math.max(1, Math.round(h * k)), channels: 3, background: "#000" } }).png().toBuffer();
     return { png, mode: "FULL_MASK", flags: ["REDACTION_FULL_MASK", "REDACTION_UNREADABLE"] };
   },
 };
@@ -57,27 +70,54 @@ export async function processProofFile(d: ProofDeps, fileId: string): Promise<"R
   const bytes = await d.store.get(d.buckets.ingest, f.storageKey, MEDIA_MAX_BYTES).catch(() => "too_large" as const);
   if (bytes === "too_large") return finish("REJECTED", "TOO_LARGE");
   if (!bytes) return finish("REJECTED", "NOT_CONFIRMED");
-  const isPdf = bytes.subarray(0, 5).toString("latin1") === "%PDF-";
-  const detected = isPdf ? "application/pdf" : sniffImageMime(bytes);
-  if (!detected) return finish("REJECTED", "TYPE_NOT_ALLOWED");
+  const typed = detectType(bytes, { allowPdf: true });
+  if (!typed || typed.kind === "VIDEO") return finish("REJECTED", "TYPE_NOT_ALLOWED");
+  const detected = typed.mime;
   if (detected !== f.declaredMime) return finish("REJECTED", "TYPE_MISMATCH");
-  let red: RedactionResult;
+  if (typed.kind === "IMAGE" && findPolyglot(bytes)) return finish("REJECTED", "TYPE_MISMATCH");
+  if (typed.kind === "DOCUMENT") {
+    try { inspectPdf(bytes); } catch (e) { if (e instanceof PdfReject) return finish("REJECTED", e.reason); throw e; }
+  }
+  // SEC-M5-02: ClamAV before the original is stored or decoded. Scanner trouble throws (retry); nothing is persisted unscanned.
+  if (d.scanner) {
+    const ver = await d.scanner.version();
+    if (evaluateFreshness(ver, clock(d)).state === "too_old") throw new ScannerUnavailable("scanner: signatures too old");
+    const res = await d.scanner.scan(bytes);
+    if (!res.clean) {
+      await d.store.put(d.buckets.private, quarantineKey(f.id), bytes, "application/octet-stream");
+      return finish("REJECTED", "MALWARE");
+    }
+  }
+  let reds: RedactionResult[];
   try {
-    red = await d.redactor.redact({ bytes, mime: detected });
-  } catch {
+    if (typed.kind === "DOCUMENT") {
+      const pages = await (d.rasterise ?? rasterisePdf)(bytes); // sandboxed; at most 20 pages, encrypted -> CORRUPT
+      reds = [];
+      for (const page of pages) reds.push(await d.redactor.redact({ bytes: page, mime: "image/png" }));
+    } else {
+      reds = [await d.redactor.redact({ bytes, mime: detected })];
+    }
+  } catch (e) {
+    if (e instanceof PdfReject) return finish("REJECTED", e.reason);
     return finish("FAILED", "PROCESSING_ERROR"); // fail closed: nothing unredacted is ever exposed
   }
-  const orig = origKey(f.id), rk = redKey(f.id);
+  const orig = origKey(f.id);
+  const multi = reds.length > 1 || typed.kind === "DOCUMENT";
+  const rks = reds.map((_, i) => (multi ? `proof/${f.id}/redacted.p${i + 1}.png` : redKey(f.id)));
   await d.store.put(d.buckets.private, orig, bytes, detected);
-  await d.store.put(d.buckets.private, rk, red.png, "image/png");
+  for (const [i, red] of reds.entries()) await d.store.put(d.buckets.private, rks[i]!, red.png, "image/png");
   await d.store.delete(d.buckets.ingest, f.storageKey).catch(() => undefined);
-  const hash = d.keys[0] && red.orderRef && !f.proof.orderReferenceHash ? hashOrderRef(d.keys[0], red.merchantSlug ?? "unknown", red.orderRef) : null;
+  const first = reds.find((r) => r.orderRef);
+  const hash = d.keys[0] && first?.orderRef && !f.proof.orderReferenceHash ? hashOrderRef(d.keys[0], first.merchantSlug ?? "unknown", first.orderRef) : null;
+  const flagsNew = [...new Set(reds.flatMap((r) => r.flags))];
+  const fullMask = reds.some((r) => r.mode === "FULL_MASK");
   await d.db.$transaction(async (tx) => {
     await tx.purchaseProofFile.updateMany({ where: { id: f.id, status: "PROCESSING" }, data: { status: "READY", detectedMime: detected, sha256: sha256(bytes), storageKey: orig } });
-    await tx.purchaseProofFile.create({ data: { proofId: f.proofId, ownerId: (await tx.purchaseProofFile.findUniqueOrThrow({ where: { id: f.id }, select: { ownerId: true } })).ownerId, kind: "IMAGE", status: "READY", declaredMime: "image/png", detectedMime: "image/png", sizeBytes: red.png.length, storageKey: rk, isRedacted: true, derivedFromId: f.id, sha256: sha256(red.png) } });
+    const ownerId = (await tx.purchaseProofFile.findUniqueOrThrow({ where: { id: f.id }, select: { ownerId: true } })).ownerId;
+    for (const [i, red] of reds.entries()) await tx.purchaseProofFile.create({ data: { proofId: f.proofId, ownerId, kind: "IMAGE", status: "READY", declaredMime: "image/png", detectedMime: "image/png", sizeBytes: red.png.length, storageKey: rks[i]!, isRedacted: true, derivedFromId: f.id, sha256: sha256(red.png) } });
     const p = await tx.purchaseProof.findUniqueOrThrow({ where: { id: f.proofId }, select: { flags: true, redactionMode: true } });
-    const flags = [...new Set([...(Array.isArray(p.flags) ? (p.flags as string[]) : []), ...red.flags])];
-    await tx.purchaseProof.update({ where: { id: f.proofId }, data: { flags, redactionMode: red.mode === "FULL_MASK" || p.redactionMode === "FULL_MASK" ? "FULL_MASK" : "AUTO", redactedAt: clock(d), ...(hash ? { orderReferenceHash: hash.hash, orderReferenceKeyId: hash.keyId } : {}) } });
+    const flags = [...new Set([...(Array.isArray(p.flags) ? (p.flags as string[]) : []), ...flagsNew])];
+    await tx.purchaseProof.update({ where: { id: f.proofId }, data: { flags, redactionMode: fullMask || p.redactionMode === "FULL_MASK" ? "FULL_MASK" : "AUTO", redactedAt: clock(d), ...(hash ? { orderReferenceHash: hash.hash, orderReferenceKeyId: hash.keyId } : {}) } });
   });
   await finalizeProof(d.db, f.proofId, clock(d));
   return "READY";
