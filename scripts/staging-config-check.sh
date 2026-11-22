@@ -25,4 +25,10 @@ chk "env example names DEMO_PASSWORD" '^DEMO_PASSWORD=' .env.staging.example
 if grep -Eq '(PASSWORD|SECRET|API_KEY|_KEY): [^$"]' $F; then echo "FAIL: literal secret value in $F"; fail=1; else echo "ok:   no literal secrets in $F"; fi
 # staging-up.sh must never echo a secret value: only `add` (prints NAME) and die messages (static text) may print.
 if grep -nE 'echo[^|]*getv (DEMO_PASSWORD|MODERATION_API_KEY|AUTH_SECRET)|echo[^|]*\$\{?(DEMO_PASSWORD|MODERATION_API_KEY|AUTH_SECRET)' scripts/staging-up.sh; then echo "FAIL: staging-up.sh echoes a secret"; fail=1; else echo "ok:   staging-up.sh prints no secret values"; fi
+chk "tls profile is opt-in (caddy has profiles: tls)" 'profiles: \["tls"\]' $F
+chk "caddy proxies web and minio" 'reverse_proxy (web:3000|minio:9000)' infra/caddy/Caddyfile
+chk "staging-up sources the vps preflight" 'vps-preflight.sh' scripts/staging-up.sh
+chk "tls mode rewrites APP_URL/S3_PUBLIC_ENDPOINT together" 'setv S3_PUBLIC_ENDPOINT' scripts/staging-up.sh
+chk "preflight refuses private STAGING_HOST" 'resolves to a \$cls address' scripts/vps-preflight.sh
+bash scripts/vps-preflight-test.sh || fail=1
 exit $fail

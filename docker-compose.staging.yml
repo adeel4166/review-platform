@@ -299,12 +299,32 @@ services:
       VERIFY_DNS_SERVERS: ${VERIFY_DNS_SERVERS:-1.1.1.1,8.8.8.8}
     networks: [egress]
 
+  # Optional (profile "tls", off by default): HTTPS for the no-domain VPS deploy. Enabled by STAGING_TLS=1 in scripts/staging-up.sh.
+  # Needs host ports 80 + 443 open. Network aliases make the containers resolve the public names straight to this proxy (no hairpin NAT).
+  caddy:
+    profiles: ["tls"]
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      TLS_APP_HOST: ${TLS_APP_HOST:-app.invalid}
+      TLS_S3_HOST: ${TLS_S3_HOST:-s3.invalid}
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      internal:
+        aliases: ["${TLS_APP_HOST:-app.invalid}", "${TLS_S3_HOST:-s3.invalid}"]
+
 networks:
   internal: {}
   egress:
     ipam: { config: [{ subnet: 172.28.0.0/24 }] }
 
 volumes:
+  caddy-data:
+  caddy-config:
   clamav-db:
   mysql-data:
   redis-data:

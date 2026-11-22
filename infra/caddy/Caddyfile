@@ -1,0 +1,8 @@
+# LIVE-08 optional `tls` profile: automatic HTTPS (Let's Encrypt) for <ip-dashed>.sslip.io (app) and s3.<ip-dashed>.sslip.io (MinIO S3).
+# Host names come from TLS_APP_HOST / TLS_S3_HOST (written by scripts/staging-up.sh when STAGING_TLS=1). Host header is preserved (S3 signatures).
+{$TLS_APP_HOST} {
+	reverse_proxy web:3000
+}
+{$TLS_S3_HOST} {
+	reverse_proxy minio:9000
+}

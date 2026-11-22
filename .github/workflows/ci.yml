@@ -282,6 +282,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker compose -f docker-compose.staging.yml --env-file .env.staging.example config -q
+      - run: docker compose -f docker-compose.staging.yml --profile tls --env-file .env.staging.example config -q
       - run: bash scripts/staging-config-check.sh
       - name: Preflight refuses mock / unset MODERATION_PROVIDER
         run: |
