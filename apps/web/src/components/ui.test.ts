@@ -14,7 +14,7 @@ describe("ReviewForm (SSR markup)", () => {
     expect((html.match(/type="radio"/g) ?? []).length).toBe(5);
   });
   it("accepts only allowed image types and has a submit button", () => {
-    expect(html).toContain('accept="image/jpeg,image/png,image/webp"');
+    expect(html).toContain('accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime"');
     expect(html).toMatch(/<button type="submit"[^>]*>Submit review/);
   });
 });
