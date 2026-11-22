@@ -10,12 +10,13 @@ export const runtime = "nodejs";
 const input = z.object({ reasonCode: z.string().min(1).max(32), reasonText: z.string().max(2000) }).strict();
 
 /** Break-glass `proof.view_original` (ADR-0027): reason + step-up + daily cap; writes the audit row; returns a 60 s single-use access. */
-export async function POST(req: Request, ctx: { params: Promise<{ proofId: string; fileId: string }> }) {
+// The segment is [id] (not [proofId]): Next.js refuses two slug names at one level, and admin/proofs/[id] already exists.
+export async function POST(req: Request, ctx: { params: Promise<{ id: string; fileId: string }> }) {
   return handle(async () => {
     const actor = await requireAdmin();
     const p = await ctx.params;
     const body = input.parse(await readJson(req));
-    const r = await requestOriginalAccess(m6db, staffOf(actor), { proofId: idParam.parse(p.proofId), fileId: idParam.parse(p.fileId), ...body }, clock, alert);
+    const r = await requestOriginalAccess(m6db, staffOf(actor), { proofId: idParam.parse(p.id), fileId: idParam.parse(p.fileId), ...body }, clock, alert);
     return json(r, r.status);
   });
 }

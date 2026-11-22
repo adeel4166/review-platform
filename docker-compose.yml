@@ -39,7 +39,8 @@ services:
       retries: 20
 
   minio:
-    image: minio/minio:latest
+    image: rp-minio:dev
+    build: { context: ./infra/minio } # minio/minio + minio/mc are no longer pullable from Docker Hub
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: minio_local
@@ -56,7 +57,7 @@ services:
       retries: 20
 
   minio-init:
-    image: minio/mc:latest
+    image: rp-minio:dev
     depends_on:
       minio: { condition: service_healthy }
     restart: "no"
@@ -66,7 +67,7 @@ services:
       mc alias set local http://minio:9000 minio_local minio_local_secret &&
       mc mb -p local/rp-ingest local/rp-private local/rp-public &&
       mc anonymous set download local/rp-public &&
-      (mc ilm rule ls local/rp-ingest 2>/dev/null | grep -q 'Expiry' || mc ilm rule add --expire-days 1 local/rp-ingest) &&
+      { case \"$$(mc ilm rule ls local/rp-ingest 2>/dev/null || true)\" in *Expiry*) ;; *) mc ilm rule add --expire-days 1 local/rp-ingest ;; esac; } &&
       echo buckets ready"
 
   # T-01: isolated verification-egress worker (ADR-0015). Fetches attacker-controlled URLs, so it holds NO DATABASE_URL/S3_*/SMTP_URL:
@@ -99,7 +100,8 @@ services:
       - ./infra/clamav/clamd.conf:/etc/clamav/clamd.conf:ro
       - clamav-db:/var/lib/clamav
     healthcheck:
-      test: ["CMD", "/usr/local/bin/clamdcheck.sh"]
+      # The image's clamdcheck.sh dials "localhost" (resolves to ::1) but clamd binds IPv4 only (infra/clamav/clamd.conf), so it never passes.
+      test: ["CMD-SHELL", "[ \"$$(echo PING | nc -w 3 127.0.0.1 3310)\" = PONG ]"]
       interval: 30s
       retries: 20
 

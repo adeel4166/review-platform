@@ -216,7 +216,7 @@ ALTER TABLE `media_assets` ADD CONSTRAINT `media_assets_appealId_fkey` FOREIGN K
 ALTER TABLE `moderation_decisions` ADD CONSTRAINT `moderation_decisions_caseId_fkey` FOREIGN KEY (`caseId`) REFERENCES `moderation_cases`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE `moderation_decisions` ADD CONSTRAINT `moderation_decisions_moderatorId_fkey` FOREIGN KEY (`moderatorId`) REFERENCES `users`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE `moderation_decisions` ADD CONSTRAINT `moderation_decisions_moderatorId_fkey` FOREIGN KEY (`moderatorId`) REFERENCES `users`(`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
 
 -- AddForeignKey
 ALTER TABLE `appeals` ADD CONSTRAINT `appeals_appellantId_fkey` FOREIGN KEY (`appellantId`) REFERENCES `users`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -237,10 +237,10 @@ ALTER TABLE `appeals` ADD CONSTRAINT `appeals_purchaseProofId_fkey` FOREIGN KEY 
 ALTER TABLE `appeals` ADD CONSTRAINT `appeals_ownershipClaimId_fkey` FOREIGN KEY (`ownershipClaimId`) REFERENCES `seller_ownership_claims`(`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
 
 -- AddForeignKey
-ALTER TABLE `staff_approval_requests` ADD CONSTRAINT `staff_approval_requests_requestedById_fkey` FOREIGN KEY (`requestedById`) REFERENCES `users`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE `staff_approval_requests` ADD CONSTRAINT `staff_approval_requests_requestedById_fkey` FOREIGN KEY (`requestedById`) REFERENCES `users`(`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
 
 -- AddForeignKey
-ALTER TABLE `staff_approval_requests` ADD CONSTRAINT `staff_approval_requests_decidedById_fkey` FOREIGN KEY (`decidedById`) REFERENCES `users`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE `staff_approval_requests` ADD CONSTRAINT `staff_approval_requests_decidedById_fkey` FOREIGN KEY (`decidedById`) REFERENCES `users`(`id`) ON DELETE RESTRICT ON UPDATE RESTRICT;
 
 -- AddForeignKey
 ALTER TABLE `break_glass_accesses` ADD CONSTRAINT `break_glass_accesses_staffId_fkey` FOREIGN KEY (`staffId`) REFERENCES `users`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;

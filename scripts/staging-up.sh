@@ -59,6 +59,13 @@ case "$mod" in anthropic|gemini) ;; *) die "MODERATION_PROVIDER has an unsupport
 ports=("${WEB_PORT:-$(getv WEB_PORT)}" "${MINIO_PORT:-$(getv MINIO_PORT)}"); ports[0]="${ports[0]:-3000}"; ports[1]="${ports[1]:-9000}"; [ "$tls" = 1 ] && ports+=(80 443)
 vps_preflight "$(getv STAGING_HOST)" "$tls" "${ports[@]}" || die "preflight found $PF_FAILS problem(s) (see above); nothing was started"
 need_docker
+# The workers' security_opt names AppArmor profile rp-worker-media (bwrap needs `userns`; Ubuntu 23.10+ restricts it). Load it when AppArmor is on.
+if [ -d /sys/kernel/security/apparmor ]; then
+  sudo_=(); [ "$(id -u)" = 0 ] || sudo_=(sudo)
+  "${sudo_[@]}" install -m 644 infra/apparmor/rp-worker-media /etc/apparmor.d/rp-worker-media && "${sudo_[@]}" apparmor_parser -r /etc/apparmor.d/rp-worker-media \
+    || die "could not load AppArmor profile infra/apparmor/rp-worker-media (needed by worker-core/worker-media)"
+  echo "apparmor profile rp-worker-media loaded"
+fi
 
 # 2. Secrets + endpoints: generate anything missing (idempotent; existing values are never overwritten or printed).
 touch "$ENV_FILE"; chmod 600 "$ENV_FILE"

@@ -1418,7 +1418,7 @@ model ModerationDecision {
   createdAt          DateTime           @db.DateTime(3) // from clock.now()
 
   moderationCase ModerationCase @relation(fields: [caseId], references: [id], onDelete: Restrict)
-  moderator      User?          @relation("DecisionModerator", fields: [moderatorId], references: [id], onDelete: Restrict)
+  moderator      User?          @relation("DecisionModerator", fields: [moderatorId], references: [id], onDelete: Restrict, onUpdate: Restrict) // MySQL error 3823: chk_decision_human forbids a cascading FK action on moderatorId
 
   @@index([caseId, createdAt])
   @@index([moderatorId, createdAt])
@@ -1495,8 +1495,8 @@ model StaffApprovalRequest {
   decidedAt     DateTime?      @db.DateTime(3)
   executedAt    DateTime?      @db.DateTime(3)
   createdAt     DateTime       @db.DateTime(3)
-  requestedBy   User           @relation("ApprovalRequester", fields: [requestedById], references: [id], onDelete: Restrict)
-  decidedBy     User?          @relation("ApprovalDecider", fields: [decidedById], references: [id], onDelete: Restrict)
+  requestedBy   User           @relation("ApprovalRequester", fields: [requestedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  decidedBy     User?          @relation("ApprovalDecider", fields: [decidedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([status, expiresAt])
   @@index([kind, status])

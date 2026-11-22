@@ -39,7 +39,8 @@ services:
       retries: 20
 
   minio:
-    image: minio/minio:latest
+    image: rp-minio:${RP_IMAGE_TAG:-latest}
+    build: { context: ./infra/minio } # minio/minio + minio/mc are no longer pullable from Docker Hub
     restart: unless-stopped
     command: ["server", "/data", "--console-address", "127.0.0.1:9001"]
     environment:
@@ -56,7 +57,7 @@ services:
 
   # Buckets, 24h ingest lifecycle, anonymous read on rp-public only, and one user per role bound to infra/minio/policies/*.json.
   minio-init:
-    image: minio/mc:latest
+    image: rp-minio:${RP_IMAGE_TAG:-latest}
     profiles: ["init"]
     restart: "no"
     depends_on:
@@ -89,7 +90,7 @@ services:
         mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
         mc mb -p local/rp-ingest local/rp-private local/rp-public
         mc anonymous set none local/rp-ingest; mc anonymous set none local/rp-private; mc anonymous set download local/rp-public
-        (mc ilm rule ls local/rp-ingest 2>/dev/null | grep -q Expiry || mc ilm rule add --expire-days 1 local/rp-ingest)
+        case "$$(mc ilm rule ls local/rp-ingest 2>/dev/null || true)" in *Expiry*) ;; *) mc ilm rule add --expire-days 1 local/rp-ingest ;; esac
         # SEC-FIN-02: object-locked (WORM) ledger + audit archive. Bucket names must match the policy files (rp-ledger, rp-audit-archive); object lock can only be set at creation.
         [ "$$S3_BUCKET_LEDGER" = rp-ledger ] && [ "$$S3_BUCKET_AUDIT_ARCHIVE" = rp-audit-archive ] || { echo "S3_BUCKET_LEDGER/S3_BUCKET_AUDIT_ARCHIVE must be rp-ledger/rp-audit-archive"; exit 1; }
         mc mb -p --with-lock local/rp-ledger local/rp-audit-archive
@@ -113,13 +114,16 @@ services:
       - clamav-db:/var/lib/clamav
     networks: [internal]
     healthcheck:
-      test: ["CMD", "/usr/local/bin/clamdcheck.sh"]
+      # The image's clamdcheck.sh dials "localhost" (resolves to ::1) but clamd binds IPv4 only (infra/clamav/clamd.conf), so it never passes.
+      test: ["CMD-SHELL", "[ \"$$(echo PING | nc -w 3 127.0.0.1 3310)\" = PONG ]"]
       interval: 30s
       retries: 20
 
   # Core group: moderation, outbox, mail, retention/erasure. Holds the AI key. MODERATION_PROVIDER mock/unset => exit 1 (fail closed).
   worker-core:
     <<: *worker
+    # Runs the same MED-047 bwrap self-test (MEDIA_SANDBOX_REQUIRED) as worker-media, so it needs the same sandbox permissions.
+    security_opt: ["no-new-privileges:true", "seccomp=unconfined", "apparmor=rp-worker-media", "systempaths=unconfined"]
     environment:
       WORKER_GROUPS: core
       NODE_ENV: production
@@ -162,7 +166,7 @@ services:
   # which Docker's default seccomp profile blocks; the startup self-test exits 1 if the sandbox cannot be proven, so this fails closed.
   worker-media:
     <<: *worker
-    security_opt: ["no-new-privileges:true", "seccomp=unconfined"]
+    security_opt: ["no-new-privileges:true", "seccomp=unconfined", "apparmor=rp-worker-media", "systempaths=unconfined"] # infra/apparmor/rp-worker-media
     depends_on:
       redis: { condition: service_healthy }
       clamav: { condition: service_healthy }

@@ -115,10 +115,10 @@ CREATE TABLE `follows` (
     INDEX `follows_followedProductId_idx`(`followedProductId`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-ALTER TABLE `follows` ADD CONSTRAINT `chk_follow_one_target` CHECK (
-    (`followedUserId` IS NOT NULL) + (`followedSellerId` IS NOT NULL) + (`followedProductId` IS NOT NULL) = 1
-    AND ((`targetType` = 'USER' AND `followedUserId` IS NOT NULL) OR (`targetType` = 'SELLER' AND `followedSellerId` IS NOT NULL) OR (`targetType` = 'PRODUCT' AND `followedProductId` IS NOT NULL)));
-ALTER TABLE `follows` ADD CONSTRAINT `chk_follow_not_self` CHECK (`followedUserId` IS NULL OR `followedUserId` <> `followerId`);
+-- chk_follow_one_target (exactly one followed* column, matching targetType) is NOT a DB CHECK: MySQL 8 error 3823 forbids
+-- CHECKs on columns used by an FK with ON DELETE CASCADE. Enforced where follows are written (apps/web/src/server/social.ts).
+-- chk_follow_not_self is NOT a DB CHECK: MySQL 8 (error 3823) forbids CHECKs on columns used by an FK with ON DELETE CASCADE,
+-- and the cascade is required for account erasure. Enforced in app code: packages/core/src/social.ts (SELF_FOLLOW).
 
 CREATE TABLE `user_blocks` (
     `blockerId` VARCHAR(191) NOT NULL,
@@ -128,7 +128,7 @@ CREATE TABLE `user_blocks` (
     INDEX `user_blocks_blockedId_idx`(`blockedId`),
     PRIMARY KEY (`blockerId`, `blockedId`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-ALTER TABLE `user_blocks` ADD CONSTRAINT `chk_block_not_self` CHECK (`blockerId` <> `blockedId`);
+-- chk_block_not_self: same MySQL 3823 limitation (ON DELETE CASCADE FKs); enforced in apps/web/src/server/social.ts (self_block).
 
 CREATE TABLE `notifications` (
     `id` VARCHAR(191) NOT NULL,

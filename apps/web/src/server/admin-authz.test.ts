@@ -25,7 +25,7 @@ const ADMIN_ROUTES: AdminRoute[] = [
   { file: "approvals/[id]/cancel/route.ts", method: "POST", withId: true },
   { file: "users/[id]/2fa-reset-requests/route.ts", method: "POST", withId: true },
   { file: "config/moderation/[version]/activation-requests/route.ts", method: "POST", withId: true },
-  { file: "proofs/[proofId]/files/[fileId]/original-access/route.ts", method: "POST", withId: true },
+  { file: "proofs/[id]/files/[fileId]/original-access/route.ts", method: "POST", withId: true },
   { file: "break-glass/[accessId]/content/route.ts", method: "GET", withId: true },
   { file: "moderation/route.ts", method: "GET", withId: false },
   { file: "moderation/[id]/route.ts", method: "GET", withId: true },

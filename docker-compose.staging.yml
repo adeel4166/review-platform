@@ -74,7 +74,8 @@ services:
 
   # S3 API is published on ${MINIO_PORT} because browsers PUT presigned uploads and load rp-public media from it. Console stays on loopback.
   minio:
-    image: minio/minio:latest
+    image: rp-minio:${RP_IMAGE_TAG:-staging}
+    build: { context: ./infra/minio } # minio/minio + minio/mc are no longer pullable from Docker Hub
     restart: unless-stopped
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
@@ -93,7 +94,7 @@ services:
   # One-shot: buckets (incl. object-locked rp-ledger + rp-audit-archive from LIVE-01/SEC-FIN-02), lifecycle, policies, users.
   # Idempotent: re-running after `up` is safe (mb -p, policy create/attach, user add tolerate existing state).
   minio-init:
-    image: minio/mc:latest
+    image: rp-minio:${RP_IMAGE_TAG:-staging}
     restart: "no"
     depends_on:
       minio: { condition: service_healthy }
@@ -122,7 +123,7 @@ services:
         mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
         mc mb -p local/rp-ingest local/rp-private local/rp-public
         mc anonymous set none local/rp-ingest; mc anonymous set none local/rp-private; mc anonymous set download local/rp-public
-        (mc ilm rule ls local/rp-ingest 2>/dev/null | grep -q Expiry || mc ilm rule add --expire-days 1 local/rp-ingest)
+        case "$$(mc ilm rule ls local/rp-ingest 2>/dev/null || true)" in *Expiry*) ;; *) mc ilm rule add --expire-days 1 local/rp-ingest ;; esac
         mc mb -p --with-lock local/rp-ledger local/rp-audit-archive
         mc anonymous set none local/rp-ledger; mc anonymous set none local/rp-audit-archive
         mc retention set --default GOVERNANCE "$${LEDGER_RETENTION_DAYS}d" local/rp-ledger
@@ -144,7 +145,8 @@ services:
       - clamav-db:/var/lib/clamav
     networks: [internal]
     healthcheck:
-      test: ["CMD", "/usr/local/bin/clamdcheck.sh"]
+      # The image's clamdcheck.sh dials "localhost" (resolves to ::1) but clamd binds IPv4 only (infra/clamav/clamd.conf), so it never passes.
+      test: ["CMD-SHELL", "[ \"$$(echo PING | nc -w 3 127.0.0.1 3310)\" = PONG ]"]
       interval: 30s
       retries: 40
       start_period: 120s
@@ -215,6 +217,8 @@ services:
   # Core group: moderation, outbox, mail, retention/erasure. Holds the AI key. MODERATION_PROVIDER mock/unset => exit 1 (fail closed).
   worker-core:
     <<: *worker
+    # Runs the same MED-047 bwrap self-test (MEDIA_SANDBOX_REQUIRED) as worker-media, so it needs the same sandbox permissions.
+    security_opt: ["no-new-privileges:true", "seccomp=unconfined", "apparmor=rp-worker-media", "systempaths=unconfined"]
     depends_on:
       redis: { condition: service_healthy }
       migrate: { condition: service_completed_successfully }
@@ -259,9 +263,11 @@ services:
 
   # Media group (untrusted parsers): no AI key, SMTP or auth/2FA secrets (assertMediaEnv). bwrap needs unprivileged user namespaces,
   # which Docker's default seccomp profile blocks; the startup self-test exits 1 if the sandbox cannot be proven, so this fails closed.
+  # apparmor=rp-worker-media (infra/apparmor/rp-worker-media) grants `userns` on hosts with kernel.apparmor_restrict_unprivileged_userns=1 (Ubuntu 23.10+).
+  # systempaths=unconfined: Docker masks /proc paths, so the kernel refuses bwrap's fresh `--proc /proc` mount ("Can't mount proc ... Operation not permitted"). The container stays non-root, cap_drop ALL and read-only.
   worker-media:
     <<: *worker
-    security_opt: ["no-new-privileges:true", "seccomp=unconfined"]
+    security_opt: ["no-new-privileges:true", "seccomp=unconfined", "apparmor=rp-worker-media", "systempaths=unconfined"]
     depends_on:
       redis: { condition: service_healthy }
       clamav: { condition: service_healthy }
