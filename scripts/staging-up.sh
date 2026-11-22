@@ -4,12 +4,17 @@
 #   scripts/staging-up.sh down | stop | reseed | smoke | logs [service] | status
 # Secrets: generated once into $STAGING_ENV_FILE (default .env.staging, mode 600, gitignored). Only variable NAMES are ever printed.
 # MODERATION_PROVIDER / MODERATION_API_KEY are never generated or written: export them (or put them in the env file yourself).
-# Optional env names: STAGING_ENV_FILE, STAGING_HOST (default: host primary IP), WEB_PORT (3000), MINIO_PORT (9000), STAGING_SEED_DEMO (1), SKIP_SMOKE (0).
+# STAGING_HOST (required; the server's PUBLIC IPv4, refused if unset/private/loopback except on CI): see docs/ops/vps-quickstart.md.
+# Optional env names: STAGING_ENV_FILE, WEB_PORT (3000), MINIO_PORT (9000), STAGING_SEED_DEMO (1), SKIP_SMOKE (0),
+#   STAGING_TLS (0; 1 = compose profile "tls": Caddy gives https://<ip-dashed>.sslip.io + https://s3.<ip-dashed>.sslip.io, needs ports 80+443).
 set -euo pipefail
 cd "$(dirname "$0")/.."
+umask 077
 ENV_FILE="${STAGING_ENV_FILE:-.env.staging}"
 DC=(docker compose -p rp-staging -f docker-compose.staging.yml --env-file "$ENV_FILE")
 cmd="${1:-up}"; shift || true
+# shellcheck source=scripts/vps-preflight.sh
+. "$(dirname "$0")/vps-preflight.sh"
 
 die() { echo "staging-up: $*" >&2; exit 1; }
 # Value of NAME from the process env, else from the env file (strips one layer of quotes). Never echo the result.
@@ -22,6 +27,13 @@ add() { # add NAME VALUE: append only when missing; report the NAME only
 }
 need_docker() { command -v docker >/dev/null || die "docker not found"; docker compose version >/dev/null 2>&1 || die "docker compose v2 not found"; docker info >/dev/null 2>&1 || die "cannot reach the Docker daemon"; }
 exp_env() { set -a; [ -f "$ENV_FILE" ] && . "$ENV_FILE"; set +a; }
+setv() { # setv NAME VALUE: replace (or append) a derived, non-secret setting; report the NAME only
+  { grep -vE "^$1=" "$ENV_FILE" 2>/dev/null || true; } > "$ENV_FILE.tmp"; printf "%s='%s'\n" "$1" "$2" >> "$ENV_FILE.tmp"; mv "$ENV_FILE.tmp" "$ENV_FILE"; chmod 600 "$ENV_FILE"; echo "  set $1"
+}
+dropv() { { grep -vE "^$1=" "$ENV_FILE" 2>/dev/null || true; } > "$ENV_FILE.tmp"; mv "$ENV_FILE.tmp" "$ENV_FILE"; chmod 600 "$ENV_FILE"; }
+# Optional TLS profile (Caddy). STAGING_TLS in the process env wins over the env file; default off. The profile must be active for down/stop/logs too.
+tls="${STAGING_TLS:-$(getv STAGING_TLS)}"; [ "$tls" = 1 ] || tls=0
+[ "$tls" = 1 ] && DC=(docker compose -p rp-staging -f docker-compose.staging.yml --profile tls --env-file "$ENV_FILE")
 
 case "$cmd" in
   down)   need_docker; "${DC[@]}" down --remove-orphans; exit 0 ;;                 # keeps volumes (data survives)
@@ -42,17 +54,32 @@ mod="$(getv MODERATION_PROVIDER)"
 [ "$mod" != "mock" ] || die "MODERATION_PROVIDER=mock is refused on staging (real provider required)"
 [ "$mod" = "anthropic" ] || die "MODERATION_PROVIDER has an unsupported value (supported: anthropic)"
 [ -n "$(getv MODERATION_API_KEY)" ] || die "MODERATION_API_KEY is not set: required for MODERATION_PROVIDER=anthropic"
+
+# Host checks (fail closed, names only): public STAGING_HOST, Docker + Compose v2, >= 4 GB RAM, free ports, user namespaces.
+ports=("${WEB_PORT:-$(getv WEB_PORT)}" "${MINIO_PORT:-$(getv MINIO_PORT)}"); ports[0]="${ports[0]:-3000}"; ports[1]="${ports[1]:-9000}"; [ "$tls" = 1 ] && ports+=(80 443)
+vps_preflight "$(getv STAGING_HOST)" "$tls" "${ports[@]}" || die "preflight found $PF_FAILS problem(s) (see above); nothing was started"
 need_docker
 
 # 2. Secrets + endpoints: generate anything missing (idempotent; existing values are never overwritten or printed).
 touch "$ENV_FILE"; chmod 600 "$ENV_FILE"
 echo "env file: $ENV_FILE (names of newly generated variables below)"
-host="${STAGING_HOST:-$(hostname -I 2>/dev/null | awk '{print $1}')}"; host="${host:-localhost}"
-add STAGING_HOST "$host"; host="$(getv STAGING_HOST)"
+host="$(getv STAGING_HOST)"; add STAGING_HOST "$host"
 add WEB_PORT "${WEB_PORT:-3000}"; add MINIO_PORT "${MINIO_PORT:-9000}"
-add APP_URL "http://$host:$(getv WEB_PORT)"
-add S3_PUBLIC_ENDPOINT "http://$host:$(getv MINIO_PORT)"
-add MEDIA_PUBLIC_BASE_URL "http://$host:$(getv MINIO_PORT)/rp-public"
+prev_tls="$(grep -E '^STAGING_TLS=' "$ENV_FILE" 2>/dev/null | tail -n1 | cut -d= -f2- | tr -d "'\"" || true)"
+if [ "$tls" = 1 ]; then
+  dashed="${host//./-}"
+  # Derived endpoints are always rewritten in TLS mode so APP_URL, S3_PUBLIC_ENDPOINT, MEDIA_PUBLIC_BASE_URL and MinIO CORS (APP_URL) agree.
+  setv STAGING_TLS 1; setv TLS_APP_HOST "$dashed.sslip.io"; setv TLS_S3_HOST "s3.$dashed.sslip.io"
+  setv APP_URL "https://$dashed.sslip.io"; setv S3_PUBLIC_ENDPOINT "https://s3.$dashed.sslip.io"; setv MEDIA_PUBLIC_BASE_URL "https://s3.$dashed.sslip.io/rp-public"
+else
+  if [ "$prev_tls" = 1 ]; then # switched back to plain HTTP: drop the TLS-derived values so they are regenerated below
+    for n in STAGING_TLS TLS_APP_HOST TLS_S3_HOST APP_URL S3_PUBLIC_ENDPOINT MEDIA_PUBLIC_BASE_URL; do dropv "$n"; done
+    echo "  TLS settings removed (plain HTTP mode)"
+  fi
+  add APP_URL "http://$host:$(getv WEB_PORT)"
+  add S3_PUBLIC_ENDPOINT "http://$host:$(getv MINIO_PORT)"
+  add MEDIA_PUBLIC_BASE_URL "http://$host:$(getv MINIO_PORT)/rp-public"
+fi
 for n in MYSQL_ROOT_PASSWORD MYSQL_APP_PASSWORD REDIS_DEFAULT_PASSWORD REDIS_VERIF_EGRESS_PASSWORD MINIO_ROOT_PASSWORD RP_CORE_SECRET RP_MEDIA_SECRET RP_WEB_SECRET \
          S3_LEDGER_SECRET_ACCESS_KEY S3_LEDGER_READ_SECRET_ACCESS_KEY S3_AUDIT_ARCHIVE_SECRET_ACCESS_KEY; do add "$n" "$(rnd 48 40)"; done
 add MINIO_ROOT_USER rpminioroot

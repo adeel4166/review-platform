@@ -49,3 +49,6 @@ docker compose -p rp-staging -f docker-compose.staging.yml --env-file .env.stagi
 
 ## CI
 Jobs `mysql-int`, `ops003`, `prod-config`, `staging-smoke`, `e2e`, plus `staging-config` (renders this compose, static checks, preflight refusal) and `staging-stack` (runs `staging-up.sh` end to end, artifact `staging-stack`). Evidence: `docs/qa/m8-02-staging-smoke-evidence.md`.
+
+## No-domain VPS deploy (LIVE-08)
+Single 4 GB Ubuntu VPS, IP only: follow [vps-quickstart.md](vps-quickstart.md). `scripts/staging-up.sh` now runs `scripts/vps-preflight.sh` first (Docker + Compose v2, >= 4 GB RAM, free ports, user namespaces, public `STAGING_HOST`) and refuses to start otherwise. Optional HTTPS: `STAGING_TLS=1` (Caddy profile `tls`).
