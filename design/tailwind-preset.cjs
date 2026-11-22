@@ -30,8 +30,8 @@ module.exports = {
         "info-bg": "var(--color-info-bg)",
         "verified": "var(--color-verified)"
 },
-      borderRadius: {"sm":"var(--radius-sm)","md":"var(--radius-md)","lg":"var(--radius-lg)","full":"var(--radius-full)"},
-      boxShadow: {"sm":"var(--shadow-sm)","md":"var(--shadow-md)"},
+      borderRadius: {"sm":"var(--radius-sm)","md":"var(--radius-md)","lg":"var(--radius-lg)","xl":"var(--radius-xl)","2xl":"var(--radius-2xl)","full":"var(--radius-full)"},
+      boxShadow: {"sm":"var(--shadow-sm)","md":"var(--shadow-md)","lg":"var(--shadow-lg)","xl":"var(--shadow-xl)"},
       fontFamily: { sans: ['var(--font-family-sans)'], mono: ['var(--font-family-mono)'] },
       minHeight: { target: 'var(--size-target-min)' },
       minWidth: { target: 'var(--size-target-min)' },
