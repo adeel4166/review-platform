@@ -274,3 +274,48 @@ jobs:
             smoke-evidence.txt
             .preview.log
           if-no-files-found: ignore
+
+  staging-config:
+    # LIVE-05: the staging compose renders, passes the static checks, and the preflight fails closed (no docker daemon needed beyond `config`).
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose -f docker-compose.staging.yml --env-file .env.staging.example config -q
+      - run: bash scripts/staging-config-check.sh
+      - name: Preflight refuses mock / unset MODERATION_PROVIDER
+        run: |
+          for v in "" mock; do
+            if env -i PATH="$PATH" ${v:+MODERATION_PROVIDER=$v} STAGING_ENV_FILE=/tmp/none.env bash scripts/staging-up.sh up; then echo "preflight accepted '$v'"; exit 1; fi
+          done
+
+  staging-stack:
+    # LIVE-05: scripts/staging-up.sh end to end on the runner (MySQL, Redis ACL, MinIO, ClamAV, web, workers, migrate + demo seed, smoke).
+    # The moderation key is a throwaway placeholder: the review case still reaches the queue (PENDING); no AI call is expected to succeed.
+    # Not gating until it has been green on main (worker-media needs unprivileged user namespaces, which some runners block).
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: staging-up.sh
+        env:
+          MODERATION_PROVIDER: anthropic
+          MODERATION_API_KEY: ci-placeholder-not-a-real-key
+          STAGING_HOST: 127.0.0.1
+        run: bash scripts/staging-up.sh
+      - name: Collect evidence and logs
+        if: always()
+        run: |
+          cp .staging-smoke.txt staging-smoke-evidence.txt 2>/dev/null || true
+          docker compose -p rp-staging -f docker-compose.staging.yml --env-file .env.staging ps -a > staging-ps.txt 2>&1 || true
+          docker compose -p rp-staging -f docker-compose.staging.yml --env-file .env.staging logs --no-color --tail=300 > staging-logs.txt 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: staging-stack
+          path: |
+            staging-smoke-evidence.txt
+            staging-ps.txt
+            staging-logs.txt
+          if-no-files-found: ignore
