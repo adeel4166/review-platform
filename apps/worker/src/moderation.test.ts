@@ -77,14 +77,3 @@ describe("dead-letter", () => {
     expect(isFinalFailure({ attemptsMade: 5, opts: { attempts: 5 } })).toBe(true);
   });
 });
-
-describe("verified buyer hook", () => {
-  it("runs before assessment and its failure does not block moderation", async () => {
-    vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const f = new FakeModerationDb();
-    const r = f.addReview();
-    const verifyBuyer = vi.fn().mockRejectedValue(new Error("orders down"));
-    expect(await processModeration(asDb(f), provider({ score: 0, confidence: 1 }), job(r.id as string), { verifyBuyer })).toBe("APPROVED");
-    expect(verifyBuyer).toHaveBeenCalledWith(r.id);
-  });
-});

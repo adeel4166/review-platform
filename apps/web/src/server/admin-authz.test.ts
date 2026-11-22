@@ -31,6 +31,14 @@ const ADMIN_ROUTES: AdminRoute[] = [
   { file: "sellers/[id]/reply-restriction/[enforcementId]/lift/route.ts", method: "POST", withId: true },
   { file: "users/[id]/reply-restriction/route.ts", method: "POST", withId: true },
   { file: "users/[id]/reply-restriction/[enforcementId]/lift/route.ts", method: "POST", withId: true },
+  // M4: report cases, proofs and the verified label (m4-m5-spec 4.2, 5.6)
+  { file: "moderation/[id]/dismiss-reports/route.ts", method: "POST", withId: true },
+  { file: "moderation/[id]/remove/route.ts", method: "POST", withId: true },
+  { file: "reports/[id]/reject/route.ts", method: "POST", withId: true },
+  { file: "proofs/route.ts", method: "GET", withId: false },
+  { file: "proofs/[id]/route.ts", method: "GET", withId: true },
+  { file: "proofs/[id]/decide/route.ts", method: "POST", withId: true },
+  { file: "reviews/[id]/verified-label/revoke/route.ts", method: "POST", withId: true },
   // Staff role management: SUPER_ADMIN only (ADR-0003, SEC-09e). Both handlers are covered.
   { file: "staff/[id]/roles/route.ts", method: "POST", withId: true, superOnly: true },
   { file: "staff/[id]/roles/route.ts", method: "DELETE", withId: true, superOnly: true },

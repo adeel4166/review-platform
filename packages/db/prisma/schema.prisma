@@ -73,6 +73,13 @@ enum ModerationState {
   NEEDS_HUMAN
   APPROVED
   REJECTED
+  SUPERSEDED
+}
+
+enum ModerationTrigger {
+  SUBMISSION
+  EDIT
+  USER_REPORT
 }
 
 enum MediaStatus {
@@ -135,6 +142,12 @@ model User {
   enforcementsReceived EnforcementAction[]         @relation("EnforcementSubjectUser")
   enforcementsIssued   EnforcementAction[]         @relation("EnforcementIssuedBy")
   enforcementsRevoked  EnforcementAction[]         @relation("EnforcementRevokedBy")
+  votes                ReviewVote[]                @relation("ReviewVoter")
+  reports              Report[]                    @relation("ReportReporter")
+  resolvedReports      Report[]                    @relation("ReportResolvedBy")
+  proofsSubmitted      PurchaseProof[]             @relation("ProofSubmittedBy")
+  proofsReviewed       PurchaseProof[]             @relation("ProofReviewedBy")
+  proofFiles           PurchaseProofFile[]         @relation("ProofFileOwner")
 
   @@index([status])
   @@map("users")
@@ -210,28 +223,32 @@ model Product {
 
 /// One review per (product, author), ever. Edits create ReviewRevision rows.
 model Review {
-  id               String              @id @default(cuid())
-  productId        String
-  authorId         String
-  rating           Int                 @db.TinyInt // 1..5, CHECK in migration
-  title            String              @db.VarChar(150)
-  body             String              @db.Text
-  incentive        IncentiveDisclosure @default(NONE)
-  language         String?             @db.VarChar(16)
-  status           ContentStatus       @default(PENDING)
-  currentVersion   Int                 @default(1)
-  publishedVersion Int?
-  helpfulCount     Int                 @default(0)
-  notHelpfulCount  Int                 @default(0)
-  commentCount     Int                 @default(0)
-  verifiedBuyer    Boolean             @default(false)
-  verifiedAt       DateTime?
-  verifiedOrderId  String?             @db.VarChar(64)
-  publishedAt      DateTime?
-  editedAt         DateTime?
-  deletedAt        DateTime?
-  createdAt        DateTime            @default(now())
-  updatedAt        DateTime            @updatedAt
+  id                 String               @id @default(cuid())
+  productId          String
+  authorId           String
+  rating             Int                  @db.TinyInt // 1..5, CHECK in migration
+  title              String               @db.VarChar(150)
+  body               String               @db.Text
+  incentive          IncentiveDisclosure  @default(NONE)
+  language           String?              @db.VarChar(16)
+  status             ContentStatus        @default(PENDING)
+  currentVersion     Int                  @default(1)
+  publishedVersion   Int?
+  helpfulCount       Int                  @default(0)
+  notHelpfulCount    Int                  @default(0)
+  commentCount       Int                  @default(0)
+  verifiedBuyer      Boolean              @default(false)
+  verifiedAt         DateTime?
+  verifiedOrderId    String?              @db.VarChar(64)
+  /// ADR-0008: set only by a staff proof decision (all three together, chk_review_verified_label). `verifiedBuyer` is the legacy mirror kept for the read paths.
+  verifiedPurchaseAt DateTime?            @db.DateTime(3)
+  verificationMethod PurchaseProofMethod?
+  verifiedProofId    String?              @unique
+  publishedAt        DateTime?
+  editedAt           DateTime?
+  deletedAt          DateTime?
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
 
   product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
   author  User    @relation("ReviewAuthor", fields: [authorId], references: [id], onDelete: Restrict)
@@ -240,8 +257,14 @@ model Review {
   cases         ModerationCase[]
   media         MediaAsset[]
   sellerReplies SellerReply[]
+  votes         ReviewVote[]
+  reports       Report[]
+  proofs        PurchaseProof[]     @relation("ReviewProofs")
+  verifiedProof PurchaseProof?      @relation("ReviewVerifiedProof", fields: [verifiedProofId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  revocations   EnforcementAction[] @relation("EnforcementSubjectReview")
 
   @@unique([productId, authorId])
+  @@index([productId, status, verifiedPurchaseAt])
   @@index([productId, status, publishedAt])
   @@index([authorId, createdAt])
   @@index([status, createdAt])
@@ -249,15 +272,16 @@ model Review {
 }
 
 model ReviewRevision {
-  id        String         @id @default(cuid())
+  id        String              @id @default(cuid())
   reviewId  String
   version   Int
-  rating    Int            @db.TinyInt
-  title     String         @db.VarChar(150)
-  body      String         @db.Text
+  incentive IncentiveDisclosure @default(NONE)
+  rating    Int                 @db.TinyInt
+  title     String              @db.VarChar(150)
+  body      String              @db.Text
   editorId  String
-  status    RevisionStatus @default(PENDING)
-  createdAt DateTime       @default(now())
+  status    RevisionStatus      @default(PENDING)
+  createdAt DateTime            @default(now())
 
   review Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
   editor User   @relation("RevisionEditor", fields: [editorId], references: [id], onDelete: Restrict)
@@ -293,17 +317,25 @@ model ModerationCase {
   decisionReason String?               @db.VarChar(500)
   decidedById    String?
   decidedAt      DateTime?
+  trigger        ModerationTrigger     @default(SUBMISSION)
+  seq            Int                   @default(1)
+  /// `R:<reviewId>` / `S:<sellerReplyId>` while a report case is open (NEEDS_HUMAN), NULL once resolved (m4-m5-spec 4.3).
+  openReportKey  String?               @unique @db.VarChar(40)
+  reportCount    Int                   @default(0)
+  reportWeight   Int                   @default(0)
   createdAt      DateTime              @default(now())
   updatedAt      DateTime              @updatedAt
 
+  reports            Report[]
   review             Review?             @relation(fields: [reviewId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   sellerReply        SellerReply?        @relation(fields: [sellerReplyId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   decidedBy          User?               @relation("CaseDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
   enforcementActions EnforcementAction[]
 
-  @@unique([reviewId, version])
-  @@unique([sellerReplyId, version])
+  @@unique([reviewId, version, trigger, seq])
+  @@unique([sellerReplyId, version, trigger, seq])
   @@index([state, createdAt])
+  @@index([trigger, state, reportWeight])
   @@map("moderation_cases")
 }
 
@@ -329,22 +361,26 @@ model AuditLog {
 /// content, strips metadata, writes thumb/medium variants to the private bucket and sets READY or FAILED.
 /// Public visibility = status READY AND the parent review PUBLISHED (enforced in the read queries).
 model MediaAsset {
-  id            String      @id @default(cuid())
-  ownerId       String
-  reviewId      String
-  status        MediaStatus @default(UPLOADING)
-  declaredMime  String      @db.VarChar(64)
-  sizeBytes     Int
-  detectedMime  String?     @db.VarChar(64)
-  width         Int?
-  height        Int?
-  ingestKey     String      @db.VarChar(255)
-  thumbKey      String?     @db.VarChar(255)
-  mediumKey     String?     @db.VarChar(255)
-  failureReason String?     @db.VarChar(64)
-  processedAt   DateTime?
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
+  id                String      @id @default(cuid())
+  ownerId           String
+  reviewId          String
+  status            MediaStatus @default(UPLOADING)
+  declaredMime      String      @db.VarChar(64)
+  sizeBytes         Int
+  detectedMime      String?     @db.VarChar(64)
+  width             Int?
+  height            Int?
+  ingestKey         String      @db.VarChar(255)
+  thumbKey          String?     @db.VarChar(255)
+  mediumKey         String?     @db.VarChar(255)
+  failureReason     String?     @db.VarChar(64)
+  processedAt       DateTime?
+  /// First review version whose moderation covered this asset; NULL = staged for the next edit (m4-m5-spec 3.4).
+  attachedInVersion Int?
+  /// First version that no longer shows it.
+  detachedInVersion Int?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
 
   owner  User   @relation("MediaOwner", fields: [ownerId], references: [id], onDelete: Restrict)
   review Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
@@ -643,6 +679,7 @@ model EnforcementAction {
   status             EnforcementStatus @default(ACTIVE)
   subjectUserId      String?
   subjectSellerId    String?
+  subjectReviewId    String?
   caseId             String?
   reasonCode         String            @db.VarChar(64)
   publicReason       String            @db.Text
@@ -658,12 +695,14 @@ model EnforcementAction {
 
   subjectUser    User?           @relation("EnforcementSubjectUser", fields: [subjectUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   subjectSeller  Seller?         @relation(fields: [subjectSellerId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  subjectReview  Review?         @relation("EnforcementSubjectReview", fields: [subjectReviewId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   moderationCase ModerationCase? @relation(fields: [caseId], references: [id], onDelete: SetNull)
   issuedBy       User?           @relation("EnforcementIssuedBy", fields: [issuedById], references: [id], onDelete: SetNull)
   revokedBy      User?           @relation("EnforcementRevokedBy", fields: [revokedById], references: [id], onDelete: SetNull)
 
   @@index([subjectUserId, status])
   @@index([subjectSellerId, status])
+  @@index([subjectReviewId, type, status])
   @@index([status, endsAt])
   @@map("enforcement_actions")
 }
@@ -842,9 +881,245 @@ model SellerReply {
   author    User             @relation("ReplyAuthor", fields: [authorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   deletedBy User?            @relation("ReplyDeletedBy", fields: [deletedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
   cases     ModerationCase[]
+  reports   Report[]
 
   @@unique([reviewId, sellerId])
   @@index([sellerId, createdAt])
   @@index([status, createdAt])
   @@map("seller_replies")
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// M4 (m4-m5-spec 12.3): votes, reports, Verified Buyer proof
+// ---------------------------------------------------------------------------------------------------------------------
+
+enum VoteValue {
+  HELPFUL
+  NOT_HELPFUL
+}
+
+enum ReportReason {
+  SPAM
+  FAKE_OR_MISLEADING
+  CONFLICT_OF_INTEREST
+  OFF_TOPIC
+  HARASSMENT_OR_HATE
+  SEXUAL_CONTENT
+  VIOLENCE_OR_THREATS
+  PERSONAL_INFORMATION
+  INTELLECTUAL_PROPERTY
+  ILLEGAL_CONTENT
+  IMPERSONATION
+  OTHER
+}
+
+enum ReportStatus {
+  OPEN
+  ACTION_TAKEN
+  NO_ACTION
+  REJECTED
+}
+
+enum PurchaseProofMethod {
+  RECEIPT_UPLOAD
+  ORDER_CONFIRMATION
+  MARKETPLACE_ORDER_LINK
+}
+
+enum ProofStatus {
+  DRAFT
+  PENDING
+  VERIFIED
+  REJECTED
+  EXPIRED
+  WITHDRAWN
+}
+
+enum ProofCloseReason {
+  DRAFT_ABANDONED
+  SLA_EXPIRED
+  NO_VALID_FILES
+  USER_WITHDRAWN
+}
+
+enum ProofDecisionReason {
+  UNREADABLE
+  NOT_A_PURCHASE_DOCUMENT
+  PRODUCT_MISMATCH
+  MERCHANT_UNVERIFIABLE
+  DATE_INVALID
+  DUPLICATE_PROOF
+  SUSPECTED_FORGERY
+  OTHER
+}
+
+enum ProofRedactionMode {
+  AUTO
+  FULL_MASK
+}
+
+enum Marketplace {
+  AMAZON
+  EBAY
+  ETSY
+  OTHER
+}
+
+enum ProofFileStatus {
+  UPLOADING
+  PROCESSING
+  READY
+  REJECTED
+  FAILED
+  PURGED
+}
+
+enum TrustSignalType {
+  MALWARE_UPLOAD
+  DUPLICATE_PROOF_DETECTED
+  VERIFIED_PURCHASE
+  PROOF_REJECTED_FRAUD
+}
+
+model ReviewVote {
+  reviewId  String
+  userId    String
+  value     VoteValue
+  ipHash    String?   @db.Char(64)
+  createdAt DateTime  @default(now()) @db.DateTime(3)
+  updatedAt DateTime  @updatedAt @db.DateTime(3)
+
+  review Review @relation(fields: [reviewId], references: [id], onDelete: Restrict)
+  user   User   @relation("ReviewVoter", fields: [userId], references: [id], onDelete: Restrict)
+
+  @@id([reviewId, userId])
+  @@index([userId, createdAt])
+  @@map("review_votes")
+}
+
+model Report {
+  id            String       @id @default(cuid())
+  reporterId    String
+  reason        ReportReason
+  details       String?      @db.VarChar(1000)
+  status        ReportStatus @default(OPEN)
+  weight        Int          @default(1) @db.TinyInt // 0 for NEW reporters (F-9)
+  caseId        String?
+  reviewId      String? // exclusive arc (chk_report_one_target)
+  sellerReplyId String?
+  ipHash        String?      @db.Char(64)
+  createdAt     DateTime     @default(now()) @db.DateTime(3)
+  resolvedAt    DateTime?    @db.DateTime(3)
+  resolvedById  String?
+
+  reporter       User            @relation("ReportReporter", fields: [reporterId], references: [id], onDelete: Restrict)
+  moderationCase ModerationCase? @relation(fields: [caseId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  review         Review?         @relation(fields: [reviewId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  sellerReply    SellerReply?    @relation(fields: [sellerReplyId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  resolvedBy     User?           @relation("ReportResolvedBy", fields: [resolvedById], references: [id], onDelete: Restrict)
+
+  @@unique([reporterId, reviewId])
+  @@unique([reporterId, sellerReplyId])
+  @@index([caseId, status])
+  @@index([reporterId, createdAt])
+  @@map("reports")
+}
+
+model PurchaseProof {
+  id                     String               @id @default(cuid())
+  reviewId               String
+  submittedById          String
+  method                 PurchaseProofMethod
+  marketplace            Marketplace?
+  status                 ProofStatus          @default(DRAFT)
+  openKey                String?              @unique @db.VarChar(32) // = reviewId while DRAFT/PENDING
+  consentVersion         String               @db.VarChar(16)
+  consentedAt            DateTime             @db.DateTime(3)
+  submittedAt            DateTime?            @db.DateTime(3)
+  slaDueAt               DateTime?            @db.DateTime(3)
+  filesReadyAt           DateTime?            @db.DateTime(3)
+  redactionMode          ProofRedactionMode?
+  redactedAt             DateTime?            @db.DateTime(3)
+  assessedAt             DateTime?            @db.DateTime(3)
+  aiAssessment           Json? // proofAssessment schema only
+  flags                  Json? // ProofFlag[]
+  merchantName           String?              @db.VarChar(120)
+  purchaseDate           DateTime?            @db.Date
+  orderReferenceHash     String?              @db.Char(64)
+  orderReferenceKeyId    Int?                 @db.TinyInt
+  fileFingerprint        String?              @db.Char(64)
+  reviewedById           String?
+  reviewedAt             DateTime?            @db.DateTime(3)
+  decisionReasonCode     ProofDecisionReason?
+  decisionNote           String?              @db.VarChar(500) // staff-only, no PII by policy
+  closeReason            ProofCloseReason?
+  closedAt               DateTime?            @db.DateTime(3)
+  originalPurgedAt       DateTime?            @db.DateTime(3)
+  filesDeleteRequestedAt DateTime?            @db.DateTime(3)
+  filesPurgedAt          DateTime?            @db.DateTime(3)
+  retainFilesUntil       DateTime?            @db.DateTime(3)
+  legalHold              Boolean              @default(false)
+  createdAt              DateTime             @default(now()) @db.DateTime(3)
+  updatedAt              DateTime             @updatedAt @db.DateTime(3)
+
+  review         Review              @relation("ReviewProofs", fields: [reviewId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  submittedBy    User                @relation("ProofSubmittedBy", fields: [submittedById], references: [id], onDelete: Restrict)
+  reviewedBy     User?               @relation("ProofReviewedBy", fields: [reviewedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  files          PurchaseProofFile[]
+  verifiedReview Review?             @relation("ReviewVerifiedProof")
+
+  @@index([status, filesReadyAt, slaDueAt])
+  @@index([reviewId, status])
+  @@index([submittedById, createdAt])
+  @@index([orderReferenceHash])
+  @@index([fileFingerprint])
+  @@index([retainFilesUntil])
+  @@map("purchase_proofs")
+}
+
+/// Evidence files of a proof. M4 keeps these apart from `media_assets` (public review media); the M5 media-core task folds
+/// them into the reworked MediaAsset (purpose PURCHASE_PROOF). Originals live only in the private bucket and are never
+/// served to staff; staff see the redacted derivatives (`isRedacted`, `derivedFromId`).
+model PurchaseProofFile {
+  id             String          @id @default(cuid())
+  proofId        String
+  ownerId        String
+  kind           String          @db.VarChar(16) // IMAGE | DOCUMENT
+  status         ProofFileStatus @default(UPLOADING)
+  declaredMime   String          @db.VarChar(64)
+  detectedMime   String?         @db.VarChar(64)
+  sizeBytes      Int
+  storageKey     String          @unique @db.VarChar(255)
+  sha256         String?         @db.Char(64)
+  perceptualHash String?         @db.VarChar(32)
+  pageCount      Int?            @db.TinyInt
+  isRedacted     Boolean         @default(false)
+  derivedFromId  String?
+  failureReason  String?         @db.VarChar(64)
+  purgedAt       DateTime?       @db.DateTime(3)
+  createdAt      DateTime        @default(now()) @db.DateTime(3)
+  updatedAt      DateTime        @updatedAt @db.DateTime(3)
+
+  proof       PurchaseProof       @relation(fields: [proofId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  owner       User                @relation("ProofFileOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  derivedFrom PurchaseProofFile?  @relation("ProofFileDerivation", fields: [derivedFromId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  derivatives PurchaseProofFile[] @relation("ProofFileDerivation")
+
+  @@index([proofId, status])
+  @@index([sha256])
+  @@map("purchase_proof_files")
+}
+
+/// Append-only trust events (scoring is M7). Written exactly once per source (TRS-008).
+model TrustSignal {
+  id         BigInt          @id @default(autoincrement())
+  type       TrustSignalType
+  userId     String          @db.VarChar(32)
+  sourceType String          @db.VarChar(32)
+  sourceId   String          @db.VarChar(32)
+  createdAt  DateTime        @default(now()) @db.DateTime(3)
+
+  @@unique([type, sourceType, sourceId, userId])
+  @@index([userId, createdAt])
+  @@map("trust_signals")
 }

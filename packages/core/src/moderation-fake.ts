@@ -35,7 +35,7 @@ export class FakeModerationDb {
     return c;
   }
   addCase(reviewId: string, state = "PENDING", version = 1) {
-    const c = { id: `c${++this.seq}`, reviewId, version, state };
+    const c: { id: string; reviewId: string; version: number; state: string; trigger?: string } = { id: `c${++this.seq}`, reviewId, version, state };
     this.cases.push(c);
     return c;
   }
@@ -57,13 +57,18 @@ export class FakeModerationDb {
       return this.patch(this.cases, where, data);
     },
     upsert: async (a: unknown) => {
-      const { where } = a as { where: { reviewId_version?: { reviewId: string; version: number }; sellerReplyId_version?: { sellerReplyId: string; version: number } } };
-      if (where.sellerReplyId_version) {
-        const rw = where.sellerReplyId_version;
-        return (this.pick(this.cases, rw) ?? this.addReplyCase(rw.sellerReplyId, "PENDING", rw.version)) as never;
+      type K = { reviewId: string; version: number; trigger?: string; seq?: number };
+      const { where, create } = a as { where: { reviewId_version_trigger_seq?: K; sellerReplyId_version_trigger_seq?: { sellerReplyId: string; version: number } }; create?: Row };
+      if (where.sellerReplyId_version_trigger_seq) {
+        const { sellerReplyId, version } = where.sellerReplyId_version_trigger_seq;
+        return (this.pick(this.cases, { sellerReplyId, version }) ?? this.addReplyCase(sellerReplyId, "PENDING", version)) as never;
       }
-      const w = where.reviewId_version!;
-      return (this.pick(this.cases, w) ?? this.addCase(w.reviewId, "PENDING", w.version)) as never;
+      const { reviewId, version, trigger } = where.reviewId_version_trigger_seq!;
+      const found = this.cases.find((c) => c.reviewId === reviewId && c.version === version && (c.trigger ?? "SUBMISSION") === (trigger ?? "SUBMISSION"));
+      if (found) return found as never;
+      const c = this.addCase(reviewId, "PENDING", version);
+      if (create?.trigger) c.trigger = String(create.trigger);
+      return c as never;
     },
   };
   review = {
@@ -85,6 +90,13 @@ export class FakeModerationDb {
     },
   };
   reviewRevision = {
+    findFirst: async (a: unknown) => {
+      const w = (a as { where: Row }).where;
+      const rev = this.pick(this.revisions, w) as Row | null;
+      if (!rev) return null as never;
+      const rv = this.reviews.find((r) => r.id === rev.reviewId) as Row;
+      return { rating: rev.rating ?? rv.rating, title: rev.title ?? rv.title, body: rev.body ?? rv.body, incentive: rev.incentive } as never;
+    },
     updateMany: async (a: unknown) => {
       const { where, data } = a as { where: Row; data: Row };
       return this.patch(this.revisions, where, data);

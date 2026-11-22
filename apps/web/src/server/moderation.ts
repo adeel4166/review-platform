@@ -6,6 +6,7 @@ import { MEDIA_GET_TTL_SECONDS } from "@rp/core";
 import type { Db } from "./db";
 import type { Storage } from "./media";
 import { HttpError } from "./http";
+import { listReportCases } from "./reports";
 import type { Actor } from "./session";
 
 export interface QueueFilter {
@@ -21,9 +22,11 @@ export interface QueueFilter {
 }
 
 /** Moderation queue, oldest first, with the AI score/reasons for the reviewer. */
-export async function listModerationQueue(db: Db, f: QueueFilter) {
+export async function listModerationQueue(db: Db, f: QueueFilter & { trigger?: "SUBMISSION" | "EDIT" | "USER_REPORT" }) {
+  if (f.trigger === "USER_REPORT") return listReportCases(db, f.page, f.pageSize);
   const where = {
     state: f.state,
+    trigger: { not: "USER_REPORT" as const },
     subjectType: f.subjectType ?? "REVIEW",
     ...(f.productId || f.hasMedia !== undefined
       ? { review: { ...(f.productId ? { productId: f.productId } : {}), ...(f.hasMedia !== undefined ? { media: f.hasMedia ? { some: {} } : { none: {} } } : {}) } }
@@ -53,6 +56,9 @@ export async function listModerationQueue(db: Db, f: QueueFilter) {
 
 /** Human decision on a case. Illegal transitions and lost races become 409s. */
 export async function decideCase(db: Db, actor: Actor, caseId: string, to: "APPROVED" | "REJECTED", reason?: string) {
+  // Report cases are decided only through dismiss-reports / remove (RPT-006).
+  const pre = await db.moderationCase.findUnique({ where: { id: caseId }, select: { trigger: true } });
+  if (pre && pre.trigger === "USER_REPORT") throw new HttpError(409, "invalid_transition", "Report cases use dismiss-reports or remove");
   try {
     const c = await transitionCase(db as unknown as ModerationDb, { caseId, to, actor: { type: "STAFF", id: actor.id }, reason });
     return { id: c.id, state: c.state };

@@ -25,8 +25,11 @@ export const moderationJobSchema = z.object({
   subjectType: z.enum(["REVIEW", "SELLER_REPLY", "COMMENT", "POST", "MEDIA"]),
   subjectId: z.string().min(1),
   version: z.number().int().nonnegative(),
+  /** Backward compatible: payloads without a trigger are SUBMISSION (m4-m5-spec 16.3). */
+  trigger: z.enum(["SUBMISSION", "EDIT", "USER_REPORT"]).default("SUBMISSION"),
 });
-export type ModerationJob = z.infer<typeof moderationJobSchema>;
+/** Input shape: `trigger` is optional on the wire (defaults to SUBMISSION when parsed). */
+export type ModerationJob = z.input<typeof moderationJobSchema>;
 
 export const mediaJobSchema = z.object({
   assetId: z.string().min(1),

@@ -42,23 +42,27 @@ describe("createUploadSlot", () => {
 });
 
 describe("media on non-PENDING reviews (SEC-02)", () => {
-  it.each(["PUBLISHED", "REJECTED", "HIDDEN"])("409s a slot on a %s review", async (status) => {
+  it.each(["REJECTED", "HIDDEN"])("409s a slot on a %s review", async (status) => {
     const { db, st, m } = setup({ review: { id: "r1", status } });
     await expect(createUploadSlot(db, st, "u1", "r1", input)).rejects.toMatchObject({ status: 409 });
     expect(m.mediaAsset.create).not.toHaveBeenCalled();
   });
-  it.each(["PUBLISHED", "REJECTED", "HIDDEN"])("409s confirm when the review is %s", async (status) => {
+  it.each(["REJECTED", "HIDDEN"])("409s confirm when the review is %s", async (status) => {
     const { db, st, tx } = setup({ asset: { id: "m1", status: "UPLOADING", sizeBytes: 1000, ingestKey: "in/m1", review: { status } } });
     await expect(confirmUpload(db, st, "u1", "m1")).rejects.toMatchObject({ status: 409 });
     expect(tx.outboxEvent.create).not.toHaveBeenCalled();
   });
-  it("hides READY assets created after the review was published", async () => {
+  it("REV-007: only assets visible in the published version are public (staged, later and detached ones are not)", async () => {
     const { db, st, m } = setup();
-    const pub = new Date("2026-01-02");
-    const row = (id: string, createdAt: Date) => ({ id, reviewId: "r1", createdAt, width: 1, height: 1, thumbKey: "t", mediumKey: "md", review: { publishedAt: pub } });
-    m.mediaAsset.findMany.mockResolvedValue([row("old", new Date("2026-01-01")), row("late", new Date("2026-01-03"))]);
+    const row = (id: string, attachedInVersion: number | null, detachedInVersion: number | null) => ({ id, reviewId: "r1", createdAt: new Date(), width: 1, height: 1, thumbKey: "t", mediumKey: "md", attachedInVersion, detachedInVersion, review: { publishedAt: new Date(), publishedVersion: 2 } });
+    m.mediaAsset.findMany.mockResolvedValue([row("old", 1, null), row("staged", null, null), row("future", 3, null), row("detached", 1, 2), row("detachedLater", 1, 3)]);
     const out = await readyMediaUrls(db, st, ["r1"]);
-    expect(out.get("r1")?.map((i) => i.id)).toEqual(["old"]);
+    expect(out.get("r1")?.map((i) => i.id)).toEqual(["old", "detachedLater"]);
+  });
+  it("PUBLISHED review: a slot is issued as staged (attachedInVersion NULL) until an edit claims it", async () => {
+    const { db, st, m } = setup({ review: { id: "r1", status: "PUBLISHED", currentVersion: 3 } });
+    await createUploadSlot(db, st, "u1", "r1", input);
+    expect(m.mediaAsset.create.mock.calls[0]![0].data).toMatchObject({ attachedInVersion: null });
   });
 });
 
@@ -87,7 +91,7 @@ describe("confirmUpload", () => {
 describe("readyMediaUrls", () => {
   it("queries only READY media of PUBLISHED reviews", async () => {
     const { db, st, m } = setup();
-    m.mediaAsset.findMany.mockResolvedValue([{ id: "m1", reviewId: "r1", width: 10, height: 10, thumbKey: "t", mediumKey: "md", createdAt: new Date("2026-01-01"), review: { publishedAt: new Date("2026-01-02") } }]);
+    m.mediaAsset.findMany.mockResolvedValue([{ id: "m1", reviewId: "r1", width: 10, height: 10, thumbKey: "t", mediumKey: "md", createdAt: new Date("2026-01-01"), attachedInVersion: 1, detachedInVersion: null, review: { publishedAt: new Date("2026-01-02"), publishedVersion: 1 } }]);
     const out = await readyMediaUrls(db, st, ["r1"]);
     expect((m.mediaAsset.findMany.mock.calls[0]?.[0] as { where: unknown }).where).toMatchObject({ status: "READY", review: { status: "PUBLISHED" } });
     expect(out.get("r1")?.[0]?.thumbUrl).toContain("private/t");

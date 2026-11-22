@@ -259,3 +259,13 @@ ALTER TABLE `seller_replies` ADD CONSTRAINT `chk_reply_version`
 ALTER TABLE `moderation_cases` ADD CONSTRAINT `chk_case_subject`
   CHECK (((`subjectType` = 'REVIEW') = (`reviewId` IS NOT NULL))
      AND ((`subjectType` = 'SELLER_REPLY') = (`sellerReplyId` IS NOT NULL)));
+
+-- ---------------------------------------------------------------------------------------------------------------------
+-- M4 (task #68, m4-m5-spec 12.4). Hand-written in the migrations 20261214000000_review_edits, 20261216000000_reports and
+-- 20261222000000_purchase_proofs; listed here so the catalogue matches the database.
+-- ---------------------------------------------------------------------------------------------------------------------
+-- moderation_cases:  chk_case_report_key (openReportKey IS NULL OR (trigger='USER_REPORT' AND state='NEEDS_HUMAN')), chk_case_seq
+-- media_assets:      chk_media_versions
+-- reports:           chk_report_one_target, chk_report_details_len
+-- reviews:           chk_review_verified_label (verifiedPurchaseAt / verificationMethod / verifiedProofId all NULL or all set)
+-- purchase_proofs:   chk_proof_open_key, chk_proof_decision, chk_proof_reject_reason, chk_proof_close, chk_proof_marketplace
