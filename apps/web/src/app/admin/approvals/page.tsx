@@ -6,5 +6,5 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: `${t("ap4.h1")} · ${t("app.name")}` };
 export default async function Page() {
   const u = await pageStaff("/admin/approvals");
-  return <main className="mx-auto max-w-content px-4 py-6"><StaffApprovals staffId={u.id} /></main>;
+  return <main className="px-4 py-6 md:px-6"><StaffApprovals staffId={u.id} /></main>;
 }

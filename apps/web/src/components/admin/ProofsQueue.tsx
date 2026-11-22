@@ -6,6 +6,7 @@ import { ApiError, api } from "@/lib/upload";
 import { Dialog } from "../Dialog";
 import { OriginalAccessDialog } from "./OriginalAccess";
 import { field, primaryBtn, secondaryBtn } from "../seller/ui";
+import { QueueEmpty, QueueError, QueueLoading } from "./QueueStates";
 
 export interface QueueProof {
   id: string; reviewId: string; method: string; marketplace: string | null; slaDueAt: string | null; flags: string[] | null;
@@ -50,11 +51,11 @@ export function ProofsQueue({ staffId }: { staffId: string }) {
       <p role={msg?.ok === false ? "alert" : "status"} className={`mt-3 ${msg?.ok === false ? "text-danger" : ""}`}>{msg?.text ?? ""}</p>
       <div aria-busy={items === null && !failed} className="mt-3">
         {failed ? (
-          <p role="alert">{t("admin.proofs.error")} <button type="button" className={secondaryBtn} onClick={load}>{t("admin.proofs.retry")}</button></p>
+          <QueueError>{t("admin.proofs.error")} <button type="button" className={secondaryBtn} onClick={load}>{t("admin.proofs.retry")}</button></QueueError>
         ) : items === null ? (
-          <p>{t("admin.proofs.loading")}</p>
+          <QueueLoading label={t("admin.proofs.loading")} />
         ) : items.length === 0 ? (
-          <p>{t("admin.proofs.empty")}</p>
+          <QueueEmpty message={t("admin.proofs.empty")} />
         ) : (
           <div className="overflow-x-auto" role="region" aria-label={t("admin.proofs.caption")} tabIndex={0}>
             <table className="w-full text-left">

@@ -11,7 +11,8 @@ export default async function NewSellerPage() {
   return (
     <main className="mx-auto max-w-lg px-4 py-10">
       <h1 className="text-2xl font-semibold">{t("seller.new.title")}</h1>
-      <CreateSellerForm />
+      <p className="mt-2 text-text-muted">{t("seller.new.intro")}</p>
+      <div className="mt-4 rounded-lg border border-border bg-surface p-4 sm:p-6"><CreateSellerForm /></div>
     </main>
   );
 }

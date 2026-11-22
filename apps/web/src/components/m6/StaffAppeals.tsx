@@ -6,6 +6,7 @@ import { ApiError, api } from "@/lib/upload";
 import { Dialog } from "../Dialog";
 import { field, primaryBtn, secondaryBtn } from "../seller/ui";
 import { dateText } from "./format";
+import { QueueEmpty, QueueError, QueueLoading } from "../admin/QueueStates";
 
 export interface QueueAppeal {
   id: string; status: string; appellant: string; statement: string; slaDueAt: string; overdue: boolean; holdExpired: boolean; title: string | null;
@@ -34,8 +35,8 @@ export function StaffAppeals() {
     <section aria-labelledby="sa-h">
       <h1 id="sa-h" className="text-2xl font-semibold">{t("sa.h1")}</h1>
       <p role={msg?.ok === false ? "alert" : "status"} className="mt-2 min-h-[1.5rem]">{msg?.text ?? ""}</p>
-      {failed ? <p role="alert">{t("sa.error")} <button type="button" className={secondaryBtn} onClick={load}>{t("mod.retry")}</button></p>
-        : !items ? <p role="status">{t("mod.loading")}</p> : items.length === 0 ? <p>{t("sa.empty")}</p> : (
+      {failed ? <QueueError>{t("sa.error")} <button type="button" className={secondaryBtn} onClick={load}>{t("mod.retry")}</button></QueueError>
+        : !items ? <QueueLoading label={t("mod.loading")} /> : items.length === 0 ? <QueueEmpty message={t("sa.empty")} /> : (
           <div role="region" aria-label={t("sa.caption")} tabIndex={0} className="overflow-x-auto">
             <table className="w-full text-left">
               <caption className="sr-only">{t("sa.caption")}</caption>

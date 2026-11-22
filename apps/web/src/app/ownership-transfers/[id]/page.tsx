@@ -11,9 +11,11 @@ export default async function TransferPage({ params }: { params: Promise<{ id: s
   if (!(await auth())?.user?.id) redirect(`/login?callbackUrl=${encodeURIComponent(`/ownership-transfers/${id}`)}`);
   return (
     <main className="mx-auto max-w-md px-4 py-10">
+      <div className="rounded-lg border border-border bg-surface p-5 shadow-sm sm:p-6">
       <h1 className="text-2xl font-semibold">{t("own.page.title")}</h1>
       <p className="mt-2">{t("own.page.lead")}</p>
       <TransferResponse id={id} />
+    </div>
     </main>
   );
 }

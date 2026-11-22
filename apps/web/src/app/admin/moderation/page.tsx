@@ -11,7 +11,7 @@ export default async function AdminModerationPage() {
   if (!session?.user?.id) redirect("/login?callbackUrl=/admin/moderation");
   if (session.user.role !== "admin" && session.user.role !== "super_admin") redirect("/"); // non-admins never see the dashboard; APIs also enforce requireAdmin
   return (
-    <main className="mx-auto max-w-content px-4 py-6">
+    <main className="px-4 py-6 md:px-6">
       <ModerationDashboard viewerId={session.user.id} />
     </main>
   );

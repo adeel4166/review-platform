@@ -39,7 +39,7 @@ export function CreateSellerForm() {
   }
 
   return (
-    <form ref={formRef} onSubmit={submit} className="mt-6 space-y-4" noValidate>
+    <form ref={formRef} onSubmit={submit} className="space-y-4" noValidate>
       {error && <p role="alert" className="rounded-md border border-danger bg-danger-bg p-3 text-danger">⚠ {error}</p>}
       <div>
         <label htmlFor="seller-name" className="font-medium">{t("seller.new.name")} <span className="text-text-muted">({t("form.required")})</span></label>

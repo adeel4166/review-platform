@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { t, type MessageKey } from "@/i18n/en";
 import { ApiError, api } from "@/lib/upload";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Skeleton, SkeletonRegion } from "@/components/ui/Skeleton";
 
 export type ClaimTab = "review" | "contested" | "spot_check";
 export interface QueueClaim {
@@ -79,13 +81,15 @@ export function ClaimsQueue() {
 
       <div aria-busy={items === null && !failed} className="mt-3">
         {failed && (
-          <p role="alert" className="text-danger">{t("admin.claims.error")} <button type="button" className={btn} onClick={() => load(tab)}>{t("admin.claims.retry")}</button></p>
+          <p role="alert" className="rounded-lg bg-danger-bg p-3 text-danger">{t("admin.claims.error")} <button type="button" className={btn} onClick={() => load(tab)}>{t("admin.claims.retry")}</button></p>
         )}
-        {items === null && !failed && <p>{t("admin.claims.loading")}</p>}
-        {items?.length === 0 && <p>{t("admin.claims.empty")}</p>}
+        {items === null && !failed && (
+          <SkeletonRegion className="space-y-2"><p className="text-sm text-text-muted">{t("admin.claims.loading")}</p>{Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-10 w-full" />)}</SkeletonRegion>
+        )}
+        {items?.length === 0 && <EmptyState title={t("staff.queue.clear.title")} description={t("admin.claims.empty")} level={2} />}
         {items && items.length > 0 && (
-          <div className="overflow-x-auto" role="region" aria-label={t("admin.claims.caption")} tabIndex={0}>
-            <table className="w-full text-left">
+          <div className="overflow-x-auto rounded-lg border border-border bg-surface" role="region" aria-label={t("admin.claims.caption")} tabIndex={0}>
+            <table className="w-full text-left text-sm">
               <caption className="sr-only">{t("admin.claims.caption")}</caption>
               <thead><tr>
                 {(["seller", "method", "scope", "age", "flags", "actions"] as const).map((c) => <th key={c} scope="col" className="py-1 pr-4">{t(`admin.claims.col.${c}` as MessageKey)}</th>)}
@@ -115,7 +119,7 @@ export function ClaimsQueue() {
                           <label htmlFor={`nt-${c.id}`} className="block text-sm font-medium">{t("admin.claims.note")}</label>
                           <textarea id={`nt-${c.id}`} value={note} onChange={(e) => setNote(e.target.value)} rows={2} maxLength={2000} className="block w-full rounded-md border border-border-strong bg-surface px-2 py-1" />
                           <div className="flex gap-2">
-                            <button type="button" className={`${btn} bg-primary text-on-primary`} disabled={busyId === c.id} onClick={() => decide(c, "reject")}>{t("admin.claims.confirmReject")}</button>
+                            <button type="button" className={`${btn} border-danger bg-danger text-on-primary`} disabled={busyId === c.id} onClick={() => decide(c, "reject")}>{t("admin.claims.confirmReject")}</button>
                             <button type="button" className={btn} onClick={() => setRejecting(null)}>{t("admin.claims.cancel")}</button>
                           </div>
                         </div>
