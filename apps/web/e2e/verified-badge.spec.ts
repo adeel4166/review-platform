@@ -9,7 +9,7 @@ test.describe("verified buyer label", () => {
     await page.goto(`/products/${PRODUCT_SLUG}`);
     const card = page.locator("article").filter({ has: page.getByRole("heading", { level: 3, name: SEEDED_VERIFIED_TITLE, exact: true }) });
     await expect(card).toHaveCount(1);
-    await expect(card.getByText("Verified buyer", { exact: true })).toBeVisible();
+    await expect(card.getByTestId("verified-badge")).toBeVisible();
   });
 
   // Known gap: a newly submitted review is never marked verified in the running stack, because the worker uses

@@ -2,6 +2,8 @@ import type { ReactNode } from "react";
 import { t } from "@/i18n/en";
 import { Stars } from "./Stars";
 import { VerifiedBadge } from "./VerifiedBadge";
+import { ReviewVote, type VoteValue } from "./ReviewVote";
+import { ReportDialog } from "./ReportDialog";
 
 export interface PublicReview {
   id: string;
@@ -10,6 +12,13 @@ export interface PublicReview {
   body: string;
   incentive?: string | null;
   verifiedBuyer?: boolean;
+  /** Set only by a staff proof decision (ADR-0008); `verificationMethod` drives the label suffix. */
+  verifiedPurchaseAt?: string | Date | null;
+  verificationMethod?: string | null;
+  editedAt?: string | Date | null;
+  helpfulCount?: number;
+  notHelpfulCount?: number;
+  myVote?: VoteValue | null;
   publishedAt: string | Date | null;
   author: { handle: string; displayName: string };
   /** Published reply of the product's verified seller (server decides; never carries author identity). */
@@ -17,14 +26,17 @@ export interface PublicReview {
   media: { id: string; width: number | null; height: number | null; thumbUrl: string; mediumUrl: string }[];
 }
 
-export function ReviewCard({ review: r, replyBox }: { review: PublicReview; replyBox?: ReactNode }) {
+export interface ViewerCtx { signedIn: boolean; loginHref: string }
+
+export function ReviewCard({ review: r, replyBox, ownBox, viewer }: { review: PublicReview; replyBox?: ReactNode; ownBox?: ReactNode; viewer?: ViewerCtx }) {
   const date = r.publishedAt ? new Date(r.publishedAt).toISOString().slice(0, 10) : null;
   return (
     <article className="rounded-lg border border-border bg-surface p-4" aria-labelledby={`rv-${r.id}`}>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-text-muted">
         <span className="font-medium text-text">{r.author.displayName}</span>
-        {r.verifiedBuyer && <VerifiedBadge />}
+        {(r.verifiedPurchaseAt || r.verifiedBuyer) && <VerifiedBadge method={r.verificationMethod} />}
         {date && <time dateTime={date}>{date}</time>}
+        {r.editedAt && <span data-testid="edited-indicator">· {t("review.edited")}</span>}
       </div>
       <div className="mt-2"><Stars value={r.rating} /></div>
       <h3 id={`rv-${r.id}`} className="mt-1 text-lg font-semibold">{r.title}</h3>
@@ -42,6 +54,13 @@ export function ReviewCard({ review: r, replyBox }: { review: PublicReview; repl
           ))}
         </ul>
       )}
+      {viewer && (
+        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1">
+          <ReviewVote reviewId={r.id} helpful={r.helpfulCount ?? 0} notHelpful={r.notHelpfulCount ?? 0} myVote={r.myVote ?? null} signedIn={viewer.signedIn} loginHref={viewer.loginHref} />
+          {!ownBox && <ReportDialog reviewId={r.id} reviewTitle={r.title} signedIn={viewer.signedIn} loginHref={viewer.loginHref} />}
+        </div>
+      )}
+      {ownBox}
       {r.reply && (
         <section aria-label={t("reply.by", { seller: r.reply.seller.name })} className="mt-4 rounded-md border-l-4 border-primary bg-bg-subtle p-3" data-testid="public-reply">
           <p className="text-sm font-medium">{t("reply.by", { seller: r.reply.seller.name })}{r.reply.editedAt ? <span className="text-text-muted"> · {t("reply.edited")}</span> : null}</p>

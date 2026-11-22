@@ -22,14 +22,14 @@ describe("ReviewForm (SSR markup)", () => {
 describe("ReviewCard", () => {
   const r = { id: "r1", rating: 5, title: "Nice", body: "Body text here", verifiedBuyer: true, publishedAt: "2026-01-02T00:00:00Z",
     author: { handle: "a", displayName: "Alice" }, media: [{ id: "m1", width: 1, height: 1, thumbUrl: "https://x/t", mediumUrl: "https://x/m" }] };
-  it("shows Verified buyer badge, alt text and star text", () => {
+  it("shows Verified purchase badge, alt text and star text", () => {
     const html = renderToStaticMarkup(createElement(ReviewCard, { review: r }));
-    expect(html).toContain("Verified buyer");
+    expect(html).toContain("Verified purchase");
     expect(html).toMatch(/alt="Photo 1 of review &quot;Nice&quot;"/);
     expect(html).toContain("Rated 5 out of 5");
   });
   it("omits the badge for non-verified reviews", () => {
-    expect(renderToStaticMarkup(createElement(ReviewCard, { review: { ...r, verifiedBuyer: false } }))).not.toContain("Verified buyer");
+    expect(renderToStaticMarkup(createElement(ReviewCard, { review: { ...r, verifiedBuyer: false } }))).not.toContain("Verified purchase");
   });
 });
 
