@@ -19,6 +19,7 @@ trust scores, comparison and social features.
 | [architecture/job-catalogue.md](./architecture/job-catalogue.md) | **Authoritative job list**: outbox events and fan-out routes, job ids, zod payloads, retry/back-off policy, sweepers, media failure handling |
 | [architecture/media-pipeline.md](./architecture/media-pipeline.md) | Direct upload, virus scan, EXIF/GPS strip, 720p video transcode, bucket/key layout, retention, scan/upload logs |
 | [architecture/m3-sellers-spec.md](./architecture/m3-sellers-spec.md) | **M3 spec**: final seller/claim/invitation/email-token schema plan with CHECKs and migration order, claim state machine, proof methods and review policy, SSRF-safe fetcher, email verification and generic register, catalogue → task mapping |
+| [architecture/m4-m5-spec.md](./architecture/m4-m5-spec.md) | **M4 + M5 spec** (one document): helpful votes, review edits and revisions, reporting, Verified Buyer proof with in-house redaction, upload slots, ClamAV scan, exiftool-verified sanitise, video transcode, promote/demote with a DB publication gate, ClamAV freshness, Prisma deltas, jobs, error codes, limits, catalogue mapping |
 | [architecture/open-questions.md](./architecture/open-questions.md) | **§0 For CEO review (C-1..C-9)**, **Legal: OPEN**, **Language: OPEN**, plus technical/product questions with working assumptions |
 | [design/README.md](./design/README.md) | Wireframes, design tokens, WCAG 2.2 AA checklist, i18n layout rules (index; sources in `/design`) |
 

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Living document, opened by task #18 (M1.1), updated by #19, #24 (M1-T1), #44 (M3-01, §4) and #54 (M3b-03, §5) |
+| **Status** | Living document, opened by task #18 (M1.1), updated by #19, #24 (M1-T1), #44 (M3-01, §4), #54 (M3b-03, §5) and #67 (M4-01, §6) |
 | **Owner** | Software Architect, who routes each question to the decision owner listed |
 | **Rule** | A question moves to *Resolved* only with a named decision owner and a date. Resolutions that change the data model need a schema PR and an ADR update. |
 
@@ -144,6 +144,40 @@ Opened by [m3b-spec.md](./m3b-spec.md). Engineering builds to the working assump
 | M3b-Q14 | TOTP algorithm and window | SHA-1, 6 digits, 30 s, ±1 step, for compatibility with common authenticator apps | Security | None |
 | M3b-Q15 | Session cookie name. ADR-0002 and AUT-012 expect `__Host-`; Auth.js defaults to `__Secure-authjs.session-token` | Backend checks the current config in M3b-04 and sets a `__Host-` name through Auth.js `cookies` options if possible; otherwise QA updates AUT-012 | Backend + QA | M3b-09 |
 | M3b-Q16 | A `SELLER_REPLY_RESTRICTION` blocks new replies and edits. Should it also hide published replies? | No. Staff remove harmful replies one by one | T&S | None |
+
+M3b-Q10 (users cannot report replies) is closed by [m4-m5-spec.md §4](./m4-m5-spec.md#4-reporting-reviews-and-seller-replies): M4 adds reports for seller replies.
+
+---
+
+## 6. M4 + M5: votes, edits, reports, proof, media (task #67)
+
+Opened by [m4-m5-spec.md](./m4-m5-spec.md). Every item has a **default decision**. Engineering builds to it, and it
+stays in force unless the owner changes it.
+
+| ID | Question | Default decision | Owner | Blocks |
+|---|---|---|---|---|
+| M45-Q1 | Where do report cases live before the M6 lanes? | On `ModerationCase`, with `trigger = USER_REPORT`, `seq` and a nullable unique `openReportKey` (spec §4.3). A separate table and a nullable `version` were rejected | Architect | M4-04 |
+| M45-Q2 | Catalogue cases that cannot pass in their milestone | QA moves or splits them: MOD-019 and E2E-001 `POST_REVIEW` clause → M6; E2E-010 → M5 (no public bucket in M4); AZ-014 → M7 (no blocks, comments, likes or follows in M4); MED-027 wording (rejection in `media.scan`, ADR-0023). New ids per spec §13.3–§13.7 | QA | M4/M5 gates |
+| M45-Q3 | Edits of `REJECTED`/`REMOVED` reviews (lifecycle T20) | Refused in M4 (`not_editable`, ADR-0003). T20 ships with M6 appeals | Product + T&S | None |
+| M45-Q4 | Is revision history public? | No. Public "Edited" marker with date only. Author and staff see the history | Product + Legal | None |
+| M45-Q5 | Do votes reset when a review is edited? | No. Votes are kept, including on a rating change | Product | None |
+| M45-Q6 | NEW band before M7 trust bands | Account age < 7 days (`VOTE_NEW_ACCOUNT_DAYS`). Used for vote limits and report weight | Architect + Data | None |
+| M45-Q7 | When to delete proof originals (C-4) | At decision (`PROOF_ORIGINAL_RETENTION=AT_DECISION`). `APPEAL_WINDOW` (30 d) is a config switch | Legal (L-5) | Launch |
+| M45-Q8 | OCR/redaction engine (T-5) | In-house Tesseract in the sandboxed `media` group. Only redacted pages go to the AI extractor ([ADR-0022](../adr/0022-in-house-proof-redaction.md)) | Architect + Legal (L-6) | None |
+| M45-Q9 | HMAC key for `orderReferenceHash` in the `media` group | Yes (ADR-0022). The threat-model secrets table is updated by Security | Security | M4-05 |
+| M45-Q10 | A proof whose files are all rejected | `EXPIRED (NO_VALID_FILES)`, not `REJECTED`; not an attempt; the user may resubmit (no automatic rejection, ADR-0008 §4) | T&S | None |
+| M45-Q11 | New proof after a label revocation | Refused while the `VERIFIED_LABEL_REVOKED` action is `ACTIVE` (`label_revoked`). The path back is an appeal (M6) | T&S | None |
+| M45-Q12 | Staff access to proof originals in M4 | None. The break-glass `proof.view_original` (PRV-003) ships in M6. Until then, decisions use the redacted copy only | Security + T&S | None |
+| M45-Q13 | R2 token granularity vs INF-002 (no web GET on ingest) | Confirm drops `HEAD` ([ADR-0023](../adr/0023-ingest-least-privilege-and-publication-gate.md)). If R2 cannot issue a write-only token, accept the residual with INF-006 and short-lived ingest objects. Spike in M5-01 | DevOps + Security | Launch |
+| M45-Q14 | ClamAV signatures stale | Above 24 h: alert and worker health 503, scans continue (media is re-encoded). Above 72 h: scans fail closed | Security + DevOps | None |
+| M45-Q15 | Where exiftool runs | Only on our own outputs, as the verification gate. Detection of metadata in originals uses sharp and ffprobe (exiftool has a parser CVE history) | Security | None |
+| M45-Q16 | Parser sandbox mechanism | `bwrap` + `prlimit` per child process, custom seccomp profile, read-only root fs. Production and CI refuse to start without it | DevOps + Security | M5-02 |
+| M45-Q17 | HEIC (MD-1, T-13) | Accepted only if the worker's libvips has libheif. Otherwise refused at the slot with clear copy. MED-004 stays P1 | DevOps | None |
+| M45-Q18 | Video moderation frames | Not extracted in M5 (no AI image moderation yet). Staff see the poster and the private video | T&S | None |
+| M45-Q19 | Upload quotas differ: code 20/h + 50/24 h, threat-model §5 60/h + 300/day | Keep the stricter code defaults (config). QA aligns SEC-004 to the configured values | Product + QA | None |
+| M45-Q20 | Notifications before the M7 inbox | Email only, for mandatory types (`CONTENT_REMOVED`, `MEDIA_REJECTED`, `PROOF_*`, `VERIFIED_LABEL_REVOKED`). Reporters see status in "My reports" | Product | None |
+| M45-Q21 | The relay marks unrouted events as published (contradicts ADR-0007 §3) | Not changed in M4/M5. New OUT-008 test: every emitted type has a route. Fail-loud relay behaviour with the M6 DLQ work | Backend | None |
+| M45-Q22 | Label wording and the public methodology page (L-2) | "Verified purchase · receipt / order confirmation / marketplace order" with a methodology link. Legal reviews the copy before launch | Legal + Product | Launch |
 
 ---
 
