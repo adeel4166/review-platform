@@ -10,7 +10,7 @@ export function storageOrigin(env: Record<string, string | undefined> = process.
 
 export function buildCsp(nonce: string, opts: { dev?: boolean; storage?: string } = {}): string {
   const dev = opts.dev ?? process.env.NODE_ENV !== "production";
-  const storage = opts.storage ?? storageOrigin();
+  const storage = [opts.storage ?? storageOrigin(), process.env.MEDIA_PUBLIC_STORE === "cloudinary" ? "https://res.cloudinary.com" : ""].filter(Boolean).join(" ");
   const media = ["'self'", storage, "data:", "blob:"].filter(Boolean).join(" ");
   return [
     "default-src 'self'",

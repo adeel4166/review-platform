@@ -126,6 +126,10 @@ services:
     security_opt: ["no-new-privileges:true", "seccomp=unconfined", "apparmor=rp-worker-media", "systempaths=unconfined"]
     environment:
       WORKER_GROUPS: core
+      MEDIA_PUBLIC_STORE: ${MEDIA_PUBLIC_STORE:-minio} # reconcile/erase touch public media too
+      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME:-}
+      CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY:-}
+      CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET:-}
       NODE_ENV: production
       MEDIA_SANDBOX_REQUIRED: "true"
       DATABASE_URL: ${DATABASE_URL:?}
@@ -188,6 +192,10 @@ services:
       CLAMD_HOST: clamav
       CLAMD_PORT: "3310"
       MEDIA_PUBLIC_BASE_URL: ${MEDIA_PUBLIC_BASE_URL:?}
+      MEDIA_PUBLIC_STORE: ${MEDIA_PUBLIC_STORE:-minio} # "cloudinary" = approved public media is served from Cloudinary (f_auto/q_auto)
+      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME:-}
+      CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY:-}
+      CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET:-}
       WORKER_HEALTH_PORT: "8081"
     networks: [internal]
 

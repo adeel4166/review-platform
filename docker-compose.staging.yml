@@ -197,6 +197,8 @@ services:
       S3_BUCKET_PRIVATE: rp-private
       S3_BUCKET_PUBLIC: rp-public
       MEDIA_PUBLIC_BASE_URL: ${MEDIA_PUBLIC_BASE_URL:?}
+      MEDIA_PUBLIC_STORE: ${MEDIA_PUBLIC_STORE:-minio} # "cloudinary" = approved public media is served from Cloudinary (f_auto/q_auto)
+      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME:-}
       IP_HASH_KEY: ${IP_HASH_KEY:?}
       AUTH_SECRET: ${AUTH_SECRET:?}
       AUTH_TRUST_HOST: "true"
@@ -226,6 +228,10 @@ services:
       mailpit: { condition: service_healthy }
     environment:
       WORKER_GROUPS: core
+      MEDIA_PUBLIC_STORE: ${MEDIA_PUBLIC_STORE:-minio} # reconcile/erase touch public media too
+      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME:-}
+      CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY:-}
+      CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET:-}
       NODE_ENV: production
       MEDIA_SANDBOX_REQUIRED: "true"
       DATABASE_URL: mysql://app:${MYSQL_APP_PASSWORD:?}@mysql:3306/review_platform
@@ -291,6 +297,10 @@ services:
       CLAMD_HOST: clamav
       CLAMD_PORT: "3310"
       MEDIA_PUBLIC_BASE_URL: ${MEDIA_PUBLIC_BASE_URL:?}
+      MEDIA_PUBLIC_STORE: ${MEDIA_PUBLIC_STORE:-minio} # "cloudinary" = approved public media is served from Cloudinary (f_auto/q_auto)
+      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME:-}
+      CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY:-}
+      CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET:-}
       WORKER_HEALTH_PORT: "8081"
     networks: [internal]
 

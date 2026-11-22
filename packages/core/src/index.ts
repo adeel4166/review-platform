@@ -5,6 +5,7 @@ export * from "./moderation-provider";
 export * from "./moderation-service";
 export * from "./moderation-fake";
 export * from "./media";
+export * from "./cloudinary";
 export * from "./media-store-fake";
 export * from "./rate-limit";
 export * from "./audit-metadata";

@@ -1,5 +1,5 @@
 import { DelayedError, type Job } from "bullmq";
-import { QUEUES, createMailProvider, createS3Store, loadEnv, mediaBuckets, mediaJobSchema, moderationJobSchema, type QueueName } from "@rp/core";
+import { QUEUES, cloudinaryConfigFromEnv, createCloudinaryStore, createMailProvider, createS3Store, routePublicBucket, loadEnv, mediaBuckets, mediaJobSchema, moderationJobSchema, type QueueName } from "@rp/core";
 import { prisma } from "@rp/db";
 import { assertNoAutoVerify, parseOrderRefKeys, systemClock } from "@rp/core";
 import { sendAccountExistsEmail, sendSecurityAlertEmail, sendNotificationEmail, type SecurityAlertDb, sendClaimBusinessEmail, type ClaimEmailDeps, sendSellerInvitationEmail, sendVerificationEmail, type EmailDb, type EmailDbInvitations } from "./email";
@@ -27,7 +27,9 @@ let storage: { store: ReturnType<typeof createS3Store>; buckets: ReturnType<type
 export const getMediaDeps = () => {
   if (!storage) {
     const env = loadEnv(); // storage credentials come from env only
-    storage = { store: createS3Store(env), buckets: mediaBuckets(env) };
+    const s3 = createS3Store(env);
+    const cld = cloudinaryConfigFromEnv(); // MEDIA_PUBLIC_STORE=cloudinary: approved public media lives on Cloudinary's CDN
+    storage = { store: cld ? routePublicBucket(s3, env.S3_BUCKET_PUBLIC, createCloudinaryStore(cld)) : s3, buckets: mediaBuckets(env) };
   }
   return { db: prisma as unknown as MediaDb, ...storage, scanner: getScanner(), verifier: defaultVerifier(process.env.MEDIA_EXIFTOOL_REQUIRED === "true"), alert: securityAlert, signals: { store: prismaSignalStore(prisma), recompute: (k: string) => runTrustRecompute(prisma, systemClock, k) } };
 };

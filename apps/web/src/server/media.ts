@@ -15,6 +15,8 @@ export interface Storage {
   buckets: { ingest: string; private: string };
   /** `MEDIA_PUBLIC_BASE_URL` (CDN host in front of rp-public). Public readers only ever get URLs under it (m4-m5-spec 6.5). */
   publicBaseUrl?: string;
+  /** Overrides `publicBaseUrl` (Cloudinary delivery URLs with automatic format/quality). */
+  publicUrlFor?: (key: string) => string;
 }
 
 /** SEC-02 / m4-m5-spec 3.4: media may be added while the review is under moderation (PENDING) or staged for the next edit of a PUBLISHED review. */
@@ -22,7 +24,7 @@ function assertPendingForMedia(status: string) {
   if (status !== "PENDING" && status !== "PUBLISHED") throw new HttpError(409, "not_editable", "Media can only be added to pending or published reviews");
 }
 
-const publicUrl = (st: Storage, key: string) => `${(st.publicBaseUrl ?? "").replace(/\/$/, "")}/${key}`;
+const publicUrl = (st: Storage, key: string) => st.publicUrlFor ? st.publicUrlFor(key) : `${(st.publicBaseUrl ?? "").replace(/\/$/, "")}/${key}`;
 const ownSelect = { id: true, reviewId: true, kind: true, status: true, failureReason: true, width: true, height: true, createdAt: true } as const;
 
 /**
