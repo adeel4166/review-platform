@@ -56,8 +56,15 @@ export class MockModerationProvider implements ModerationProvider {
   }
 }
 
-/** Selects a provider by name. Real providers read their key from `env` (e.g. MODERATION_API_KEY) only. */
-export function createModerationProvider(env: { MODERATION_PROVIDER?: string; MODERATION_API_KEY?: string }): ModerationProvider {
+/**
+ * Selects a provider by name. Real providers read their key from `env` (e.g. MODERATION_API_KEY) only.
+ * SEC-M6-02: in production an unset provider or the offline `mock` is refused (the mock auto-approves anything without a blocklist word).
+ */
+export function createModerationProvider(env: { MODERATION_PROVIDER?: string; MODERATION_API_KEY?: string; NODE_ENV?: string }): ModerationProvider {
+  const production = env.NODE_ENV === "production";
+  if (production && (!env.MODERATION_PROVIDER || env.MODERATION_PROVIDER === "mock")) {
+    throw new Error("MODERATION_PROVIDER must be a real provider in production (mock/unset refused)");
+  }
   const name = env.MODERATION_PROVIDER ?? "mock";
   if (name === "mock") return new MockModerationProvider();
   // No real provider is wired yet; fail loudly rather than silently approving.

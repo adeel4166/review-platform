@@ -1,8 +1,8 @@
-import type { Job } from "bullmq";
+import { DelayedError, type Job } from "bullmq";
 import { QUEUES, createMailProvider, createS3Store, loadEnv, mediaBuckets, mediaJobSchema, moderationJobSchema, type QueueName } from "@rp/core";
 import { prisma } from "@rp/db";
-import { assertNoAutoVerify, createModerationProvider, parseOrderRefKeys } from "@rp/core";
-import { sendAccountExistsEmail, sendSecurityAlertEmail, type SecurityAlertDb, sendClaimBusinessEmail, type ClaimEmailDeps, sendSellerInvitationEmail, sendVerificationEmail, type EmailDb, type EmailDbInvitations } from "./email";
+import { assertNoAutoVerify, parseOrderRefKeys, systemClock } from "@rp/core";
+import { sendAccountExistsEmail, sendSecurityAlertEmail, sendNotificationEmail, type SecurityAlertDb, sendClaimBusinessEmail, type ClaimEmailDeps, sendSellerInvitationEmail, sendVerificationEmail, type EmailDb, type EmailDbInvitations } from "./email";
 import { reminderDelayMs, sendTransferCancelLinks, type TransferNotifyDb } from "./ownership-transfer-email";
 import { markMediaFailed, processMedia, type MediaDb } from "./media";
 import { createClamd } from "./media/clamd";
@@ -11,19 +11,24 @@ import { demoteMedia, promoteMedia, type PublishDb, type CdnPurger } from "./med
 import { assessProof, failClosedRedactor, finalizeProof, processProofFile, purgeProofFiles, sendProofNotice, type AssessDeps, type ProofDeps } from "./proofs";
 import { applyClaimObservation, prepareClaimCheck, type CheckStore, type EgressResult } from "./verification/checks";
 import { sendClaimNotice, type NotifyDb } from "./verification/notify";
-import { processModeration, type WorkerDb } from "./moderation";
+import type { WorkerDb } from "./moderation";
+import { liveProviderCall, processAssessJob } from "./moderation/live";
+import { handleNotificationRequested, prismaNotificationPorts } from "./notifications";
+import { nearDuplicateIndex, prismaBurstPort, runNightlyDecay, runProductBursts, runTrustRecompute, subjectKeyForTarget, sweepVoteAnomalies } from "./trust/jobs";
+import { prismaSignalStore } from "./trust/prisma-ports";
 
-export type Processor = (job: Job) => Promise<void>;
+export type Processor = (job: Job, token?: string) => Promise<void>;
 
-let provider: ReturnType<typeof createModerationProvider> | undefined;
-const getProvider = () => (provider ??= createModerationProvider({ MODERATION_PROVIDER: process.env.MODERATION_PROVIDER, MODERATION_API_KEY: process.env.MODERATION_API_KEY }));
+let providerCall: ReturnType<typeof liveProviderCall> | undefined;
+/** SEC-M6-02: createModerationProvider (inside liveProviderCall) refuses mock/unset when NODE_ENV=production. */
+const getProviderCall = () => (providerCall ??= liveProviderCall({ MODERATION_PROVIDER: process.env.MODERATION_PROVIDER, MODERATION_API_KEY: process.env.MODERATION_API_KEY, NODE_ENV: process.env.NODE_ENV }));
 let storage: { store: ReturnType<typeof createS3Store>; buckets: ReturnType<typeof mediaBuckets> } | undefined;
 export const getMediaDeps = () => {
   if (!storage) {
     const env = loadEnv(); // storage credentials come from env only
     storage = { store: createS3Store(env), buckets: mediaBuckets(env) };
   }
-  return { db: prisma as unknown as MediaDb, ...storage, scanner: getScanner(), verifier: defaultVerifier(process.env.MEDIA_EXIFTOOL_REQUIRED === "true"), alert: securityAlert };
+  return { db: prisma as unknown as MediaDb, ...storage, scanner: getScanner(), verifier: defaultVerifier(process.env.MEDIA_EXIFTOOL_REQUIRED === "true"), alert: securityAlert, signals: { store: prismaSignalStore(prisma), recompute: (k: string) => runTrustRecompute(prisma, systemClock, k) } };
 };
 let scanner: ReturnType<typeof createClamd> | undefined;
 export const getScanner = () => (scanner ??= createClamd({ host: process.env.CLAMD_HOST ?? "127.0.0.1", port: Number(process.env.CLAMD_PORT ?? 3310) }));
@@ -52,7 +57,7 @@ export const getAssessDeps = (): AssessDeps => {
 };
 let mailer: ReturnType<typeof createMailProvider> | undefined;
 const getMail = () => (mailer ??= createMailProvider());
-const getDb = () => prisma as unknown as WorkerDb;
+export type { WorkerDb };
 
 /**
  * Moderation: AI-first (ADR-0005). Throws on provider failure so BullMQ retries; after the last retry
@@ -60,9 +65,14 @@ const getDb = () => prisma as unknown as WorkerDb;
  * Media: validate by content, strip EXIF, build variants, READY/FAILED (media.ts).
  */
 export const processors: Partial<Record<QueueName, Processor>> = {
-  [QUEUES.moderation]: async (job) => {
+  [QUEUES.moderation]: async (job, token) => {
     const p = moderationJobSchema.parse(job.data);
-    const outcome = await processModeration(getDb(), getProvider(), p, { jobId: String(job.id) });
+    // M6 pipeline (runAssess): ensure case -> M7 routing -> media wait -> rules -> provider -> classify -> transition. Never the legacy path.
+    const outcome = await processAssessJob({ db: prisma, call: getProviderCall(), burst: prismaBurstPort(prisma), dup: nearDuplicateIndex }, p);
+    if (outcome.status === "delay") {
+      await job.moveToDelayed(Date.now() + outcome.delayMs, token); // media still processing: poll again, no attempt consumed
+      throw new DelayedError();
+    }
     console.log(JSON.stringify({ msg: "moderation.done", jobId: job.id, subject: p.subjectType, id: p.subjectId, outcome }));
   },
   [QUEUES.media]: async (job) => {
@@ -98,7 +108,12 @@ export const processors: Partial<Record<QueueName, Processor>> = {
       console.log(JSON.stringify({ msg: "notification.done", jobId: job.id, type: job.name, outcome }));
       return;
     }
-    if (job.name === "auth.security_alert") outcome = await sendSecurityAlertEmail({ db: prisma as unknown as SecurityAlertDb, mail: getMail() }, (job.data ?? {}) as { userId?: string; kind?: string; remaining?: number }, key); // SEC-M3B-01
+    if (job.name === "notification.requested") {
+      const ports = prismaNotificationPorts(prisma, (n, d, o) => getNotificationsQueue().add(n, d, o));
+      outcome = await handleNotificationRequested(prisma, ports, systemClock, key, (job.data ?? {}) as Record<string, string>);
+    } else if (job.name === "notification.email") {
+      outcome = await sendNotificationEmail({ db: prisma as unknown as SecurityAlertDb, mail: getMail() }, (job.data ?? {}) as { userId?: string; type?: string }, key);
+    } else if (job.name === "auth.security_alert") outcome = await sendSecurityAlertEmail({ db: prisma as unknown as SecurityAlertDb, mail: getMail() }, (job.data ?? {}) as { userId?: string; kind?: string; remaining?: number }, key); // SEC-M3B-01
     else if (job.name === "user.email_verification_requested" && data.tokenId) outcome = await sendVerificationEmail(d, data.tokenId, key);
     else if (job.name === "user.registration_conflict" && data.userId) outcome = await sendAccountExistsEmail(d, data.userId, key);
     else if (job.name === "seller.invitation_created" && data.invitationId) outcome = await sendSellerInvitationEmail(d, data.invitationId, key);
@@ -118,6 +133,17 @@ export const processors: Partial<Record<QueueName, Processor>> = {
       if (id) outcome = await sendClaimNotice({ db: prisma as unknown as NotifyDb, mail: getMail() }, job.name, id, key);
     }
     console.log(JSON.stringify({ msg: "notification.done", jobId: job.id, type: job.name, outcome })); // never the address, token or URL
+  },
+  // M7 trust (SEC-M7-01): recompute on signal, nightly decay, burst exclusion, vote-ring freeze.
+  [QUEUES.trust]: async (job) => {
+    const d = (job.data ?? {}) as { subjectKey?: string; targetType?: string; targetId?: string };
+    let result: unknown = "SKIPPED";
+    if (job.name === "trust.recompute" && d.subjectKey) result = await runTrustRecompute(prisma, systemClock, d.subjectKey);
+    else if (job.name === "trust.signal") { const k = await subjectKeyForTarget(prisma, d); if (k) result = await runTrustRecompute(prisma, systemClock, k); }
+    else if (job.name === "trust.nightly-decay") result = (await runNightlyDecay(prisma, systemClock)).length;
+    else if (job.name === "trust.product-burst") result = await runProductBursts(prisma, systemClock);
+    else if (job.name === "trust.vote-freeze") result = await sweepVoteAnomalies(prisma, systemClock);
+    console.log(JSON.stringify({ msg: "trust.job.done", jobId: job.id, type: job.name, result: typeof result === "object" ? "ok" : result }));
   },
   // T-01 / ADR-0015: the core worker never touches the network for verification. Intake prepares the request for the isolated
   // egress group (`verification-egress`); the observation comes back on `verification-result` and is persisted here.

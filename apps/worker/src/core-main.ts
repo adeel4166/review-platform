@@ -45,7 +45,7 @@ const store: OutboxStore = {
 };
 
 const workers = Object.entries(processors).map(([name, fn]) => {
-  const w = new Worker(name, (job) => fn!(job), { connection, concurrency: env.WORKER_CONCURRENCY });
+  const w = new Worker(name, (job, token) => fn!(job, token), { connection, concurrency: env.WORKER_CONCURRENCY });
   w.on("failed", (job, err) => {
     console.error(JSON.stringify({ msg: "job.failed", queue: name, jobId: job?.id, attempt: job?.attemptsMade, err: err.message }));
     if (name === QUEUES.media && job && isFinalFailure(job)) {
@@ -99,6 +99,19 @@ const m4Timers = [
   setInterval(() => { const { db, store, buckets } = getProofDeps(); sweepProofs({ db, store, buckets, originalRetention: process.env.PROOF_ORIGINAL_RETENTION === "APPEAL_WINDOW" ? "APPEAL_WINDOW" : "AT_DECISION" }).then(logSweep("proof-retention")).catch(sweepErr("proof-retention")); }, 10 * 60_000),
 ];
 
+// M7 (SEC-M7-01): vote-ring freeze + burst exclusion every minute, trust decay nightly at 02:00 UTC. Deterministic job ids make overlap a no-op.
+// Recompute on signal runs from the `trust.signal` outbox events and (for MALWARE_UPLOAD) directly from the media worker.
+const trustQueue = () => getQueue(QUEUES.trust);
+const trustTimers = [
+  setInterval(() => {
+    const minute = Math.floor(Date.now() / 60_000);
+    trustQueue().add("trust.vote-freeze", {}, { jobId: `trust-vf__${minute}`, removeOnComplete: true }).catch(sweepErr("trust-vote-freeze"));
+    trustQueue().add("trust.product-burst", {}, { jobId: `trust-pb__${minute}`, removeOnComplete: true }).catch(sweepErr("trust-product-burst"));
+    const now = new Date();
+    if (now.getUTCHours() === 2 && now.getUTCMinutes() === 0) trustQueue().add("trust.nightly-decay", {}, { jobId: `trust-decay__${now.toISOString().slice(0, 10)}`, removeOnComplete: true }).catch(sweepErr("trust-decay"));
+  }, 60_000),
+];
+
 console.log(JSON.stringify({ msg: "worker.started", group: "core", queues: Object.keys(processors) }));
 
 async function shutdown() {
@@ -106,6 +119,7 @@ async function shutdown() {
   clearInterval(sweepTimer);
   claimTimers.forEach(clearInterval);
   m4Timers.forEach(clearInterval);
+  trustTimers.forEach(clearInterval);
   mediaTimers.forEach(clearInterval);
   health?.close();
   await Promise.all(workers.map((w) => w.close()));
