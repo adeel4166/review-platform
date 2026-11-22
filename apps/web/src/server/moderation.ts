@@ -44,7 +44,8 @@ export async function listModerationQueue(db: Db, f: QueueFilter & { trigger?: "
       select: {
         id: true, state: true, version: true, aiScore: true, aiConfidence: true, aiReasons: true, aiProvider: true,
         decisionReason: true, decidedAt: true, createdAt: true,
-        review: { select: { id: true, productId: true, rating: true, title: true, body: true, verifiedBuyer: true, author: { select: { handle: true } }, _count: { select: { media: true } } } },
+        status: true, lane: true, holdExpiresAt: true, leaseExpiresAt: true, assignedToId: true,
+        review: { select: { id: true, authorId: true, productId: true, rating: true, title: true, body: true, verifiedBuyer: true, author: { select: { handle: true } }, _count: { select: { media: true } } } },
         subjectType: true,
         sellerReply: { select: { id: true, sellerId: true, reviewId: true, body: true, version: true } },
       },
@@ -64,7 +65,7 @@ export async function decideCase(db: Db, actor: Actor, caseId: string, to: "APPR
     return { id: c.id, state: c.state };
   } catch (e) {
     if (e instanceof CaseNotFoundError) throw new HttpError(404, "not_found", "Moderation case not found");
-    if (e instanceof SelfDecisionError) throw new HttpError(403, "self_moderation_forbidden", "You cannot moderate your own review");
+    if (e instanceof SelfDecisionError) throw new HttpError(403, "CONFLICT_OF_INTEREST", "You cannot moderate your own review");
     if (e instanceof IllegalTransitionError) throw new HttpError(409, "illegal_transition", e.message);
     if (e instanceof TransitionConflictError) throw new HttpError(409, "conflict", "Case was changed by someone else, reload");
     throw e;
@@ -80,7 +81,7 @@ export async function getCaseDetail(db: Db, st: Storage, caseId: string) {
       decisionReason: true, decidedAt: true, createdAt: true,
       review: {
         select: {
-          id: true, productId: true, rating: true, title: true, body: true, verifiedBuyer: true, author: { select: { handle: true } },
+          id: true, authorId: true, productId: true, rating: true, title: true, body: true, verifiedBuyer: true, author: { select: { handle: true } },
           media: { select: { id: true, status: true, width: true, height: true, thumbKey: true, mediumKey: true, failureReason: true }, orderBy: { createdAt: "asc" } },
         },
       },

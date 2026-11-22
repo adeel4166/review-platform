@@ -8,6 +8,8 @@ export function SiteHeader() {
         <Link href="/" className="text-lg font-semibold">{t("app.name")}</Link>
         <span className="flex gap-4">
           <Link href="/products" className="inline-flex min-h-target items-center text-link underline">{t("nav.products")}</Link>
+          <Link href="/compare" className="inline-flex min-h-target items-center text-link underline">{t("compare.h1")}</Link>
+          <Link href="/account/notifications" className="inline-flex min-h-target items-center text-link underline">{t("notif.h1")}</Link>
           <Link href="/seller" className="inline-flex min-h-target items-center text-link underline">{t("nav.sellers")}</Link>
         </span>
       </nav>

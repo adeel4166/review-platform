@@ -13,8 +13,11 @@ export interface QueueItem {
   decisionReason: string | null;
   createdAt: string;
   subjectType?: "REVIEW" | "SELLER_REPLY";
+  /** M6 lane model: present once the case carries a hold deadline (E2E-003). */
+  lane?: string | null;
+  holdExpiresAt?: string | null;
   /** Null for SELLER_REPLY cases (ADR-0021): the text to moderate is in `sellerReply`. */
-  review: { id: string; rating: number; title: string; body: string; verifiedBuyer: boolean; author: { handle: string }; _count?: { media: number } } | null;
+  review: { id: string; authorId?: string; rating: number; title: string; body: string; verifiedBuyer: boolean; author: { handle: string }; _count?: { media: number } } | null;
   sellerReply?: { id: string; sellerId: string; reviewId: string; body: string; version: number } | null;
 }
 export interface QueuePage { items: QueueItem[]; page: number; pageSize: number; total: number }
@@ -43,7 +46,7 @@ export function validateReject(reason: string): "mod.err.reasonRequired" | null 
   return reason.trim().length >= MIN_REJECT_REASON ? null : "mod.err.reasonRequired";
 }
 
-export type DecisionResult = { ok: true; id: string; state: "APPROVED" | "REJECTED" } | { ok: false; errorKey: "mod.err.reasonRequired" | "mod.err.conflict" | "mod.err.forbidden" | "mod.err.generic" };
+export type DecisionResult = { ok: true; id: string; state: "APPROVED" | "REJECTED" } | { ok: false; errorKey: "mod.err.reasonRequired" | "mod.err.coi" | "mod.err.conflict" | "mod.err.forbidden" | "mod.err.generic" };
 
 export function errorKeyForStatus(status: number): "mod.err.conflict" | "mod.err.forbidden" | "mod.err.generic" {
   return status === 409 || status === 404 ? "mod.err.conflict" : status === 401 || status === 403 ? "mod.err.forbidden" : "mod.err.generic";
@@ -60,6 +63,7 @@ export async function decide(
     const r = await call<{ id: string; state: "APPROVED" | "REJECTED" }>(`/api/admin/moderation/${encodeURIComponent(id)}/${action}`, { method: "POST", body: JSON.stringify(body) });
     return { ok: true, id: r.id, state: r.state };
   } catch (e) {
+    if (e instanceof ApiError && e.code === "CONFLICT_OF_INTEREST") return { ok: false, errorKey: "mod.err.coi" };
     return { ok: false, errorKey: e instanceof ApiError ? errorKeyForStatus(e.status) : "mod.err.generic" };
   }
 }
@@ -77,3 +81,22 @@ export function reasonList(reasons: unknown): string[] {
 }
 
 export const formatScore = (s: string | number | null): string => (s === null || s === undefined || Number.isNaN(Number(s)) ? "—" : Number(s).toFixed(2));
+
+/** Hold deadline as plain text (no per-second ticking, WCAG 4.1.3): "2d 4h left" or "expired". Returns null when there is no hold. */
+export function holdText(iso: string | null | undefined, now: number): { expired: boolean; left: string } | null {
+  if (!iso) return null;
+  const ms = new Date(iso).getTime() - now;
+  if (Number.isNaN(ms)) return null;
+  if (ms <= 0) return { expired: true, left: "" };
+  const m = Math.floor(ms / 60_000), d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60);
+  return { expired: false, left: d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m % 60}m` : `${m}m` };
+}
+
+export type ShortcutAction = "approve" | "reject" | "next" | "prev" | null;
+/** Single-key shortcuts (A/R/J/K). Inactive while typing, with modifiers, or when the user turned them off (WCAG 2.1.4). */
+export function shortcutFor(e: { key: string; ctrlKey?: boolean; metaKey?: boolean; altKey?: boolean; target?: { tagName?: string; isContentEditable?: boolean } | null }, enabled: boolean): ShortcutAction {
+  if (!enabled || e.ctrlKey || e.metaKey || e.altKey) return null;
+  const tag = e.target?.tagName?.toUpperCase();
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || e.target?.isContentEditable) return null;
+  switch (e.key.toLowerCase()) { case "a": return "approve"; case "r": return "reject"; case "j": return "next"; case "k": return "prev"; default: return null; }
+}

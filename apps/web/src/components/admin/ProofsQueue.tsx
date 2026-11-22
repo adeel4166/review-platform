@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { t, type MessageKey } from "@/i18n/en";
 import { ApiError, api } from "@/lib/upload";
 import { Dialog } from "../Dialog";
+import { OriginalAccessDialog } from "./OriginalAccess";
 import { field, primaryBtn, secondaryBtn } from "../seller/ui";
 
 export interface QueueProof {
@@ -129,6 +130,7 @@ function DecisionDialog({ detail, staffId, onClose, onDone }: { detail: ProofDet
   const [note, setNote] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const [original, setOriginal] = useState<string | null>(null);
 
   async function decide(outcome: "VERIFIED" | "REJECTED") {
     if (outcome === "REJECTED" && !code) { setErr(t("admin.proofs.err.reason")); return; }
@@ -155,6 +157,7 @@ function DecisionDialog({ detail, staffId, onClose, onDone }: { detail: ProofDet
             <li key={f.id} className="relative overflow-hidden rounded-md border border-border">
               <img src={f.url} alt={t("admin.proofs.detail.page", { n: i + 1, id: detail.id })} className="block max-h-[60vh] w-full object-contain" />
               {/* R-2: visible watermark with the moderator id deters leaking screenshots. */}
+              <button type="button" aria-haspopup="dialog" className={`${secondaryBtn} m-2`} onClick={() => setOriginal(f.id)}>{t("admin.bg.open", { n: i + 1 })}</button>
               <span aria-hidden="true" className="pointer-events-none absolute inset-0 flex items-center justify-center -rotate-12 select-none text-2xl font-bold text-black/20">{t("admin.proofs.detail.watermark", { id: staffId })}</span>
             </li>
           ))}
@@ -186,6 +189,7 @@ function DecisionDialog({ detail, staffId, onClose, onDone }: { detail: ProofDet
           </>
         )}
       </div>
+      {original && <OriginalAccessDialog proofId={detail.id} fileId={original} onClose={() => setOriginal(null)} />}
     </Dialog>
   );
 }

@@ -8,9 +8,10 @@ import { Stars } from "../Stars";
 import { VerifiedBadge } from "../VerifiedBadge";
 import { DecisionPanel } from "./DecisionPanel";
 
-export function CaseDetailView({ detail, onDecided, onConflict }: { detail: Detail; onDecided: (r: Extract<DecisionResult, { ok: true }>) => void; onConflict?: () => void }) {
+export function CaseDetailView({ detail, onDecided, onConflict, viewerId }: { viewerId?: string; detail: Detail; onDecided: (r: Extract<DecisionResult, { ok: true }>) => void; onConflict?: () => void }) {
   const reasons = reasonList(detail.aiReasons);
-  const open = detail.state === "NEEDS_HUMAN";
+  const own = !!viewerId && detail.review?.authorId === viewerId;
+  const open = detail.state === "NEEDS_HUMAN" && !own;
   return (
     <section aria-labelledby={`detail-${detail.id}`} className="rounded-lg border border-border bg-surface p-4">
       <h2 id={`detail-${detail.id}`} className="text-lg font-semibold">{t("mod.detail.heading")}</h2>
@@ -54,13 +55,14 @@ export function CaseDetailView({ detail, onDecided, onConflict }: { detail: Deta
       ))}
 
       {detail.decisionReason && <p className="mt-4 text-sm">{t("mod.detail.decided", { reason: detail.decisionReason })}</p>}
+      {own && <p role="note" data-testid="coi-banner" className="mt-4 rounded-md border border-border-strong p-3">{t("mod.coi.banner")}</p>}
       {open && <DecisionPanel caseId={detail.id} onDecided={onDecided} onConflict={onConflict} />}
     </section>
   );
 }
 
 /** Loads one case (with signed media URLs) and renders it. */
-export function CaseDetailLoader({ id, onDecided, onConflict, onClose }: { id: string; onDecided: (r: Extract<DecisionResult, { ok: true }>) => void; onConflict: () => void; onClose: () => void }) {
+export function CaseDetailLoader({ id, onDecided, onConflict, onClose, viewerId }: { viewerId?: string; id: string; onDecided: (r: Extract<DecisionResult, { ok: true }>) => void; onConflict: () => void; onClose: () => void }) {
   const [detail, setDetail] = useState<Detail | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
@@ -72,7 +74,7 @@ export function CaseDetailLoader({ id, onDecided, onConflict, onClose }: { id: s
   return (
     <div>
       <button type="button" onClick={onClose} className="mb-2 min-h-target text-link underline">{t("mod.close")}</button>
-      {failed ? <p role="alert">{t("mod.loadError")}</p> : !detail ? <p role="status">{t("mod.loading")}</p> : <CaseDetailView detail={detail} onDecided={onDecided} onConflict={onConflict} />}
+      {failed ? <p role="alert">{t("mod.loadError")}</p> : !detail ? <p role="status">{t("mod.loading")}</p> : <CaseDetailView viewerId={viewerId} detail={detail} onDecided={onDecided} onConflict={onConflict} />}
     </div>
   );
 }
