@@ -1,5 +1,6 @@
 import { t } from "@/i18n/en";
 import { Stars } from "../Stars";
+import { HistogramBar } from "./HistogramBar";
 
 /** Parses the cached `ratingHistogram` JSON ({"1":n..."5":n}); anything unexpected yields zeros. */
 export function parseHistogram(raw: unknown): Record<1 | 2 | 3 | 4 | 5, number> {
@@ -21,7 +22,7 @@ export function RatingHistogram({ average, count, histogram }: { average: number
     <section aria-labelledby="rating-dist" className="grid gap-6 rounded-lg border border-border bg-surface p-4 shadow-sm md:grid-cols-[12rem_1fr] md:p-6" data-testid="rating-histogram">
       <div>
         <h2 id="rating-dist" className="sr-only">{t("histogram.title")}</h2>
-        <p className="text-4xl font-bold tabular-nums">{average !== null && count > 0 ? average.toFixed(1) : "–"}</p>
+        <p className="text-4xl font-bold tabular-nums"><bdi>{average !== null && count > 0 ? average.toFixed(1) : "–"}</bdi></p>
         {average !== null && count > 0 && <Stars value={average} />}
         <p className="mt-1 text-sm text-text-muted">{t("histogram.basedOn", { count })}</p>
       </div>
@@ -31,7 +32,7 @@ export function RatingHistogram({ average, count, histogram }: { average: number
           return (
             <li key={s} className="flex items-center gap-3 text-sm">
               <span className="w-12 shrink-0 tabular-nums">{t("histogram.row", { n: s })}</span>
-              <span aria-hidden="true" className="h-2 flex-1 overflow-hidden rounded-full bg-star-empty/30"><span className="block h-full rounded-full bg-star" style={{ width: `${pct}%` }} /></span>
+              <HistogramBar pct={pct} />
               <span className="w-24 shrink-0 text-right tabular-nums text-text-muted">{t("histogram.count", { count: h[s], pct })}</span>
             </li>
           );
