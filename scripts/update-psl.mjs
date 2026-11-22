@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-/* global URL, fetch */
 // T-10: regenerates packages/core/src/psl-snapshot.ts from the Public Suffix List.
 //   node scripts/update-psl.mjs                 # download https://publicsuffix.org/list/public_suffix_list.dat
 //   node scripts/update-psl.mjs path/to/psl.dat # use a local copy (reviewable, offline)

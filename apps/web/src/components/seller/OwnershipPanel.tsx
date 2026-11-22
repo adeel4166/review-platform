@@ -64,7 +64,7 @@ export function OwnershipPanel({ sellerId, selfId, members }: { sellerId: string
     } catch (err) {
       const code = err instanceof ApiError ? err.code : "";
       setMsg({ ok: false, text: t(
-        code === "target_two_factor_required" ? "own.err.2fa" : code === "transfer_open" ? "own.err.open" : code === "rate_limited" ? "own.err.rate"
+        code === "target_two_factor_required" ? "own.err.2fa" : code === "ownership_change_pending" ? "own.err.open" : code === "rate_limited" ? "own.err.rate"
         : code === "TWO_FACTOR_REQUIRED" ? "claim.error.2fa" : err instanceof ApiError && err.status === 401 ? "own.err.stepUp" : "own.err.generic") });
     }
     setBusy(false);
