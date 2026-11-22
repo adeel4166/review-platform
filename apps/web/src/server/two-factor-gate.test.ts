@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Real session helpers and real route handlers; only Auth.js, the DB and Redis are replaced.
 const authMock = vi.fn();
@@ -40,7 +40,16 @@ const call = async (file: string, method: string) => {
 };
 
 describe("AZ-009: a pending-2FA session is denied by every protected route", () => {
-  beforeEach(() => authMock.mockReset());
+  beforeEach(() => {
+    authMock.mockReset();
+    // DEF-LIVE-04: these cases only assert the guard outcome; a handler that passes the guard then hits the (absent) DB and logs
+    // "unhandled route error" via http.ts handle(). That log (plus the ioredis/ratelimit backend-down notices, no Redis in unit tests) is expected here; any other console.error still surfaces.
+    const real = console.error.bind(console);
+    vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => {
+      if (!/^(unhandled route error|\[ioredis\]|\{"msg":"ratelimit\.error")/.test(String(a[0]))) real(...a);
+    });
+  });
+  afterEach(() => vi.restoreAllMocks());
 
   it("discovers the route registry (guards against an empty sweep)", () => {
     expect(routes.length).toBeGreaterThan(30);
