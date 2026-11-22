@@ -1,0 +1,12 @@
+{
+  "_note": "ADR-0034 D10 first-load JS budgets (KB, gzip) per route group. Enforced by scripts/bundle-budget.mjs after `next build`. CSS/font budgets are in the same file.",
+  "css_gzip_kb": 35,
+  "preloaded_fonts_kb": 100,
+  "groups": [
+    { "name": "public-read", "budget_kb": 165, "match": ["^/$", "^/products$", "^/products/\\[slug\\]$", "^/compare$", "^/u/\\[handle\\]$", "^/sellers/\\[slug\\]$", "^/trust"] },
+    { "name": "auth", "budget_kb": 150, "match": ["^/login", "^/register$", "^/verify-email$"] },
+    { "name": "contribute", "budget_kb": 190, "match": ["^/products/\\[slug\\]/review$", "^/sellers/new$", "^/appeals", "^/claims"] },
+    { "name": "account", "budget_kb": 180, "match": ["^/account", "^/decisions", "^/invitations", "^/ownership-transfers"] },
+    { "name": "staff", "budget_kb": 250, "match": ["^/admin", "^/seller"] }
+  ]
+}
