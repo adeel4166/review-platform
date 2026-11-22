@@ -1,6 +1,10 @@
 /** English message catalogue (ADR-0009). All user-facing UI strings live here; `{name}` placeholders via t(). */
 export const en = {
   "app.name": "Review Platform",
+  "theme.label": "Colour theme",
+  "theme.system": "System",
+  "theme.light": "Light",
+  "theme.dark": "Dark",
   "nav.skip": "Skip to main content",
   "nav.products": "Products",
   "nav.main": "Main",

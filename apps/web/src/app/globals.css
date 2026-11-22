@@ -1,4 +1,38 @@
 @import "../../../../design/tokens.css";
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@import "../../../../design/tailwind-theme.css";
+@import "tw-animate-css";
+@source "../";
+
+/* v4 buttons no longer get a pointer cursor by default (ADR-0034 D3). */
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+  /* v4 borders default to currentColor; keep the v3 token border colour. */
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-border);
+  }
+}
+
+@view-transition {
+  navigation: auto;
+}
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}
+
+/* Neutral literals still used by the QR code, dialog scrim and proof watermark; everything else uses semantic tokens. */
+@theme {
+  --color-black: #000;
+  --color-white: #fff;
+}

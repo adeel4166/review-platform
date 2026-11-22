@@ -1,14 +1,9 @@
 import type { ReactNode } from "react";
+import { ImageOff } from "lucide-react";
 
 /** Decorative single-hue line illustration; meaning is carried by the heading. */
 function Glyph() {
-  return (
-    <svg aria-hidden="true" width="96" height="96" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-text-muted">
-      <rect x="3.5" y="4.5" width="17" height="15" rx="2" strokeDasharray="2 2" />
-      <path d="m3.5 15 4.5-4.5 4 4 3-3 5.5 5" />
-      <circle cx="9" cy="9" r="1.2" className="text-primary" />
-    </svg>
-  );
+  return <ImageOff aria-hidden="true" size={96} strokeWidth={1.5} className="text-text-muted" />;
 }
 
 export function EmptyState({ title, description, action, level = 2 }: { title: string; description?: string; action?: ReactNode; level?: 2 | 3 }) {

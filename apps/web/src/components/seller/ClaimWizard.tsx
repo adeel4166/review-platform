@@ -175,7 +175,7 @@ function Instructions({ instr, domain, expires }: { instr: NonNullable<Submitted
         {rows.map((r) => (
           <div key={r.label} className="flex flex-wrap items-center gap-2">
             <dt className="w-16 font-medium">{r.label}</dt>
-            <dd className="flex min-w-0 flex-1 flex-wrap items-center gap-2"><code className="break-all rounded bg-bg-subtle px-2 py-1">{r.value}</code>
+            <dd className="flex min-w-0 flex-1 flex-wrap items-center gap-2"><code className="break-all rounded-sm bg-bg-subtle px-2 py-1">{r.value}</code>
               {r.label !== t("claim.instr.type") && <CopyButton text={r.value} what={r.label} />}</dd>
           </div>
         ))}

@@ -92,7 +92,7 @@ export function TwoFactorSetup({ initiallyEnabled, roleBanner }: { initiallyEnab
           <QrCode text={enrol.otpauthUri} alt={t("tf.setup.qrAlt")} />
           <p className="font-medium">{t("tf.setup.manual")}</p>
           <p className="flex flex-wrap items-center gap-2">
-            <code data-testid="tf-secret" aria-label={t("tf.setup.key")} className="break-all rounded bg-bg-subtle px-2 py-1">{enrol.secret.replace(/(.{4})/g, "$1 ").trim()}</code>
+            <code data-testid="tf-secret" aria-label={t("tf.setup.key")} className="break-all rounded-sm bg-bg-subtle px-2 py-1">{enrol.secret.replace(/(.{4})/g, "$1 ").trim()}</code>
             <CopyButton text={enrol.secret} what={t("tf.setup.key")} />
           </p>
           <button type="button" onClick={() => setPhase("confirm")} className={primaryBtn}>{t("claim.start")}</button>

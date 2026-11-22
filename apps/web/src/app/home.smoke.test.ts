@@ -1,6 +1,11 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+
+// The layout loads next/font (build-time) and reads the CSP nonce from request headers; neither exists in a unit run.
+vi.mock("next/font/google", () => ({ Inter: () => ({ variable: "inter-var", className: "inter" }) }));
+vi.mock("next/headers", () => ({ headers: async () => new Headers({ "x-nonce": "test-nonce" }) }));
+
 import RootLayout from "./layout";
 import Home from "./page";
 
@@ -9,7 +14,8 @@ import Home from "./page";
  * Uses createElement (not JSX) because tsconfig sets "jsx": "preserve" for Next.js.
  */
 describe("home page shell (smoke, SMK-002)", () => {
-  const html = renderToStaticMarkup(createElement(RootLayout, null, createElement(Home)));
+  let html = "";
+  beforeAll(async () => { html = renderToStaticMarkup(await RootLayout({ children: createElement(Home) })); });
 
   it("declares the document language (WCAG 3.1.1)", () => {
     expect(html).toMatch(/<html lang="en"/);
