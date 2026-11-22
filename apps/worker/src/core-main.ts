@@ -7,7 +7,7 @@ import { sweepQuarantine } from "./media/quarantine";
 import { assertMediaSandbox } from "./media/sandbox";
 import { reconcilePublication } from "./media/publish";
 import { startMediaHealth } from "./media/health";
-import { getMediaDeps, getPublishDeps, getScanner, securityAlert, markMediaFailed, processors, setEgressQueue, setNotificationsQueue } from "./processors";
+import { getMediaDeps, getPublishDeps, getScanner, securityAlert, markMediaFailed, processors, setEgressQueue, setNotificationsQueue, setSummaryQueue } from "./processors";
 import { MODERATION_JOB_OPTIONS, escalateDeadLetter, isFinalFailure, type WorkerDb } from "./moderation";
 import { sweepDueChecks, sweepExpiry, sweepGrace, type SweepStore } from "./verification/checks";
 import { nullOldIpHashes, reconcileVoteCounts, sweepProofs } from "./proofs";
@@ -46,11 +46,12 @@ const connection = new Redis(env.REDIS_URL, { maxRetriesPerRequest: null });
 const queues = new Map<QueueName, Queue>();
 const getQueue = (n: QueueName) => {
   let q = queues.get(n);
-  if (!q) queues.set(n, (q = new Queue(n, { connection, ...(n === QUEUES.moderation ? { defaultJobOptions: MODERATION_JOB_OPTIONS } : {}), ...(n === QUEUES.notifications ? { defaultJobOptions: { attempts: 5, backoff: { type: "exponential", delay: 5000 } } } : {}), ...(n === QUEUES.verification || n === QUEUES.verificationEgress ? { defaultJobOptions: { attempts: 5, backoff: { type: "exponential", delay: 30_000 } } } : {}), ...(n === QUEUES.media ? { defaultJobOptions: { attempts: 3, backoff: { type: "exponential", delay: 5000 }, removeOnFail: false } } : {}) })));
+  if (!q) queues.set(n, (q = new Queue(n, { connection, ...(n === QUEUES.moderation ? { defaultJobOptions: MODERATION_JOB_OPTIONS } : {}), ...(n === QUEUES.notifications ? { defaultJobOptions: { attempts: 5, backoff: { type: "exponential", delay: 5000 } } } : {}), ...(n === QUEUES.verification || n === QUEUES.verificationEgress ? { defaultJobOptions: { attempts: 5, backoff: { type: "exponential", delay: 30_000 } } } : {}), ...(n === QUEUES.aiSummary ? { defaultJobOptions: { attempts: 3, backoff: { type: "exponential", delay: 60_000 } } } : {}), ...(n === QUEUES.media ? { defaultJobOptions: { attempts: 3, backoff: { type: "exponential", delay: 5000 }, removeOnFail: false } } : {}) })));
   return q;
 };
 
 setNotificationsQueue({ add: (n, d, o) => getQueue(QUEUES.notifications).add(n, d, o) });
+setSummaryQueue({ add: (n, d, o) => getQueue(QUEUES.aiSummary).add(n, d, o) });
 setEgressQueue({ add: (n, d, o) => getQueue(QUEUES.verificationEgress).add(n, d, o) });
 
 const store: OutboxStore = {
@@ -62,7 +63,7 @@ const store: OutboxStore = {
 };
 
 const workers = Object.entries(processors).map(([name, fn]) => {
-  const w = new Worker(name, (job, token) => fn!(job, token), { connection, concurrency: env.WORKER_CONCURRENCY });
+  const w = new Worker(name, (job, token) => fn!(job, token), { connection, concurrency: name === QUEUES.aiSummary ? 1 : env.WORKER_CONCURRENCY });
   w.on("failed", (job, err) => {
     console.error(JSON.stringify({ msg: "job.failed", queue: name, jobId: job?.id, attempt: job?.attemptsMade, err: err.message }));
     if (name === QUEUES.media && job && isFinalFailure(job)) {

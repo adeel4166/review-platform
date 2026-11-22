@@ -41,6 +41,7 @@ export const routes: Record<string, QueueName> = {
   "proof.files_ready": QUEUES.verification,
   "proof.decided": QUEUES.notifications,
   "proof.expired": QUEUES.notifications,
+  "review.summary_requested": QUEUES.aiSummary, // V3-06
   "review.removed": QUEUES.notifications,
   "seller_reply.removed": QUEUES.notifications,
   "review.verified_label_revoked": QUEUES.notifications,

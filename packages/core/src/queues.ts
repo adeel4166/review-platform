@@ -14,6 +14,8 @@ export const QUEUES = {
   trust: "trust",
   maintenance: "maintenance",
   moderationDead: "moderation-dead",
+  /** V3-06: AI review summaries (own queue so summaries can never starve moderation). */
+  aiSummary: "ai-summary",
 } as const;
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
 
@@ -68,6 +70,12 @@ export const m6JobSchemas = {
   "trust.signal": z.object({ eventId: id, type: z.string().max(64) }).strict(),
   "staff.anomaly-scan": z.object({}).strict(),
   "maintenance.break-glass-digest": z.object({}).strict(),
+} as const;
+
+/** V3-06 job payloads: ids only (no review text reaches the queue). */
+export const summaryJobSchemas = {
+  "review.summary_requested": z.object({ reviewId: id }).strict(),
+  "summary.generate": z.object({ productId: id, language: z.string().min(2).max(16).default("en") }).strict(),
 } as const;
 
 /** M8 job payloads (spec §25.2): ids and a date only. */

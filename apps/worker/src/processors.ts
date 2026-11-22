@@ -1,5 +1,5 @@
 import { DelayedError, type Job } from "bullmq";
-import { QUEUES, cloudinaryConfigFromEnv, createCloudinaryStore, createMailProvider, createS3Store, routePublicBucket, loadEnv, mediaBuckets, mediaJobSchema, moderationJobSchema, type QueueName } from "@rp/core";
+import { Breaker, DailyCap, DEFAULT_GEMINI_MODEL, geminiSummaryCall, summaryEnabled, summaryJobSchemas, QUEUES, cloudinaryConfigFromEnv, createCloudinaryStore, createMailProvider, createS3Store, routePublicBucket, loadEnv, mediaBuckets, mediaJobSchema, moderationJobSchema, type QueueName } from "@rp/core";
 import { prisma } from "@rp/db";
 import { assertNoAutoVerify, parseOrderRefKeys, systemClock } from "@rp/core";
 import { sendAccountExistsEmail, sendSecurityAlertEmail, sendNotificationEmail, type SecurityAlertDb, sendClaimBusinessEmail, type ClaimEmailDeps, sendSellerInvitationEmail, sendVerificationEmail, type EmailDb, type EmailDbInvitations } from "./email";
@@ -17,12 +17,28 @@ import { handleNotificationRequested, prismaNotificationPorts } from "./notifica
 import { prismaNearDuplicateIndex, prismaBurstPort, runNightlyDecay, runProductBursts, runTrustRecompute, subjectKeyForTarget, sweepVoteAnomalies } from "./trust/jobs";
 import { prismaSignalStore } from "./trust/prisma-ports";
 import { runM8Job } from "./m8-jobs";
+import { runSummaryJob, scheduleSummary, type SummaryJobDeps } from "./summary/generate";
 
 export type Processor = (job: Job, token?: string) => Promise<void>;
 
 let providerCall: ReturnType<typeof liveProviderCall> | undefined;
 /** SEC-M6-02: createModerationProvider (inside liveProviderCall) refuses mock/unset when NODE_ENV=production. */
 const getProviderCall = () => (providerCall ??= liveProviderCall({ MODERATION_PROVIDER: process.env.MODERATION_PROVIDER, MODERATION_API_KEY: process.env.MODERATION_API_KEY, MODERATION_MODEL: process.env.MODERATION_MODEL, NODE_ENV: process.env.NODE_ENV }));
+/** V3-06: separate breaker and daily cap from moderation (summaries can never use moderation capacity). Key from env only; never logged. */
+let summaryGen: SummaryJobDeps["gen"] | undefined;
+export const getSummaryDeps = (): SummaryJobDeps => {
+  const model = process.env.SUMMARY_MODEL || process.env.MODERATION_MODEL || DEFAULT_GEMINI_MODEL;
+  const key = process.env.SUMMARY_API_KEY || process.env.MODERATION_API_KEY;
+  if (!summaryGen && key && process.env.MODERATION_PROVIDER === "gemini") {
+    const cap = Number(process.env.SUMMARY_DAILY_CAP) > 0 ? Number(process.env.SUMMARY_DAILY_CAP) : 500;
+    summaryGen = { call: geminiSummaryCall(key, model), moderationCall: getProviderCall(), breaker: new Breaker(systemClock, { windowSize: 10, failureRatio: 0.5, openSeconds: 300 }), cap: new DailyCap(systemClock, cap) };
+  }
+  return { db: prisma, clock: systemClock, enabled: summaryEnabled(process.env), gen: summaryGen, model, enqueue: (n, d, o) => getSummaryQueue().add(n, d, o) };
+};
+let summaryQueue: { add(name: string, data: unknown, opts?: Record<string, unknown>): Promise<unknown> } | undefined;
+export const setSummaryQueue = (q: NonNullable<typeof summaryQueue>) => { summaryQueue = q; };
+const getSummaryQueue = () => { if (!summaryQueue) throw new Error("summary queue not configured"); return summaryQueue; };
+
 let storage: { store: ReturnType<typeof createS3Store>; buckets: ReturnType<typeof mediaBuckets> } | undefined;
 export const getMediaDeps = () => {
   if (!storage) {
@@ -143,6 +159,13 @@ export const processors: Partial<Record<QueueName, Processor>> = {
       if (id) outcome = await sendClaimNotice({ db: prisma as unknown as NotifyDb, mail: getMail() }, job.name, id, key);
     }
     console.log(JSON.stringify({ msg: "notification.done", jobId: job.id, type: job.name, outcome })); // never the address, token or URL
+  },
+  // V3-06: AI review summaries. Payloads are ids only; the feature flag AI_REVIEW_SUMMARY_ENABLED short-circuits both steps.
+  [QUEUES.aiSummary]: async (job) => {
+    let outcome: string = "SKIPPED";
+    if (job.name === "review.summary_requested") outcome = await scheduleSummary(getSummaryDeps(), summaryJobSchemas["review.summary_requested"].parse(job.data).reviewId);
+    else if (job.name === "summary.generate") { const p = summaryJobSchemas["summary.generate"].parse(job.data); outcome = await runSummaryJob(getSummaryDeps(), p.productId, p.language); }
+    console.log(JSON.stringify({ msg: "summary.job.done", jobId: job.id, type: job.name, outcome }));
   },
   // M8 (spec 25.2): retention, erasure, ledger replay, key rotation, audit export. Payloads are ids/dates only.
   [QUEUES.maintenance]: async (job) => {

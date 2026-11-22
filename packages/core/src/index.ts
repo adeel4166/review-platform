@@ -35,6 +35,7 @@ export * from "./moderation/rules";
 export * from "./ai/provider";
 export * from "./ai/breaker";
 export * from "./ai/prompt";
+export * from "./ai/summary";
 export * from "./authz/system-principal";
 export * from "./approvals";
 export * from "./break-glass";

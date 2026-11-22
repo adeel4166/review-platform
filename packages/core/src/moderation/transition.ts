@@ -184,6 +184,8 @@ export async function transition(deps: TransitionDeps, req: TransitionRequest): 
       });
       outbox.push({ topic: "moderation.decided", payload: { ...ids, transition: row.id, decisionId } });
     }
+    // V3-06: a review entering or leaving PUBLISHED changes the summary input. Ids only; the worker debounces.
+    if (req.target.type === "REVIEW" && ((kind === "CONTENT" && (row.to === "PUBLISHED" || (from as string | null) === "PUBLISHED")) || (kind === "REVISION" && (row.to as string) === "APPROVED"))) outbox.push({ topic: "review.summary_requested", payload: { reviewId: req.target.id } });
     const [prefix, entityType] = ENTITY[req.target.type];
     const meta: Record<string, unknown> = { transition: row.id, from, to: row.to, caseId: c?.id ?? null, ...(has("leaseHeld") ? { leaseHeld } : {}), ...(decisionSource ? { source: decisionSource } : {}) };
     assertAuditMetadataClean(meta as never);
