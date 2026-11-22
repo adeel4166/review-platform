@@ -14,8 +14,8 @@ export default async function SubmissionsPage() {
   const user = await pageUser("/account/submissions");
   const { items } = await listMyCases(db, user.id, clock.now());
   return (
-    <main className="mx-auto max-w-reading px-4 py-6">
-      <h1 className="text-2xl font-semibold">{t("submissions.h1")}</h1>
+    <main className="mx-auto max-w-reading px-4 py-6 md:px-6 md:py-8 lg:px-8">
+      <h1 className="text-2xl font-bold leading-tight md:text-3xl">{t("submissions.h1")}</h1>
       {items.length === 0 ? <p className="mt-3">{t("submissions.empty")}</p> : (
         <ul className="mt-4 space-y-3">
           {items.map((c) => (

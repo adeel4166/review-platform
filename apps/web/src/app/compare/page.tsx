@@ -21,12 +21,12 @@ export default async function ComparePage({ searchParams }: { searchParams: Prom
   const specKeys = [...new Set(items.flatMap((i) => Object.keys(i.specs ?? {})))];
   const fmt = (v: number | null | undefined) => (v === null || v === undefined ? t("compare.none") : v.toFixed(1));
   return (
-    <main className="mx-auto max-w-content px-4 py-6">
-      <h1 className="text-2xl font-semibold">{t("compare.h1")}</h1>
+    <main className="mx-auto max-w-content px-4 py-6 md:px-6 md:py-8 lg:px-8">
+      <h1 className="text-2xl font-bold leading-tight md:text-3xl">{t("compare.h1")}</h1>
       {errorKey ? <p role="alert" className="mt-3">{t(errorKey)} <Link className="text-link underline" href="/products">{t("nav.products")}</Link></p> : (
         <>
           {data?.categoriesDiffer && <p role="note" className="mt-3">{t("compare.differ")}</p>}
-          <div role="region" aria-label={t("compare.h1")} tabIndex={0} className="mt-4 overflow-x-auto">
+          <div role="region" aria-label={t("compare.h1")} tabIndex={0} className="mt-4 overflow-x-auto rounded-lg border border-border bg-surface shadow-sm">
             <table className="w-full min-w-[32rem] text-left">
               <caption className="sr-only">{t("compare.caption")}</caption>
               <thead><tr><td className="p-2" />{items.map((i) => <th key={i.id} scope="col" className="p-2 align-top">{i.unavailable ? t("compare.unavailable") : <Link className="text-link underline" href={`/products/${i.slug}`}>{i.name}</Link>}</th>)}</tr></thead>

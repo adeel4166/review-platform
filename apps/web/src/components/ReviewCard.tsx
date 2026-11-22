@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { t } from "@/i18n/en";
 import { Stars } from "./Stars";
+import { Avatar } from "./ui/Avatar";
 import { VerifiedBadge } from "./VerifiedBadge";
 import { ReviewVote, type VoteValue } from "./ReviewVote";
 import { ReportDialog } from "./ReportDialog";
@@ -37,8 +38,9 @@ export interface ViewerCtx { signedIn: boolean; loginHref: string }
 export function ReviewCard({ review: r, replyBox, ownBox, viewer }: { review: PublicReview; replyBox?: ReactNode; ownBox?: ReactNode; viewer?: ViewerCtx }) {
   const date = r.publishedAt ? new Date(r.publishedAt).toISOString().slice(0, 10) : null;
   return (
-    <article className="rounded-lg border border-border bg-surface p-4" aria-labelledby={`rv-${r.id}`}>
+    <article className="rounded-lg border border-border bg-surface p-4 shadow-sm md:p-6" aria-labelledby={`rv-${r.id}`}>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-text-muted">
+        <Avatar name={r.author.displayName} size="sm" />
         <span className="font-medium text-text">{r.author.displayName}</span>
         {(r.verifiedPurchaseAt || r.verifiedBuyer) && <VerifiedBadge method={r.verificationMethod} />}
         {date && <time dateTime={date}>{date}</time>}

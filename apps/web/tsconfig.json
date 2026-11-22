@@ -2,12 +2,33 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "jsx": "preserve",
-    "lib": ["dom", "dom.iterable", "ES2022"],
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "ES2022"
+    ],
     "allowJs": false,
     "incremental": true,
-    "plugins": [{ "name": "next" }],
-    "paths": { "@/*": ["./src/*"] }
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": [
+        "./src/*"
+      ]
+    }
   },
-  "include": ["next-env.d.ts", "src", "e2e", "playwright.config.ts", ".next/types/**/*.ts"],
-  "exclude": ["node_modules"]
+  "include": [
+    ".next/types/**/*.ts",
+    "e2e",
+    "next-env.d.ts",
+    "playwright.config.ts",
+    "src",
+    ".next-check/types/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
 }
