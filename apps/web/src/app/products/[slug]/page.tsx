@@ -15,6 +15,8 @@ import { VerifiedFilter } from "@/components/VerifiedFilter";
 import { PROOF_CONSENT_VERSION } from "@rp/core";
 import { Stars } from "@/components/Stars";
 import { RatingHistogram } from "@/components/ui/RatingHistogram";
+import { AiSummaryCard } from "@/components/AiSummaryCard";
+import { ProductChartsLazy } from "@/components/ProductChartsLazy";
 import { ProductGallery } from "@/components/ProductGallery";
 import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -105,6 +107,13 @@ export default async function ProductPage({ params, searchParams }: Props) {
         </div>
       </div>
       <div className="mt-6"><RatingHistogram average={product.ratingCount > 0 ? avg : null} count={product.ratingCount} histogram={product.ratingHistogram} /></div>
+      <AiSummaryCard summary={product.aiSummary} />
+      {product.ratingCount > 0 && (
+        <div className="mt-6">
+          <ProductChartsLazy histogram={product.ratingHistogram} count={product.ratingCount} avg={avg}
+            verifiedAvg={product.verifiedRatingAverage == null ? null : Number(product.verifiedRatingAverage)} verifiedCount={product.verifiedRatingCount ?? 0} />
+        </div>
+      )}
       {product.description && <p className="mt-4 max-w-reading">{product.description}</p>}
       {specs.length > 0 && (
         <section aria-labelledby="specs" className="mt-6">
