@@ -15,7 +15,8 @@ import { VerifiedFilter } from "@/components/VerifiedFilter";
 import { PROOF_CONSENT_VERSION } from "@rp/core";
 import { Stars } from "@/components/Stars";
 import { RatingHistogram } from "@/components/ui/RatingHistogram";
-import { ProductThumb } from "@/components/ui/ProductCard";
+import { ProductGallery } from "@/components/ProductGallery";
+import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { t } from "@/i18n/en";
 
@@ -85,17 +86,22 @@ export default async function ProductPage({ params, searchParams }: Props) {
       <nav aria-label="Breadcrumb" className="text-sm text-text-muted">
         <Link href="/products" className="underline">{t("nav.products")}</Link> › {product.category.name}
       </nav>
-      <div className="mt-4 grid gap-6 md:grid-cols-[14rem_1fr] lg:grid-cols-[20rem_1fr]">
-        <ProductThumb name={product.name} className="max-w-[14rem] md:max-w-none" />
-        <div>
+      <div className="mt-4 grid gap-6 lg:grid-cols-12">
+        <div className="lg:col-span-7">
+          <ProductGallery name={product.name} images={product.gallery.length > 0 ? product.gallery : product.primaryImage ? [product.primaryImage] : []} transitionName={`product-img-${product.id}`} />
+        </div>
+        <div className="lg:sticky lg:top-20 lg:col-span-5 lg:self-start">
           <p className="text-text-muted">{product.brandName}</p>
-          <h1 className="text-2xl font-bold leading-tight md:text-3xl">{product.name}</h1>
+          <h1 className="text-2xl font-bold leading-tight md:text-3xl" style={{ viewTransitionName: `product-name-${product.id}` }}>{product.name}</h1>
           <div className="mt-3 flex flex-wrap items-center gap-3">
             {product.ratingCount > 0 ? (
-              <p className="flex items-center gap-2"><Stars value={avg} /><span aria-hidden="true" className="text-xl font-semibold tabular-nums">{avg.toFixed(1)}</span><span className="text-text-muted">{t("products.reviews", { count: product.reviewCount })}</span></p>
+              <p className="flex items-center gap-2"><Stars value={avg} /><span aria-hidden="true" className="text-xl font-semibold tabular-nums">{avg.toFixed(1)}</span><a href="#reviews" className="text-text-muted underline">{t("products.reviews", { count: product.reviewCount })}</a></p>
             ) : <p className="text-text-muted">{t("products.noRatings")}</p>}
-            <Link href={`${base}/review`} className="inline-flex min-h-target items-center rounded-md bg-primary px-4 font-semibold text-on-primary hover:bg-primary-hover">{t("product.writeReview")}</Link>
           </div>
+          {(product.verifiedRatingCount ?? 0) > 0 && product.verifiedRatingAverage != null && (
+            <p className="mt-2"><Badge variant="verified">{t("product.verifiedRating", { rating: Number(product.verifiedRatingAverage).toFixed(1) })}</Badge></p>
+          )}
+          <div className="mt-4"><Link href={`${base}/review`} className="inline-flex min-h-target items-center rounded-md bg-primary px-4 font-semibold text-on-primary hover:bg-primary-hover">{t("product.writeReview")}</Link></div>
         </div>
       </div>
       <div className="mt-6"><RatingHistogram average={product.ratingCount > 0 ? avg : null} count={product.ratingCount} histogram={product.ratingHistogram} /></div>

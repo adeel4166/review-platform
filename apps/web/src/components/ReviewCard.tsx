@@ -38,7 +38,7 @@ export interface ViewerCtx { signedIn: boolean; loginHref: string }
 export function ReviewCard({ review: r, replyBox, ownBox, viewer }: { review: PublicReview; replyBox?: ReactNode; ownBox?: ReactNode; viewer?: ViewerCtx }) {
   const date = r.publishedAt ? new Date(r.publishedAt).toISOString().slice(0, 10) : null;
   return (
-    <article className="rounded-lg border border-border bg-surface p-4 shadow-sm md:p-6" aria-labelledby={`rv-${r.id}`}>
+    <article className="rounded-2xl border border-border bg-surface p-4 shadow-sm transition-shadow hover:shadow-md motion-reduce:transition-none md:p-6" aria-labelledby={`rv-${r.id}`}>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-text-muted">
         <Avatar name={r.author.displayName} size="sm" />
         <span className="font-medium text-text">{r.author.displayName}</span>
@@ -46,7 +46,7 @@ export function ReviewCard({ review: r, replyBox, ownBox, viewer }: { review: Pu
         {date && <time dateTime={date}>{date}</time>}
         {r.editedAt && <span data-testid="edited-indicator">· {t("review.edited")}</span>}
       </div>
-      <div className="mt-2"><Stars value={r.rating} /></div>
+      <div className="mt-3 flex items-center gap-2"><Stars value={r.rating} /><span aria-hidden="true" className="rounded-full bg-bg-subtle px-2 py-0.5 text-sm font-semibold tabular-nums">{r.rating}.0</span></div>
       <h3 id={`rv-${r.id}`} className="mt-1 text-lg font-semibold">{r.title}</h3>
       <p className="mt-2 whitespace-pre-line break-words">{r.body}</p>
       {r.incentive && r.incentive !== "NONE" && <p className="mt-2 text-sm text-text-muted">{t("review.incentive")}</p>}

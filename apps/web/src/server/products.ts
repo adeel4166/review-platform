@@ -7,7 +7,7 @@ import type { productListQuery } from "./validation";
 
 const productSelect = {
   id: true, slug: true, name: true, brandName: true, description: true, specs: true,
-  ratingAverage: true, ratingCount: true, reviewCount: true, ratingHistogram: true, createdAt: true,
+  ratingAverage: true, ratingCount: true, reviewCount: true, ratingHistogram: true, verifiedRatingAverage: true, verifiedRatingCount: true, createdAt: true,
   category: { select: { id: true, slug: true, name: true } },
 } as const;
 

@@ -23,6 +23,6 @@ describe("home page shell (smoke, SMK-002)", () => {
 
   it("renders a main landmark with a level-1 heading", () => {
     expect(html).toMatch(/<main[^>]*>/);
-    expect(html).toMatch(/<h1[^>]*>Review Platform<\/h1>/);
+    expect(html).toMatch(/<h1[^>]*>.*Review Platform.*actually trust.*<\/h1>/);
   });
 });
