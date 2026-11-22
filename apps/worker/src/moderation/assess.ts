@@ -12,7 +12,7 @@ export interface AssessSubject {
   trustBand: TrustBand; contentType: ClassifyInput["contentType"];
   media: "NONE" | "PENDING" | "READY" | "MALWARE";
   hasExternalLink: boolean; productReviewsLastHour: number; resubmitAfterHuman: boolean; unsupportedLanguage: boolean;
-  ruleHits: readonly RuleHit[]; rescanCount: number; priorDecisionsAllAiUnavailable: boolean; hasHumanDecision: boolean;
+  ruleHits: readonly RuleHit[]; /** M7: NEAR_DUPLICATE / PRODUCT_BURST from trust routing. */ extraForceUnsure?: readonly string[]; rescanCount: number; priorDecisionsAllAiUnavailable: boolean; hasHumanDecision: boolean;
 }
 export interface AssessJobDeps { store: Store; port: AssessPort; clock: Clock; config: ModerationConfig; provider: AssessDeps; reasonCodes: ReadonlySet<string>; alert?: (kind: string, d: Record<string, unknown>) => void }
 export type AssessOutcome =
@@ -40,7 +40,7 @@ export async function runAssess(deps: AssessJobDeps, caseId: string, expectedVer
   const res = await assess(deps.provider, {
     contentType: s.contentType, trustBand: s.trustBand, title: s.content.title, body: s.content.body, rating: s.content.rating ?? null,
     hasExternalLink: s.hasExternalLink, productReviewsLastHour: s.productReviewsLastHour, unsupportedLanguage: s.unsupportedLanguage,
-    mediaTimeout, malwareMedia: s.media === "MALWARE", resubmitAfterHuman: s.resubmitAfterHuman, ruleHits: s.ruleHits,
+    mediaTimeout, malwareMedia: s.media === "MALWARE", extraForceUnsure: s.extraForceUnsure, resubmitAfterHuman: s.resubmitAfterHuman, ruleHits: s.ruleHits,
   });
   const c = res.classification;
   if (s.targetStatus === "HIDDEN" || s.targetStatus === "HELD") { // re-scan of a held item (T4r / T4v): UNSURE changes nothing

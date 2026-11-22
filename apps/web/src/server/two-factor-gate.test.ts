@@ -26,6 +26,8 @@ const PUBLIC = new Set([
   "ownership-transfers/cancel-by-link/route.ts:POST", // cancel link: the unused token is the credential (m3b-spec 3.4)
   "claims/email-verify/deny/route.ts:POST", // mailbox holder's veto link (m3b-spec 4.4)
   "products/route.ts:GET", "products/[id]/route.ts:GET", "products/[id]/reviews/route.ts:GET",
+  // M7 public reads (content.read.public): viewer id is optional and only used for block checks
+  "compare/route.ts:GET", "users/[handle]/route.ts:GET", "users/[handle]/reviews/route.ts:GET", "users/[handle]/followers/route.ts:GET", "users/[handle]/following/route.ts:GET",
 ]);
 /** Handled by Auth.js itself (sign out / session marker / credentials sign-in). */
 const AUTHJS = new Set(["auth/[...nextauth]/route.ts:GET", "auth/[...nextauth]/route.ts:POST"]);

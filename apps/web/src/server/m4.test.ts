@@ -25,7 +25,7 @@ function setup() {
     { enforcementAction: { status: "ACTIVE" }, review: { helpfulCount: 0, notHelpfulCount: 0, currentVersion: 1 }, moderationCase: { reportCount: 0, reportWeight: 0, seq: 1, trigger: "SUBMISSION" }, report: { status: "OPEN" }, purchaseProof: { status: "DRAFT" } },
   );
   const { t } = h;
-  for (const u of ["author", "voter", "newbie", "seller1", "mod", "mod2"]) t.user!.push({ id: u, status: "ACTIVE", emailVerifiedAt: NOW, createdAt: OLD });
+  for (const u of ["author", "voter", "newbie", "seller1", "mod", "mod2"]) t.user!.push({ id: u, status: "ACTIVE", emailVerifiedAt: NOW, createdAt: OLD, trustBand: "MEDIUM" });
   t.user!.find((u) => u.id === "newbie")!.createdAt = new Date(NOW.getTime() - 86_400_000);
   t.product!.push({ id: "p1", sellerId: "S1", status: "ACTIVE" });
   t.sellerMember!.push({ sellerId: "S1", userId: "seller1" });
@@ -168,7 +168,7 @@ describe("reports (RPT-001..006)", () => {
     await dismissReports(h.db, staff("mod"), h.t.moderationCase![0]!.id, {}, NOW);
     expect(h.t.report![0]!.status).toBe("NO_ACTION");
     expect(h.t.review![0]!.status).toBe("PUBLISHED");
-    h.t.user!.push({ id: "v2", status: "ACTIVE", emailVerifiedAt: NOW, createdAt: OLD });
+    h.t.user!.push({ id: "v2", status: "ACTIVE", emailVerifiedAt: NOW, createdAt: OLD, trustBand: "MEDIUM" });
     await createReport(h.db, "v2", { reviewId: "r1" }, { reason: "SPAM" }, { now: NOW });
     expect(h.t.moderationCase!.map((c) => c.seq)).toEqual([1, 2]);
   });
@@ -316,6 +316,22 @@ describe("SEL-013 incentive is re-validated on edit", () => {
     h.t.review![0]!.incentive = "DISCOUNT";
     await editOwnReview(h.db, "author", "r1", { expectedVersion: 1, title: "x" });
     expect(h.t.reviewRevision!.find((x) => x.version === 2)).toMatchObject({ incentive: "DISCOUNT" });
+  });
+});
+
+describe("TRS-001 vote weights at the API", () => {
+  beforeEach(() => { h = setup(); });
+  it("a NEW voter's vote is stored with weight 0 and does not move the public counters; a frozen review stores but does not count", async () => {
+    h.t.user!.find((u) => u.id === "voter")!.trustBand = "NEW";
+    expect(await putVote(h.db, "voter", "r1", "HELPFUL")).toMatchObject({ helpfulCount: 0, notHelpfulCount: 0 });
+    expect(Number(h.t.reviewVote![0]!.weight)).toBe(0);
+    h.t.user!.find((u) => u.id === "voter")!.trustBand = "HIGH";
+    h.t.reviewVote!.length = 0;
+    expect(await putVote(h.db, "voter", "r1", "HELPFUL")).toMatchObject({ helpfulCount: 1 });
+    expect(Number(h.t.reviewVote![0]!.weight)).toBe(1.5);
+    h.t.review![0]!.votesFrozenAt = NOW; h.t.reviewVote!.length = 0; h.t.review![0]!.helpfulCount = 0;
+    expect(await putVote(h.db, "voter", "r1", "HELPFUL")).toMatchObject({ helpfulCount: 0 });
+    expect(h.t.reviewVote![0]).toMatchObject({ frozen: true });
   });
 });
 

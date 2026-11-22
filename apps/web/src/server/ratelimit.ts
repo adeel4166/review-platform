@@ -115,3 +115,8 @@ export { hashIp } from "@rp/core";
 export const limitAppeal = (userId: string) => enforce([closed({ key: `appeal:${userId}`, rule: rule(3, DAY) })]);
 /** SEC-M4-06 / MOD-015: author edits and resubmits share `content.edit`, 5 per rolling 24 h. */
 export const limitContentEdit = (userId: string) => enforce([{ key: `content.edit:${userId}`, rule: rule(5, DAY) }]);
+
+/** Public list/compare reads (TRS-010): 120/min per IP; compare adds 30/min. Fail open like other content reads. */
+export const limitPublicRead = (req: Request) => enforce([{ key: `pubread:m:${ipOf(req)}`, rule: rule(120, MIN) }]);
+export const limitCompare = (req: Request) => enforce([{ key: `pubread:m:${ipOf(req)}`, rule: rule(120, MIN) }, { key: `compare:m:${ipOf(req)}`, rule: rule(30, MIN) }]);
+export const limitFollow = (userId: string) => enforce([{ key: `follow:u:d:${userId}`, rule: rule(200, DAY) }]);
