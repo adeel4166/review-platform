@@ -97,3 +97,23 @@ describe("assertClaimableBusinessEmail (m3b-spec 4.1)", () => {
     expect(["invalid_email", "invalid", "ip_literal"]).toContain(err(() => assertClaimableBusinessEmail(a)));
   });
 });
+
+// ---- M3b gate (task #63): SEL-031 named corpus, SEL-033 reserved local parts ----
+const refuseAddress = (a: string) => { try { assertClaimableBusinessEmail(a); return "OK"; } catch (e) { return (e as { reason?: string }).reason ?? "OTHER"; } };
+describe("SEL-031: named address corpus (address parser)", () => {
+  it.each(['"jane doe"@acme.com', "jane(note)@acme.com", "jäne@acme.com", `${"a".repeat(65)}@acme.com`])("SEL-031: %s is refused as invalid_email", (a) => {
+    expect(refuseAddress(a)).toBe("invalid_email");
+  });
+  it("SEL-031: an IP-literal domain is refused", () => {
+    expect(refuseAddress("jane@[1.2.3.4]")).not.toBe("OK");
+  });
+  it("SEL-031: info+x@ is classified as a role address; a personal address is not", () => {
+    expect(assertClaimableBusinessEmail("info+x@acme.com").localClass).toBe("role");
+    expect(assertClaimableBusinessEmail("jane@acme.com").localClass).toBe("personal");
+  });
+});
+describe("SEL-033: reserved local parts (address parser)", () => {
+  it.each(["noreply@acme.com", "no-reply+x@acme.com", "abuse@acme.com", "x-request@acme.com", "owner-list@acme.com"])("SEL-033: reserved %s -> reserved_local_part", (a) => {
+    expect(refuseAddress(a)).toBe("reserved_local_part");
+  });
+});

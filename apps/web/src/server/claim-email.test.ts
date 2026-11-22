@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { createFakeClaimDb, hashEmailToken } from "@rp/core";
+import { applyClaimTransition, createFakeClaimDb, hashEmailToken } from "@rp/core";
 import { denyBusinessEmail, verifyBusinessEmail } from "./claim-email";
+import { pendingDecision } from "./pending-gate";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { submitClaim } from "./claims";
 import type { Actor } from "./session";
 
@@ -130,5 +134,62 @@ describe("deny link (C21)", () => {
     expect(db.t.outboxEvent!.map((e) => e.type)).toContain("claim.mailbox_denied");
     expect(await code(denyBusinessEmail(db as never, RAW, NOW))).toBe("400:invalid_or_expired");
     expect(await code(verifyBusinessEmail(db as never, actor("owner"), RAW, NOW))).toBe("400:invalid_or_expired");
+  });
+});
+
+// ---- M3b gate (task #63): SEL-033, SEL-034, SEL-035 ----
+describe("SEL-033: role address token use queues for staff (C4)", () => {
+  it("a role address whose token is used stays PENDING for staff: requiresHumanReview, seller PENDING_VERIFICATION, no RULE approval", async () => {
+    const db = world();
+    await submit(db, "info@acme.com");
+    mail(db);
+    expect(await verifyBusinessEmail(db as never, actor("owner"), RAW, NOW)).toMatchObject({ status: "PENDING" });
+    expect(db.t.sellerOwnershipClaim![0]).toMatchObject({ status: "PENDING", requiresHumanReview: true });
+    expect(db.t.seller![0]!.status).toBe("PENDING_VERIFICATION"); // open claim: never VERIFIED by a RULE approval
+    expect((db.t.sellerClaimDecision ?? []).filter((d) => d.source === "RULE" && d.outcome === "APPROVE")).toEqual([]);
+  });
+  it.each(["abuse@acme.com", "x-request@acme.com", "owner-list@acme.com", "bounces@acme.com"])("SEL-033: reserved %s is refused before any claim row exists", async (email) => {
+    const db = world();
+    expect(await code(submit(db, email))).toBe("422:email_not_allowed");
+    expect(db.t.sellerOwnershipClaim).toHaveLength(0);
+  });
+});
+
+describe("SEL-034: claim e-mail session binding", () => {
+  it("claimant demoted to RESPONDER after submitting -> 403 and the token is not consumed", async () => {
+    const db = world();
+    await submit(db, "jane@acme.com");
+    mail(db);
+    db.t.sellerMember!.find((m) => m.userId === "owner")!.role = "RESPONDER";
+    expect(await code(verifyBusinessEmail(db as never, actor("owner"), RAW, NOW))).toBe("403:FORBIDDEN_ROLE");
+    expect(db.t.emailVerificationToken![0]!.consumedAt).toBeNull();
+  });
+  it("pending 2FA session: the email-verify API paths are denied by the pending gate (API calls get 401)", () => {
+    expect(pendingDecision("/api/claims/email-verify")).toBe("deny");
+    expect(pendingDecision("/api/claims/email-verify/deny")).toBe("deny");
+  });
+  it.todo("SEL-034: signed-out request -> 401 (NOT RUN here: needs the route and session harness, covered by E2E)");
+});
+
+describe("SEL-035: MX resolver placement and DNS back-off", () => {
+  it("no web route injects the MX resolver (lookupMx is only an optional dependency of the claim service)", () => {
+    const root = fileURLToPath(new URL("../app", import.meta.url));
+    const offenders = (readdirSync(root, { recursive: true }) as string[]).filter((f) => f.endsWith(".ts") && readFileSync(join(root, f), "utf8").includes("lookupMx"));
+    expect(offenders).toEqual([]);
+  });
+  it("a DNS error backs off (nextCheckAt grows) and the claim EXPIRES at the challenge deadline, never earlier", async () => {
+    const db = world();
+    const c = await submit(db, "jane@acme.com");
+    const row = () => db.t.sellerOwnershipClaim![0]!;
+    const sys = { id: null, type: "SYSTEM" as const };
+    const deadline = row().challengeExpiresAt as Date;
+    expect((await applyClaimTransition(db as never, c.id, { action: "CHECK_FAILED", outcome: "DNS_ERROR" }, sys, NOW)).status).toBe("PENDING");
+    expect(row().nextCheckAt).toEqual(new Date(NOW.getTime() + 5 * 60_000));
+    const t2 = new Date(NOW.getTime() + 6 * 60_000);
+    expect((await applyClaimTransition(db as never, c.id, { action: "CHECK_FAILED", outcome: "DNS_ERROR" }, sys, t2)).status).toBe("PENDING");
+    expect(row().nextCheckAt).toEqual(new Date(t2.getTime() + 15 * 60_000));
+    expect((await applyClaimTransition(db as never, c.id, { action: "EXPIRE_CHALLENGE" }, sys, new Date(deadline.getTime() - 1))).status).toBe("PENDING");
+    expect((await applyClaimTransition(db as never, c.id, { action: "EXPIRE_CHALLENGE" }, sys, new Date(deadline.getTime() + 1))).status).toBe("EXPIRED");
+    expect(row()).toMatchObject({ status: "EXPIRED", endReason: "CHALLENGE_TIMEOUT" });
   });
 });
