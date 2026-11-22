@@ -1,7 +1,7 @@
 import nodemailer from "nodemailer";
 
 /** Mail provider interface (ADR-0016 §3.5). Only the worker sends mail; the web app never holds SMTP credentials. */
-export type MailTemplateId = "verify_account" | "account_exists" | "seller_invitation" | "claim_notice" | "ownership_transfer" | "claim_business_email";
+export type MailTemplateId = "verify_account" | "account_exists" | "seller_invitation" | "claim_notice" | "ownership_transfer" | "claim_business_email" | "security_alert";
 
 export interface RenderedMail { to: string; subject: string; text: string; html: string }
 
@@ -56,6 +56,17 @@ export function renderMail(template: MailTemplateId, to: string, vars: Record<st
         subject: headline,
         text: `${headline}\n\nOpen your seller dashboard for details: ${url}`,
         html: `<p>${esc(headline)}</p><p><a href="${esc(url)}">Open seller dashboard</a></p>`,
+      };
+    }
+    case "security_alert": {
+      // Mandatory 2FA / recovery alerts (SEC-M3B-01). Fixed text per kind; carries no code, secret, IP or token.
+      const headline = vars.headline ?? "Security alert for your account";
+      const detail = vars.detail ?? "";
+      return {
+        to,
+        subject: headline,
+        text: `${headline}\n\n${detail}\n\nIf this was not you, sign in and change your password now, then review your two-factor settings: ${url}`,
+        html: `<p>${esc(headline)}</p><p>${esc(detail)}</p><p>If this was not you, sign in and change your password now, then review your two-factor settings: <a href="${esc(url)}">Account security</a></p>`,
       };
     }
     case "ownership_transfer": {

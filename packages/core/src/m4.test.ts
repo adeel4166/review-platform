@@ -118,3 +118,39 @@ describe("MOD-019 revision path (R2-R6)", () => {
     expect(f.reviews[0]!.title).toBe("Old");
   });
 });
+
+describe("SEC-M4-01 IP hash key has no default", () => {
+  const good = "k".repeat(32);
+  it("SEC-M4-01: hashIp refuses to run without a key (no public default) and is keyed otherwise", async () => {
+    const { hashIp } = await import("./reports");
+    const saved = process.env.IP_HASH_KEY;
+    try {
+      delete process.env.IP_HASH_KEY;
+      expect(() => hashIp("1.2.3.4")).toThrow(/IP_HASH_KEY/);
+      process.env.IP_HASH_KEY = "short";
+      expect(() => hashIp("1.2.3.4")).toThrow(/IP_HASH_KEY/);
+      process.env.IP_HASH_KEY = good;
+      const a = hashIp("1.2.3.4");
+      expect(a).toMatch(/^[0-9a-f]{64}$/);
+      expect(hashIp("1.2.3.4", "j".repeat(32))).not.toBe(a);
+      expect(hashIp("1.2.3.4", "dev-ip-hash-key")).not.toBe(hashIp("1.2.3.4", good)); // the old public default is not what is used
+    } finally { if (saved === undefined) delete process.env.IP_HASH_KEY; else process.env.IP_HASH_KEY = saved; }
+  });
+  it("SEC-M4-01: the boot assertion throws without a key (never printing it), passes with one, and is skipped only under NODE_ENV=test", async () => {
+    const { assertIpHashKey } = await import("./reports");
+    expect(() => assertIpHashKey({ NODE_ENV: "production" })).toThrow(/IP_HASH_KEY must be set/);
+    expect(() => assertIpHashKey({ NODE_ENV: "development", IP_HASH_KEY: "short-secret" })).toThrow(/IP_HASH_KEY/);
+    try { assertIpHashKey({ NODE_ENV: "production", IP_HASH_KEY: "short-secret" }); } catch (e) { expect((e as Error).message).not.toContain("short-secret"); }
+    expect(() => assertIpHashKey({ NODE_ENV: "production", IP_HASH_KEY: good })).not.toThrow();
+    expect(() => assertIpHashKey({ NODE_ENV: "test" })).not.toThrow();
+  });
+  it("SEC-M4-01: the variable NAME (not a value) is documented in .env.example and wired at web and worker boot", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const root = resolve(__dirname, "../../..");
+    expect(readFileSync(resolve(root, ".env.example"), "utf8")).toMatch(/^# IP_HASH_KEY=$/m);
+    expect(readFileSync(resolve(root, "apps/web/src/instrumentation.ts"), "utf8")).toContain("assertIpHashKey");
+    expect(readFileSync(resolve(root, "apps/worker/src/core-main.ts"), "utf8")).toContain("assertIpHashKey()");
+    expect(readFileSync(resolve(root, "packages/core/src/reports.ts"), "utf8")).not.toContain("dev-ip-hash-key");
+  });
+});

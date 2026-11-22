@@ -151,12 +151,14 @@ import { REPORT_REASONS, REMOVAL_REASON_CODES, PROOF_DECISION_REASONS } from "@r
 
 export const voteInput = z.object({ value: z.enum(["HELPFUL", "NOT_HELPFUL"]) }).strict();
 
+export const INCENTIVE_VALUES = ["NONE", "FREE_PRODUCT", "DISCOUNT", "PAYMENT", "OTHER"] as const;
+
 export const reviewEditInput = z.object({
   expectedVersion: z.number().int().min(1),
   rating: z.number().int().min(1).max(5).optional(),
   title: z.string().trim().min(1).max(150).optional(),
   body: z.string().trim().min(10).max(10_000).optional(),
-  incentive: z.enum(["NONE", "FREE_PRODUCT", "DISCOUNT", "PAYMENT", "OTHER"]).optional(),
+  incentive: z.enum(INCENTIVE_VALUES).optional(),
   addMediaIds: z.array(id).max(10).optional(),
   removeMediaIds: z.array(id).max(10).optional(),
 }).strict().refine((v) => Object.keys(v).some((k) => k !== "expectedVersion"), { message: "At least one field is required" });

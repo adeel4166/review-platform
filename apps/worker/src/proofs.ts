@@ -278,8 +278,10 @@ export async function sendProofNotice(d: { db: Db; mail: MailProvider }, event: 
     headline = PROOF_HEADLINES[event === "proof.expired" ? "EXPIRED" : payload.outcome ?? ""] ?? "";
     detail = p?.decisionReasonCode ? `Reason: ${p.decisionReasonCode.toLowerCase().replace(/_/g, " ")}.` : "";
   } else if (event === "review.removed") {
-    const e = payload.caseId ? await d.db.enforcementAction.findFirst({ where: { caseId: payload.caseId, type: "CONTENT_REMOVAL" }, select: { subjectUserId: true, publicReason: true } }) : null;
-    userId = e?.subjectUserId ?? null; headline = "Your review was removed"; detail = e?.publicReason ?? "";
+    const e = payload.caseId ? await d.db.enforcementAction.findFirst({ where: { caseId: payload.caseId, type: "CONTENT_REMOVAL" }, select: { subjectUserId: true, publicReason: true, reasonCode: true } }) : null;
+    // RPT-005 (statement of reasons): the notice carries both the reason category and the staff's public reason.
+    userId = e?.subjectUserId ?? null; headline = "Your review was removed";
+    detail = [e?.reasonCode ? `Reason: ${e.reasonCode.toLowerCase().replace(/_/g, " ")}.` : "", e?.publicReason ?? ""].filter(Boolean).join(" ");
   } else if (event === "review.verified_label_revoked") {
     const e = payload.enforcementId ? await d.db.enforcementAction.findUnique({ where: { id: payload.enforcementId }, select: { subjectUserId: true, publicReason: true } }) : null;
     userId = e?.subjectUserId ?? null; headline = "The verified purchase label was removed from your review"; detail = e?.publicReason ?? "";

@@ -134,9 +134,12 @@ export async function rejectReport(db: Db, actor: Actor, reportId: string, now =
     const tx = t as unknown as Db;
     const r = await tx.report.findUnique({ where: { id: reportId }, select: { id: true, status: true, caseId: true, weight: true } });
     if (!r) throw notFound();
+    // SEC-M4-04: same COI and open-case guard as dismiss/remove (404 / 403 CONFLICT_OF_INTEREST / 409 invalid_transition).
+    if (!r.caseId) throw new HttpError(409, "invalid_transition", "Report has no open case");
+    await loadReportCase(tx, actor, r.caseId);
     const res = await tx.report.updateMany({ where: { id: reportId, status: "OPEN" }, data: { status: "REJECTED", resolvedAt: now, resolvedById: actor.id } });
     if (res.count !== 1) throw new HttpError(409, "invalid_transition", "Report already resolved");
-    if (r.caseId) await tx.moderationCase.update({ where: { id: r.caseId }, data: { reportCount: { decrement: 1 }, reportWeight: { decrement: r.weight } } });
+    await tx.moderationCase.update({ where: { id: r.caseId }, data: { reportCount: { decrement: 1 }, reportWeight: { decrement: r.weight } } });
     await tx.auditLog.create({ data: { actorType: "STAFF", actorId: actor.id, action: "report.rejected", entityType: "Report", entityId: reportId, metadata: { caseId: r.caseId } } });
     return { id: reportId, status: "REJECTED" as const };
   });

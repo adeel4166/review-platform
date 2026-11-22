@@ -3,7 +3,7 @@ import { HttpError } from "./http";
 import { readyMediaUrls, type Storage } from "./media";
 import { publicRepliesFor } from "./seller-replies";
 import { myVotes } from "./votes";
-import type { ReviewInput, reviewEditInput } from "./validation";
+import { INCENTIVE_VALUES, type ReviewInput, type reviewEditInput } from "./validation";
 import type { z } from "zod";
 import { MEDIA_MAX_PER_REVIEW } from "@rp/core";
 import type { Actor } from "./session";
@@ -77,6 +77,8 @@ const NEXT_STATUS_PATH = new Set(["PENDING", "HIDDEN"]);
  * PUBLISHED: R1, the row keeps the live text and a new PENDING revision is written. REJECTED/REMOVED: 409; DELETED/other: 404.
  */
 export async function editOwnReview(db: Db, userId: string, reviewId: string, input: z.infer<typeof reviewEditInput>, ctx: { charge?: (live: boolean) => Promise<void> } = {}) {
+  // SEL-013: the incentive disclosure is re-validated on every edit, here as well as in the route schema.
+  if (input.incentive !== undefined && !(INCENTIVE_VALUES as readonly string[]).includes(input.incentive)) throw new HttpError(400, "invalid_incentive", "Invalid incentive value");
   const cur = await db.review.findFirst({
     where: { id: reviewId, authorId: userId, status: { not: "DELETED" } }, // someone else's review is indistinguishable from a missing one (deny reason NOT_OWNER stays internal)
     select: { id: true, status: true, currentVersion: true, publishedVersion: true, rating: true, title: true, body: true, incentive: true, product: { select: { sellerId: true } } },
@@ -138,6 +140,8 @@ export async function updateOwnReview(db: Db, userId: string, reviewId: string, 
 /** Author and staff only (the public route never includes revisions). A non-author gets the same 404 as a missing review. */
 export async function listRevisions(db: Db, actor: Actor, reviewId: string) {
   const staff = actor.role === "admin" || actor.role === "super_admin";
+  // SEC-M4-03: staff permissions are inactive without an enrolled and verified second factor (m3b-spec 2.9).
+  if (staff && (!actor.twoFactor?.enrolled || !actor.twoFactor.verified)) throw new HttpError(403, "TWO_FACTOR_REQUIRED", "Two-factor authentication required");
   const r = await db.review.findFirst({ where: { id: reviewId, ...(staff ? {} : { authorId: actor.id }) }, select: { id: true } });
   if (!r) throw new HttpError(404, "not_found", "Review not found");
   return db.reviewRevision.findMany({ where: { reviewId }, orderBy: { version: "desc" }, select: { version: true, status: true, rating: true, title: true, body: true, createdAt: true } });
