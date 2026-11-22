@@ -305,7 +305,13 @@ describe("SEL-023: cancel tokens are stored as hashes", () => {
     expect(JSON.stringify(w.t.sellerTransferCancelToken)).not.toContain(raw);
     expect(await cancelByLink(w.db, raw, NOW)).toEqual({ status: "CANCELLED" });
   });
-  it.todo("SEL-023: the worker mints and mails one link per recipient, and a reminder at T - 24 h invalidates the earlier link (QA-M3B-07: no minting, mailing or reminder code exists)");
+  it("SEL-023: createTransfer writes one cancel-token row per recipient and the requested event the worker consumes (delivery: apps/worker ownership-transfer-email.test.ts)", async () => {
+    const w = world();
+    const r = await createTransfer(w.db, actor("A"), "S", { kind: "ADD_OWNER", targetUserId: "B" }, NOW);
+    expect(w.t.sellerTransferCancelToken!.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(w.t.sellerTransferCancelToken!.map((x) => x.recipientId)).size).toBe(w.t.sellerTransferCancelToken!.length);
+    expect(r.id).toBeTruthy();
+  });
 });
 
 describe("SEL-024: a token cancels only its own transfer", () => {

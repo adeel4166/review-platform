@@ -3,7 +3,7 @@ import { Redis } from "ioredis";
 import { prisma } from "@rp/db";
 import { MEDIA_PUT_TTL_SECONDS, QUEUES, loadEnv, mediaJobSchema, moderationJobSchema, type Env, type QueueName } from "@rp/core";
 import { expireStaleUploads } from "./media";
-import { getMediaDeps, markMediaFailed, processors, setEgressQueue } from "./processors";
+import { getMediaDeps, markMediaFailed, processors, setEgressQueue, setNotificationsQueue } from "./processors";
 import { MODERATION_JOB_OPTIONS, escalateDeadLetter, isFinalFailure, type WorkerDb } from "./moderation";
 import { sweepDueChecks, sweepExpiry, sweepGrace, type SweepStore } from "./verification/checks";
 import { relayOnce, type OutboxStore } from "./outbox";
@@ -27,6 +27,7 @@ const getQueue = (n: QueueName) => {
   return q;
 };
 
+setNotificationsQueue({ add: (n, d, o) => getQueue(QUEUES.notifications).add(n, d, o) });
 setEgressQueue({ add: (n, d, o) => getQueue(QUEUES.verificationEgress).add(n, d, o) });
 
 const store: OutboxStore = {

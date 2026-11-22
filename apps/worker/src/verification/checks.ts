@@ -1,10 +1,10 @@
-import { CHALLENGE_PREFIX, DAY_MS, applyClaimTransition, decideReverify, dnsChallengeHost, evaluateObservedTokens, isRecheckDue, decideValidity, WORKER_CHECKED_METHODS, CLAIM_CONFIG, type CheckOutcome, type ClaimDb } from "@rp/core";
+import { CHALLENGE_PREFIX, DAY_MS, DomainNotAllowedError, assertHasMx, applyClaimTransition, decideReverify, dnsChallengeHost, evaluateObservedTokens, isRecheckDue, decideValidity, WORKER_CHECKED_METHODS, CLAIM_CONFIG, type CheckOutcome, type ClaimDb } from "@rp/core";
 import { extractMetaTokens } from "./meta";
 import type { FetchError, FetchResult } from "./safe-fetch";
 
 export interface CheckDeps {
   fetcher: { fetch(url: string, o?: { finalMustBeInside?: string }): Promise<FetchResult> };
-  dns: { resolveTxt(host: string): Promise<string[][]> };
+  dns: { resolveTxt(host: string): Promise<string[][]>; resolveMx?(host: string): Promise<Array<{ exchange: string; priority?: number }>> };
 }
 export interface ObservedResult { observed: string[]; error: CheckOutcome | null; proofHost?: string }
 
@@ -31,13 +31,29 @@ export async function observeMeta(d: CheckDeps, domain: string): Promise<Observe
   return { observed: extractMetaTokens(r.body.toString("utf8")), error: null, proofHost: domain };
 }
 
+/**
+ * BUSINESS_EMAIL_DOMAIN (SEL-035): MX records of the claimed domain, at most 20, as "<pref> <exchange>". Only this isolated egress group
+ * resolves attacker-chosen names. NXDOMAIN/no data = no MX (empty list); any other resolver failure = DNS_ERROR (core backs off).
+ */
+export async function observeMx(d: CheckDeps, domain: string): Promise<ObservedResult> {
+  if (!d.dns.resolveMx) return { observed: [], error: "DNS_ERROR" };
+  try {
+    const recs = (await d.dns.resolveMx(domain)).slice(0, 20);
+    return { observed: recs.map((r) => `${r.priority ?? 0} ${r.exchange}`), error: null };
+  } catch (e) {
+    const code = (e as { code?: string }).code;
+    return code === "ENOTFOUND" || code === "ENODATA" ? { observed: [], error: null } : { observed: [], error: "DNS_ERROR" };
+  }
+}
+
 export async function observe(d: CheckDeps, method: string, domain: string): Promise<ObservedResult> {
+  if (method === "BUSINESS_EMAIL_DOMAIN") return observeMx(d, domain);
   return method === "DNS_TXT" ? observeDns(d, domain) : observeMeta(d, domain);
 }
 
 interface ClaimRow {
   id: string; status: string; method: string; domain: string | null; challengeValue: string | null; challengeExpiresAt: Date | null;
-  verifiedUntil: Date | null; lastCheckAt: Date | null; graceEndsAt: Date | null; lastCheckOutcome: CheckOutcome | null;
+  verifiedUntil: Date | null; lastCheckAt: Date | null; graceEndsAt: Date | null; lastCheckOutcome: CheckOutcome | null; nextCheckAt?: Date | null;
 }
 export interface CheckStore extends ClaimDb {
   sellerOwnershipClaim: { findUnique(a: unknown): Promise<ClaimRow | null>; findMany(a: unknown): Promise<ClaimRow[]> };
@@ -55,14 +71,17 @@ const DOMAIN_RE = /^[a-z0-9.-]{1,253}$/i;
 /** Core side, step 1: decide whether a claim needs an egress check and build the request (no network here). */
 export async function prepareClaimCheck(db: CheckStore, claimId: string): Promise<EgressRequest | null> {
   const c = await db.sellerOwnershipClaim.findUnique({ where: { id: claimId } });
-  if (!c || !c.domain || !WORKER_CHECKED_METHODS.includes(c.method as never)) return null;
+  if (!c || !c.domain) return null;
+  // BUSINESS_EMAIL_DOMAIN: one MX check while PENDING; nextCheckAt is cleared once it passed (no repeat, no re-verification).
+  if (c.method === "BUSINESS_EMAIL_DOMAIN") return c.status === "PENDING" && c.nextCheckAt ? { claimId, method: c.method, domain: c.domain } : null;
+  if (!WORKER_CHECKED_METHODS.includes(c.method as never)) return null;
   if (c.status !== "PENDING" && c.status !== "VERIFIED") return null;
   return { claimId, method: c.method, domain: c.domain };
 }
 
 /** Egress side: the only code that touches the network. Validates the request shape (defence in depth) and observes. */
 export async function runEgressCheck(d: CheckDeps, req: EgressRequest): Promise<EgressResult> {
-  if (!req || typeof req.claimId !== "string" || !["DNS_TXT", "META_TAG"].includes(req.method) || typeof req.domain !== "string" || !DOMAIN_RE.test(req.domain)) {
+  if (!req || typeof req.claimId !== "string" || !["DNS_TXT", "META_TAG", "BUSINESS_EMAIL_DOMAIN"].includes(req.method) || typeof req.domain !== "string" || !DOMAIN_RE.test(req.domain)) {
     return { claimId: String(req?.claimId ?? ""), observed: [], error: "FETCH_BLOCKED" };
   }
   const obs = await observe(d, req.method, req.domain);
@@ -75,6 +94,7 @@ export async function runEgressCheck(d: CheckDeps, req: EgressRequest): Promise<
  */
 export async function applyClaimObservation(db: CheckStore, claimId: string, obs: ObservedResult, now: Date = new Date()): Promise<string> {
   const c = await db.sellerOwnershipClaim.findUnique({ where: { id: claimId } });
+  if (c?.method === "BUSINESS_EMAIL_DOMAIN") return applyMxObservation(db, c, obs, now);
   if (!c || !c.domain || !WORKER_CHECKED_METHODS.includes(c.method as never)) return "SKIPPED";
   if (c.status !== "PENDING" && c.status !== "VERIFIED") return "SKIPPED";
   if (c.status === "PENDING") {
@@ -98,6 +118,41 @@ export async function applyClaimObservation(db: CheckStore, claimId: string, obs
   return `${decision}:${outcome}`;
 }
 
+/**
+ * Core side for BUSINESS_EMAIL_DOMAIN (m3b-spec 4.3). No usable MX (none, or only the RFC 7505 null MX) -> REJECTED by RULE `no_mx`.
+ * DNS error -> back-off (CHECK_FAILED); the claim expires at its challenge deadline. MX present -> C22: stop re-checking and request
+ * the token mail exactly once (the conditional update is the guard against duplicate or retried results).
+ */
+async function applyMxObservation(db: CheckStore, c: ClaimRow, obs: ObservedResult, now: Date): Promise<string> {
+  if (c.status !== "PENDING" || !c.nextCheckAt) return "SKIPPED";
+  if (obs.error) {
+    await applyClaimTransition(db, c.id, { action: "CHECK_FAILED", outcome: obs.error }, SYSTEM, now);
+    return obs.error;
+  }
+  try {
+    await assertHasMx(c.domain!, async () => obs.observed.map((o) => ({ exchange: o.split(" ").slice(1).join(" ") })));
+  } catch (e) {
+    if (!(e instanceof DomainNotAllowedError)) throw e;
+    await applyClaimTransition(db, c.id, { action: "RULE_REJECT", reasonCode: "no_mx" }, SYSTEM, now);
+    return "REJECTED:no_mx";
+  }
+  return (db as unknown as { $transaction<T>(fn: (tx: MxTx) => Promise<T>): Promise<T> }).$transaction(async (tx) => {
+    const won = await tx.sellerOwnershipClaim.updateMany({ where: { id: c.id, status: "PENDING", nextCheckAt: { not: null } }, data: { nextCheckAt: null, lastCheckAt: now } });
+    if (won.count !== 1) return "SKIPPED";
+    const tok = await tx.emailVerificationToken.findFirst({ where: { claimId: c.id, purpose: "CLAIM_BUSINESS_EMAIL", consumedAt: null, invalidatedAt: null } });
+    if (!tok) return "SKIPPED";
+    await tx.outboxEvent.create({ data: { type: "claim.business_email_token_requested", aggregateId: c.id, payload: { claimId: c.id, tokenId: tok.id } } });
+    await tx.auditLog.create({ data: { actorType: "SYSTEM", actorId: null, action: "claim.mx_checked", entityType: "SellerOwnershipClaim", entityId: c.id, metadata: { claimId: c.id, outcome: "PASS" } } });
+    return "MX_PASS";
+  });
+}
+interface MxTx {
+  sellerOwnershipClaim: { updateMany(a: unknown): Promise<{ count: number }> };
+  emailVerificationToken: { findFirst(a: unknown): Promise<{ id: string } | null> };
+  outboxEvent: { create(a: unknown): Promise<unknown> };
+  auditLog: { create(a: unknown): Promise<unknown> };
+}
+
 /** Single-process composition of the three steps (used by tests; production splits it across the two worker groups). */
 export async function processClaimCheck(db: CheckStore, d: CheckDeps, claimId: string, now: Date = new Date()): Promise<string> {
   const req = await prepareClaimCheck(db, claimId);
@@ -114,7 +169,7 @@ export interface JobEnqueuer { add(name: string, data: unknown, opts: { jobId: s
 
 /** claims-due-checks (1 min) + claims-reverify (daily): enqueue DNS/META checks. Deterministic job ids dedupe repeats. */
 export async function sweepDueChecks(db: SweepStore, q: JobEnqueuer, now: Date = new Date()): Promise<number> {
-  const pending = await db.sellerOwnershipClaim.findMany({ where: { status: "PENDING", method: { in: [...WORKER_CHECKED_METHODS] }, nextCheckAt: { lte: now } }, take: 200 });
+  const pending = await db.sellerOwnershipClaim.findMany({ where: { status: "PENDING", method: { in: [...WORKER_CHECKED_METHODS, "BUSINESS_EMAIL_DOMAIN"] }, nextCheckAt: { lte: now } }, take: 200 });
   const verified = (await db.sellerOwnershipClaim.findMany({ where: { status: "VERIFIED", method: { in: [...WORKER_CHECKED_METHODS] } }, take: 500 })).filter((c) => isRecheckDue(c as never, now));
   let n = 0;
   for (const c of pending) { await q.add("verification.check", { claimId: c.id }, { jobId: `claimcheck__${c.id}__${c.lastCheckAt?.getTime() ?? 0}` }); n++; }

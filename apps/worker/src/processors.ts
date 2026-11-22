@@ -2,7 +2,8 @@ import type { Job } from "bullmq";
 import { QUEUES, createMailProvider, createS3Store, loadEnv, mediaBuckets, mediaJobSchema, moderationJobSchema, type QueueName } from "@rp/core";
 import { prisma } from "@rp/db";
 import { StubPurchaseLookup, createModerationProvider, markVerifiedBuyer } from "@rp/core";
-import { sendAccountExistsEmail, sendSellerInvitationEmail, sendVerificationEmail, type EmailDb, type EmailDbInvitations } from "./email";
+import { sendAccountExistsEmail, sendClaimBusinessEmail, type ClaimEmailDeps, sendSellerInvitationEmail, sendVerificationEmail, type EmailDb, type EmailDbInvitations } from "./email";
+import { reminderDelayMs, sendTransferCancelLinks, type TransferNotifyDb } from "./ownership-transfer-email";
 import { markMediaFailed, processMedia, type MediaDb } from "./media";
 import { applyClaimObservation, prepareClaimCheck, type CheckStore, type EgressResult } from "./verification/checks";
 import { sendClaimNotice, type NotifyDb } from "./verification/notify";
@@ -54,7 +55,18 @@ export const processors: Partial<Record<QueueName, Processor>> = {
     if (job.name === "user.email_verification_requested" && data.tokenId) outcome = await sendVerificationEmail(d, data.tokenId, key);
     else if (job.name === "user.registration_conflict" && data.userId) outcome = await sendAccountExistsEmail(d, data.userId, key);
     else if (job.name === "seller.invitation_created" && data.invitationId) outcome = await sendSellerInvitationEmail(d, data.invitationId, key);
-    else if (job.name.startsWith("claim.") || job.name === "seller.downgraded") {
+    else if (job.name === "claim.business_email_token_requested" && data.tokenId) outcome = await sendClaimBusinessEmail(d as unknown as ClaimEmailDeps, data.tokenId, key);
+    else if (job.name === "seller.ownership_transfer_requested" || job.name === "seller.ownership_transfer_reminder") {
+      const transferId = String((data as { transferId?: string }).transferId ?? (job.data as { aggregateId?: string } | undefined)?.aggregateId ?? "");
+      const requested = job.name === "seller.ownership_transfer_requested";
+      if (transferId) {
+        const r = await sendTransferCancelLinks({ db: prisma as unknown as TransferNotifyDb, mail: getMail() }, transferId, requested ? "REQUESTED" : "REMINDER", key);
+        outcome = r.outcome;
+        // T - 24 h reminder (SEL-024). The deterministic job id makes a retried or duplicate request schedule it once.
+        const delay = requested && r.executeAfter ? reminderDelayMs(r.executeAfter, new Date()) : null;
+        if (delay !== null) await getNotificationsQueue().add("seller.ownership_transfer_reminder", { transferId }, { jobId: `otx__${transferId}__REMINDER`, delay });
+      }
+    } else if (job.name.startsWith("claim.") || job.name === "seller.downgraded") {
       const id = (job.name === "seller.downgraded" ? (data as { sellerId?: string }).sellerId : (data as { claimId?: string }).claimId) ?? "";
       if (id) outcome = await sendClaimNotice({ db: prisma as unknown as NotifyDb, mail: getMail() }, job.name, id, key);
     }
@@ -76,6 +88,10 @@ export const processors: Partial<Record<QueueName, Processor>> = {
     console.log(JSON.stringify({ msg: "claim.check.done", jobId: job.id, claimId: r.claimId, outcome })); // never domains' bodies or tokens
   },
 };
+
+let notificationsQueue: { add(name: string, data: unknown, opts?: Record<string, unknown>): Promise<unknown> } | undefined;
+export const setNotificationsQueue = (q: NonNullable<typeof notificationsQueue>) => { notificationsQueue = q; };
+const getNotificationsQueue = () => { if (!notificationsQueue) throw new Error("notifications queue not configured"); return notificationsQueue; };
 
 // Set by main.ts: enqueues to the egress queue (the only verification-network path).
 let egressQueue: { add(name: string, data: unknown, opts?: Record<string, unknown>): Promise<unknown> } | undefined;

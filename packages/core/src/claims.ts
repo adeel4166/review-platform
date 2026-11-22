@@ -121,7 +121,7 @@ export function sampleSpotCheck(method: ClaimMethod, rand: (max: number) => numb
 
 export type ClaimAction =
   | "CHECK_FAILED" | "CHECK_PASSED" | "STAFF_APPROVE" | "STAFF_REJECT" | "REQUEST_INFO" | "EXPIRE_CHALLENGE" | "EXPIRE_INFO" | "WITHDRAW"
-  | "REVERIFY_PASSED" | "ENTER_GRACE" | "EXPIRE_GRACE" | "REVOKE" | "SPOT_CHECK";
+  | "REVERIFY_PASSED" | "ENTER_GRACE" | "EXPIRE_GRACE" | "REVOKE" | "SPOT_CHECK" | "RULE_REJECT";
 
 /** Allowed `from` statuses per action. Anything else is `invalid_transition` (SEL-014). Terminal statuses have no exits. */
 export const CLAIM_TRANSITIONS: Record<ClaimAction, readonly ClaimStatus[]> = {
@@ -138,6 +138,7 @@ export const CLAIM_TRANSITIONS: Record<ClaimAction, readonly ClaimStatus[]> = {
   EXPIRE_GRACE: ["VERIFIED"],
   REVOKE: ["VERIFIED"],
   SPOT_CHECK: ["VERIFIED"],
+  RULE_REJECT: ["PENDING"], // automatic rule outcome (C20: BUSINESS_EMAIL_DOMAIN without a usable MX)
 };
 
 export class InvalidClaimTransitionError extends Error {

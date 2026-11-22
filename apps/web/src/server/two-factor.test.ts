@@ -340,7 +340,7 @@ describe("AUT-022: SECOND_FACTOR_FAILURES alert", () => {
     await err(verifySecondFactor(db, deps(), { sid, userId: "u1", code: "000000", kind: "TOTP" }));
     expect(alerts()).toHaveLength(1);
   });
-  it.fails("AUT-022: the alert is limited to one per account per hour, not one per session (QA-M3B-06, known defect)", async () => {
+  it("AUT-022: the alert is limited to one per account per hour, not one per session (QA-M3B-06)", async () => {
     enrolled();
     for (let s = 0; s < 2; s++) {
       const sid = await pendingSession();

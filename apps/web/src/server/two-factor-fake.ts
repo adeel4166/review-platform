@@ -13,6 +13,7 @@ export function matches(row: Row, where: Row = {}): boolean {
       if ("gt" in w) return v != null && (val(v) as number) > (val(w.gt) as number);
       if ("in" in w) return (w.in as unknown[]).includes(v);
       if ("not" in w) return v !== w.not;
+      if ("path" in w) return isOp(v) && v[String(w.path).replace(/^\$\./, "")] === w.equals; // Prisma JSON path filter (single key)
       throw new Error(`unsupported operator ${Object.keys(w)}`);
     }
     return (v ?? null) === (w ?? null) || (v instanceof Date && w instanceof Date && v.getTime() === w.getTime());

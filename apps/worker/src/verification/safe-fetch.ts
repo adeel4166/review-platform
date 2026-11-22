@@ -47,7 +47,7 @@ export interface FetchOptions {
 /** Public resolvers only (never the cluster DNS). VERIFY_DNS_SERVERS overrides, default 1.1.1.1,8.8.8.8. */
 export function createDnsResolver(servers = (process.env.VERIFY_DNS_SERVERS ?? "1.1.1.1,8.8.8.8").split(",").map((s) => s.trim()).filter(Boolean)): ResolverLike & {
   resolveTxt(host: string): Promise<string[][]>;
-  resolveMx(host: string): Promise<unknown[]>;
+  resolveMx(host: string): Promise<Array<{ exchange: string; priority: number }>>;
 } {
   const r = new Resolver({ timeout: 2000, tries: 1 });
   r.setServers(servers);

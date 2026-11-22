@@ -28,6 +28,7 @@ export type ClaimInput =
   | { action: "CHECK_PASSED"; observed?: string[]; proofHost?: string; rand?: (max: number) => number }
   | { action: "STAFF_APPROVE"; reviewerId: string; note?: string; rand?: (max: number) => number }
   | { action: "STAFF_REJECT"; reviewerId: string; reasonCode: string; note?: string }
+  | { action: "RULE_REJECT"; reasonCode: "no_mx" }
   | { action: "REQUEST_INFO"; reviewerId: string; note?: string }
   | { action: "EXPIRE_CHALLENGE" | "EXPIRE_INFO" | "WITHDRAW" | "EXPIRE_GRACE" }
   | { action: "REVERIFY_PASSED" }
@@ -217,6 +218,12 @@ export async function applyClaimTransition(db: ClaimDb, claimId: string, input: 
         const members = await tx.sellerMember.findMany({ where: { userId: input.reviewerId, sellerId: { in: [claim.sellerId, ...(conflict ? [conflict.sellerId] : [])] } }, select: { sellerId: true } });
         if (members.length > 0) throw new ClaimConflictOfInterestError();
         await decision("STAFF", "REJECT", input.reviewerId, input.reasonCode, input.note);
+        return end("REJECTED", null, "claim.rejected", "claim.rejected");
+      }
+      case "RULE_REJECT": {
+        // C20 (m3b-spec 4.3): a RULE decision, no reviewer. Any unmailed or unused email token dies with the claim.
+        await decision("RULE", "REJECT", null, input.reasonCode);
+        await tx.emailVerificationToken.updateMany({ where: { claimId, consumedAt: null, invalidatedAt: null }, data: { invalidatedAt: now } });
         return end("REJECTED", null, "claim.rejected", "claim.rejected");
       }
       case "REQUEST_INFO": {

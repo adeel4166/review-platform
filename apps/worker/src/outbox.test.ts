@@ -24,4 +24,14 @@ describe("relayOnce", () => {
     ).rejects.toThrow("redis down");
     expect(markPublished).not.toHaveBeenCalled();
   });
+
+  it("routes seller.ownership_transfer_requested and claim.business_email_token_requested to notifications (QA-M3B-07/08)", async () => {
+    const add = vi.fn().mockResolvedValue(undefined);
+    const r: OutboxRow[] = [
+      { id: 5n, type: "seller.ownership_transfer_requested", aggregateId: "x", payload: { transferId: "x" } },
+      { id: 6n, type: "claim.business_email_token_requested", aggregateId: "c", payload: { claimId: "c", tokenId: "t" } },
+    ];
+    await relayOnce({ fetchUnpublished: async () => r, markPublished: vi.fn() }, { add });
+    expect(add.mock.calls.map((c) => c[0])).toEqual(["notifications", "notifications"]);
+  });
 });
