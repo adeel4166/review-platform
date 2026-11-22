@@ -1,4 +1,4 @@
-import { cloudinaryDeliveryUrl, createS3Store, loadEnv, mediaBuckets, type ObjectStore } from "@rp/core";
+import { cloudinaryDeliveryUrl, type ImageUrlResolver, createS3Store, loadEnv, mediaBuckets, type ObjectStore } from "@rp/core";
 
 let cached: { store: ObjectStore; buckets: ReturnType<typeof mediaBuckets>; publicBaseUrl: string; publicUrlFor?: (key: string) => string } | undefined;
 
@@ -15,4 +15,10 @@ export function getStorage() {
     };
   }
   return cached;
+}
+
+/** URL resolver for public image reads: env only, no storage credentials needed (ADR-0034 D11: URLs are derived, never stored). */
+export function getImageResolver(): ImageUrlResolver {
+  const cloud = process.env.MEDIA_PUBLIC_STORE === "cloudinary" ? process.env.CLOUDINARY_CLOUD_NAME : undefined;
+  return { publicBaseUrl: process.env.MEDIA_PUBLIC_BASE_URL ?? "", ...(cloud ? { publicUrlFor: (key: string) => cloudinaryDeliveryUrl(cloud, key) } : {}) };
 }

@@ -66,7 +66,7 @@ export async function eraseAccount(d: EraseDeps, erasureRequestId: string): Prom
     if (verified) await done("proofs");
   }
   if (!steps.media) {
-    const ok = await purgeMediaObjects(d, await d.db.mediaAsset.findMany({ where: { ownerId: userId } }));
+    const ok = await purgeMediaObjects(d, await d.db.mediaAsset.findMany({ where: { ownerId: userId, purpose: "REVIEW" } }));
     if (ok.verified) await done("media"); else verified = false;
   }
   if (!steps.social) {

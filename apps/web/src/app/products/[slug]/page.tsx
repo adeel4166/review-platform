@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { db } from "@/server/db";
+import { getImageResolver } from "@/server/storage";
 import { auth } from "@/server/auth";
 import { getProduct } from "@/server/products";
 import { listPublishedReviews } from "@/server/reviews";
@@ -24,7 +25,7 @@ const PAGE_SIZE = 10;
 type Props = { params: Promise<{ slug: string }>; searchParams: Promise<{ page?: string; verified?: string }> };
 
 async function load(slug: string) {
-  try { return await getProduct(db, slug); } catch (e) { if (e instanceof HttpError && e.status === 404) return null; throw e; }
+  try { return await getProduct(db, slug, getImageResolver()); } catch (e) { if (e instanceof HttpError && e.status === 404) return null; throw e; }
 }
 
 /** Reply UI context for the signed-in user: only members of the product's verified seller (and not the review authors) see it. */

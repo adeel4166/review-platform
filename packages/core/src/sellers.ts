@@ -76,6 +76,7 @@ export const SELLER_PERMISSIONS = [
   "seller.claim.submit",
   "seller.claim.review",
   "product.update",
+  "product.image.manage",
   "seller.reply",
   "seller.reply.manage",
 ] as const;
@@ -89,6 +90,7 @@ const ROLE_GRANTS: Record<SellerPermission, readonly SellerMemberRole[]> = {
   "seller.claim.submit": ["OWNER", "MANAGER"],
   "seller.claim.review": [],
   "product.update": ["OWNER", "MANAGER"],
+  "product.image.manage": ["OWNER", "MANAGER"],
   "seller.reply": ["OWNER", "MANAGER", "RESPONDER"],
   "seller.reply.manage": ["OWNER", "MANAGER", "RESPONDER"],
 };

@@ -1,13 +1,14 @@
-import { CompareError, buildComparison, parseCompareIds, type CompareProductRow, systemClock } from "@rp/core";
+import { type ImageUrlResolver, CompareError, buildComparison, parseCompareIds, type CompareProductRow, systemClock } from "@rp/core";
 import type { Db } from "./db";
 import { HttpError } from "./http";
+import { loadProductImages } from "./product-images";
 
 const CACHE_MS = 5 * 60_000;
 const cache = new Map<string, { at: number; body: unknown }>();
 export const clearCompareCache = () => cache.clear();
 
 /** Cached aggregate columns only: one product query + one seller query, no review scans (TRS-006). */
-export async function compare(db: Db, rawIds: string | null, now = systemClock.now().getTime()) {
+export async function compare(db: Db, rawIds: string | null, now = systemClock.now().getTime(), images: ImageUrlResolver = {}) {
   let ids: string[];
   try { ids = parseCompareIds(rawIds); }
   catch (e) { if (e instanceof CompareError) throw new HttpError(422, e.code, e.code === "compare_size" ? "Compare 2 to 4 products" : "Products must be distinct"); throw e; }
@@ -27,7 +28,10 @@ export async function compare(db: Db, rawIds: string | null, now = systemClock.n
     verifiedRatingAverage: p.verifiedRatingAverage === null ? null : Number(p.verifiedRatingAverage), verifiedRatingCount: p.verifiedRatingCount,
     ratingHistogram: (p.ratingHistogram as Record<string, number> | null) ?? null, specs: (p.specs as Record<string, unknown> | null) ?? null, sellerBand: p.sellerId ? band.get(p.sellerId) ?? null : null,
   }]));
-  const body = buildComparison(ids, rows);
+  const built = buildComparison(ids, rows);
+  const shown = built.items.filter((i) => !("unavailable" in i)).map((i) => i.id);
+  const imgs = await loadProductImages(db, shown, images);
+  const body = { ...built, items: built.items.map((i) => "unavailable" in i ? i : { ...i, image: imgs.get(i.id)?.primaryImage?.url ?? null, primaryImage: imgs.get(i.id)?.primaryImage ?? null, gallery: imgs.get(i.id)?.gallery ?? [] }) };
   cache.set(key, { at: now, body });
   return body;
 }

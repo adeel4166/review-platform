@@ -11,13 +11,14 @@ export interface DemoReview {
   id: string; productId: string; authorId: string; rating: number; title: string; body: string;
   status: "PUBLISHED" | "PENDING" | "REJECTED"; verified: boolean; ageDays: number; incentive: "NONE" | "FREE_PRODUCT" | "DISCOUNT";
 }
+export interface DemoProductImage { id: string; assetId: string; productId: string; publicId: string; format: "svg"; width: number; height: number; alt: string; position: number; isPrimary: boolean }
 export interface DemoVote { reviewId: string; userId: string; value: "HELPFUL" | "NOT_HELPFUL" }
 export interface DemoReply { id: string; reviewId: string; sellerId: string; authorId: string; body: string }
 export interface DemoFollow { id: string; followerId: string; targetType: "USER" | "SELLER" | "PRODUCT"; targetId: string }
 export interface DemoCase { id: string; reviewId: string; lane: "HOLD" | "POST_REVIEW" | "REPORTED"; resolved: boolean; reason: string }
 export interface DemoAppeal { id: string; caseId: string; appellantId: string; statement: string }
 export interface DemoData {
-  categories: DemoCategory[]; sellers: DemoSeller[]; products: DemoProduct[]; users: DemoUser[]; reviews: DemoReview[];
+  categories: DemoCategory[]; sellers: DemoSeller[]; products: DemoProduct[]; productImages: DemoProductImage[]; users: DemoUser[]; reviews: DemoReview[];
   votes: DemoVote[]; replies: DemoReply[]; follows: DemoFollow[]; cases: DemoCase[]; appeals: DemoAppeal[];
 }
 
@@ -204,5 +205,11 @@ export function buildDemoData(): DemoData {
   for (const u of reviewers.slice(0, 3)) addFollow("demo_u_user", "USER", u.id);
   reviewers.forEach((u, i) => { addFollow(u.id, "USER", reviewers[(i + 1) % reviewers.length]!.id); if (i % 2 === 0) addFollow(u.id, "SELLER", sellers[i % sellers.length]!.id); });
 
-  return { categories, sellers, products, users, reviews, votes, replies, follows, cases, appeals };
+  // --- product images (V3-04): two licence-free placeholder illustrations per product, served from apps/web/public/placeholders (no network, no third-party licence). ---
+  const productImages: DemoProductImage[] = products.flatMap((p, i) => [1, 2].map((k): DemoProductImage => ({
+    id: `demo_img_${String(i + 1).padStart(2, "0")}_${k}`, assetId: `demo_imgasset_${String(i + 1).padStart(2, "0")}_${k}`, productId: p.id,
+    publicId: `placeholder/${p.categorySlug}-${k}`, format: "svg", width: 1024, height: 1024,
+    alt: k === 1 ? `${p.name} product photo placeholder, front view` : `${p.name} product photo placeholder, detail view`, position: k - 1, isPrimary: k === 1,
+  })));
+  return { categories, sellers, products, productImages, users, reviews, votes, replies, follows, cases, appeals };
 }

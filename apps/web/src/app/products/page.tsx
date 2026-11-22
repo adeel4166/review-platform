@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { db } from "@/server/db";
+import { getImageResolver } from "@/server/storage";
 import { listProducts } from "@/server/products";
 import { productListQuery } from "@/server/validation";
 import { Pagination } from "@/components/Pagination";
@@ -16,7 +17,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: SP 
   const raw = Object.fromEntries(Object.entries(await searchParams).map(([k, v]) => [k, Array.isArray(v) ? v[0] : v]));
   const parsed = productListQuery.safeParse({ ...raw, pageSize: 12 });
   const q = parsed.success ? parsed.data : productListQuery.parse({ pageSize: 12 });
-  const { items, total, page, pageSize } = await listProducts(db, q);
+  const { items, total, page, pageSize } = await listProducts(db, q, getImageResolver());
   const pages = Math.max(1, Math.ceil(total / pageSize));
   const href = (p: number) => `/products?${new URLSearchParams({ ...(q.q ? { q: q.q } : {}), page: String(p) })}`;
   return (

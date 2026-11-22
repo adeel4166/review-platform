@@ -54,6 +54,8 @@ const ADMIN_ROUTES: AdminRoute[] = [
   // M5-02: flagged / quarantined media
   { file: "media/route.ts", method: "GET", withId: false },
   { file: "media/[id]/decide/route.ts", method: "POST", withId: true },
+  // V3-04: product image approval (ADR-0034 D11)
+  { file: "product-images/[id]/decide/route.ts", method: "POST", withId: true },
   // Staff role management: SUPER_ADMIN only (ADR-0003, SEC-09e). Both handlers are covered.
   { file: "staff/[id]/roles/route.ts", method: "POST", withId: true, superOnly: true },
   { file: "staff/[id]/roles/route.ts", method: "DELETE", withId: true, superOnly: true },

@@ -69,6 +69,22 @@ async function main() {
       });
     }
 
+    // Product images (ADR-0034 D11): placeholder assets, already "public" (CHECK chk_media_public_bucket needs the scan/clearance columns).
+    for (const im of d.productImages) {
+      const t = ago(0);
+      await prisma.mediaAsset.upsert({
+        where: { id: im.assetId }, update: {},
+        create: {
+          id: im.assetId, ownerId: "demo_u_admin", purpose: "PRODUCT_IMAGE", reviewId: null, kind: "IMAGE", status: "READY", bucket: "PUBLIC", declaredMime: "image/svg+xml", detectedMime: "image/svg+xml",
+          sizeBytes: 1, ingestKey: "seed", width: im.width, height: im.height, virusScannedAt: t, metadataStripped: true, moderationClearedAt: t, promotedAt: t, processedAt: t,
+        },
+      });
+      await prisma.productImage.upsert({
+        where: { id: im.id }, update: {},
+        create: { id: im.id, productId: im.productId, mediaAssetId: im.assetId, publicId: im.publicId, format: im.format, width: im.width, height: im.height, alt: im.alt, position: im.position, isPrimary: im.isPrimary, publishedAt: t, createdById: "demo_u_admin" },
+      });
+    }
+
     // Reviews, revisions, verified-buyer proofs.
     for (const r of d.reviews) {
       const published = r.status === "PUBLISHED";
@@ -148,7 +164,7 @@ async function main() {
       });
     }
 
-    console.log(`[seed-demo] ${d.categories.length} categories, ${d.products.length} products, ${d.reviews.length} reviews, ${d.sellers.length} sellers, ${d.users.length} users, ${d.votes.length} votes, ${d.replies.length} replies, ${d.follows.length} follows, ${d.cases.length} cases, ${d.appeals.length} appeals`);
+    console.log(`[seed-demo] ${d.categories.length} categories, ${d.products.length} products, ${d.productImages.length} product images, ${d.reviews.length} reviews, ${d.sellers.length} sellers, ${d.users.length} users, ${d.votes.length} votes, ${d.replies.length} replies, ${d.follows.length} follows, ${d.cases.length} cases, ${d.appeals.length} appeals`);
     console.log(`[seed-demo] login accounts (password = value of DEMO_PASSWORD): ${Object.values(DEMO_ACCOUNTS).join(", ")}`);
   } finally {
     await prisma.$disconnect();

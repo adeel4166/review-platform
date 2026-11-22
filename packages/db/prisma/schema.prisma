@@ -170,6 +170,7 @@ model User {
   proofsSubmitted      PurchaseProof[]             @relation("ProofSubmittedBy")
   proofsReviewed       PurchaseProof[]             @relation("ProofReviewedBy")
   proofFiles           PurchaseProofFile[]         @relation("ProofFileOwner")
+  productImagesCreated ProductImage[]              @relation("ProductImageCreatedBy")
 
   @@index([status])
   @@map("users")
@@ -240,6 +241,7 @@ model Product {
 
   reviews         Review[]
   ownershipClaims SellerOwnershipClaim[]
+  images          ProductImage[]
 
   @@index([sellerId])
   @@index([categoryId, status])
@@ -431,7 +433,9 @@ model MediaAsset {
   moderationCases     ModerationCase[]
   id                  String           @id @default(cuid())
   ownerId             String
-  reviewId            String
+  /// NULL only for purpose = PRODUCT_IMAGE (chk_media_purpose_owner, ADR-0034 D11).
+  reviewId            String?
+  purpose             MediaPurpose     @default(REVIEW)
   status              MediaStatus      @default(UPLOADING)
   declaredMime        String           @db.VarChar(64)
   sizeBytes           Int
@@ -463,12 +467,18 @@ model MediaAsset {
 
   logs   MediaProcessingLog[]
   owner  User                 @relation("MediaOwner", fields: [ownerId], references: [id], onDelete: Restrict)
-  review Review               @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  review Review?              @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  productImage ProductImage?
 
   @@index([reviewId, status])
   @@index([ownerId, createdAt])
   @@index([status, createdAt])
   @@map("media_assets")
+}
+
+enum MediaPurpose {
+  REVIEW
+  PRODUCT_IMAGE
 }
 
 enum MediaKind {
@@ -1680,4 +1690,37 @@ model ErasureRequest {
 
   @@index([completedAt])
   @@map("erasure_requests")
+}
+
+/// Presentation of one image in a product gallery (ADR-0034 D11). Bytes, scan and moderation live on MediaAsset (purpose = PRODUCT_IMAGE).
+/// CHECKs and the generated `primaryProductId` column live in the migration SQL.
+model ProductImage {
+  id            String    @id @default(cuid())
+  productId     String
+  mediaAssetId  String    @unique
+  /// Store-neutral public key of the display master WITHOUT extension ("m/<assetId>/medium"); equals the Cloudinary public_id. NULL until promoted.
+  publicId      String?   @db.VarChar(255)
+  format        String    @default("webp") @db.VarChar(8)
+  width         Int?
+  height        Int?
+  /// Hex "#rrggbb" for a no-CLS placeholder background (optional).
+  dominantColor String?   @db.Char(7)
+  /// Required plain text, <= 250 chars (alt text is mandatory, task #103).
+  alt           String    @db.VarChar(250)
+  position      Int       @default(0) @db.SmallInt
+  isPrimary     Boolean   @default(false)
+  /// Stored generated column (CASE WHEN isPrimary THEN productId END) + UNIQUE: at most one primary per product. Never written by the app.
+  primaryProductId String? @unique @db.VarChar(191)
+  /// Set by media.promote when the asset goes public; cleared by demote. Public reads require it.
+  publishedAt   DateTime? @db.DateTime(3)
+  createdById   String
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  product    Product    @relation(fields: [productId], references: [id], onDelete: Restrict)
+  mediaAsset MediaAsset @relation(fields: [mediaAssetId], references: [id], onDelete: Restrict)
+  createdBy  User       @relation("ProductImageCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([productId, publishedAt, position])
+  @@map("product_images")
 }

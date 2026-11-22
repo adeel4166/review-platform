@@ -67,10 +67,10 @@ export async function createUploadSlot(db: Db, st: Storage, userId: string, revi
  * content-length are signed into the PUT, so storage already refuses a different type or size.
  */
 export async function confirmUpload(db: Db, _st: Storage, userId: string, assetId: string, now: Date = systemClock.now()) {
-  const a = await db.mediaAsset.findFirst({ where: { id: assetId, ownerId: userId }, select: { id: true, status: true, createdAt: true, review: { select: { status: true } } } });
+  const a = await db.mediaAsset.findFirst({ where: { id: assetId, ownerId: userId }, select: { id: true, status: true, createdAt: true, purpose: true, review: { select: { status: true } } } });
   if (!a) throw new HttpError(404, "not_found", "Media not found");
   if (a.status !== "UPLOADING") return db.mediaAsset.findUniqueOrThrow({ where: { id: assetId }, select: ownSelect }); // idempotent: no event
-  assertPendingForMedia(a.review.status);
+  if (a.purpose !== "PRODUCT_IMAGE") assertPendingForMedia(a.review?.status ?? "");
   if (a.createdAt.getTime() + MEDIA_PUT_TTL_SECONDS * 1000 < now.getTime()) throw new HttpError(409, "slot_expired", "Upload slot expired, request a new one");
   return db.$transaction(async (tx) => {
     const res = await tx.mediaAsset.updateMany({ where: { id: assetId, ownerId: userId, status: "UPLOADING" }, data: { status: "PROCESSING" } });
@@ -100,6 +100,7 @@ export async function readyMediaUrls(db: Db, st: Storage, reviewIds: string[]) {
   for (const r of rows) {
     // SEC-02: only assets visible in the published version were seen by moderators:
     // attachedInVersion <= v AND (detachedInVersion IS NULL OR detachedInVersion > v). NULL attached = staged, never public.
+    if (!r.reviewId || !r.review) continue; // product images are read through product-images.ts
     const v = r.review.publishedVersion;
     if (v == null || r.attachedInVersion == null || r.attachedInVersion > v || (r.detachedInVersion != null && r.detachedInVersion <= v)) continue;
     if (r.kind === "VIDEO" && !r.videoKey) continue; // a video without its transcoded rendition is not displayable

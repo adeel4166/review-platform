@@ -263,6 +263,8 @@ model ProductImage {
 - **Listing cards** query `product_images` by `(productId, publishedAt IS NOT NULL)` and take the visible primary (one indexed lookup per card, batched with `IN`).
 - **The product page** loads all published images. The gallery follows `02-catalog-product.md`: lightbox Dialog with arrows, Esc and the "3 of 8" counter; native scroll-snap on mobile.
 
+**Implementation note (V3-04, task #103):** shipped as designed with these deviations: `alt` is `NOT NULL` (required, no fallback text); the seller permission is `product.image.manage` (OWNER/MANAGER, verified seller) instead of a new staff permission, and staff access uses the ADMIN/SUPER_ADMIN tier; approval is a human `MEDIA` case (`POST /api/admin/product-images/:id/decide`); `dominantColor` and HEIC are deferred. See `docs/architecture/data-model.md`.
+
 ### D12. AI review summary data model
 
 ```prisma

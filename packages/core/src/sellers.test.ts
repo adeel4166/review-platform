@@ -12,6 +12,7 @@ describe("authorizeSeller (AZ-007, AZ-010): every permission x every role", () =
     "seller.profile.update": ["OWNER", "MANAGER"],
     "seller.member.invite": ["OWNER", "MANAGER"],
     "seller.member.manage": ["OWNER"],
+    "product.image.manage": ["OWNER", "MANAGER"],
     "seller.claim.submit": ["OWNER", "MANAGER"],
     "seller.claim.review": [],
     "product.update": ["OWNER", "MANAGER"],
