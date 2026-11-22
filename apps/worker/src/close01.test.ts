@@ -95,3 +95,24 @@ describe("QA-M7-02 media worker emits MALWARE_UPLOAD", () => {
     expect(recompute).toHaveBeenCalledWith("U:uploader1");
   });
 });
+
+describe("DEF-LIVE-06 NEW_FOLLOWER resolves a USER recipient", () => {
+  const mk = (user: { id: string } | null) => {
+    const rows: any[] = [];
+    const db = { user: { findFirst: vi.fn(async () => user) }, review: { findUnique: vi.fn() } };
+    const ports = { disabled: async () => new Set<never>(), insertInApp: async (r: any) => (rows.push(r), true), enqueueEmail: vi.fn(async () => undefined) };
+    return { db, ports, rows };
+  };
+  it("delivers an in-app notification to the followed user with the follower as actor", async () => {
+    const { db, ports, rows } = mk({ id: "u2" });
+    expect(await handleNotificationRequested(db, ports, new FakeClock(), "e1", { targetType: "USER", targetId: "u2", type: "NEW_FOLLOWER", actorId: "u1" })).toBe("DELIVERED");
+    expect(rows[0]).toMatchObject({ recipientId: "u2", type: "NEW_FOLLOWER", actorId: "u1", entityType: "User", entityId: "u2" });
+    expect(db.review.findUnique).not.toHaveBeenCalled();
+  });
+  it("skips when the followed user is gone or inactive, and when the in-app channel is disabled nothing is inserted", async () => {
+    expect(await handleNotificationRequested(mk(null).db, mk(null).ports, new FakeClock(), "e", { targetType: "USER", targetId: "u2", type: "NEW_FOLLOWER" })).toBe("SKIPPED");
+    const { db, ports, rows } = mk({ id: "u2" });
+    await handleNotificationRequested(db, { ...ports, disabled: async () => new Set(["IN_APP", "EMAIL"] as any) }, new FakeClock(), "e2", { targetType: "USER", targetId: "u2", type: "NEW_FOLLOWER", actorId: "u1" });
+    expect(rows).toHaveLength(0);
+  });
+});

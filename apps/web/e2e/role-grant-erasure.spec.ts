@@ -71,7 +71,23 @@ test.describe("account erasure (DEF-LIVE-03)", () => {
     await context.close();
   });
 
-  test.fixme("E2E-ERASE-2 account erasure through the UI (blocked by DEF-LIVE-08: no UI exists)", async () => {
-    // Enable once /account has a 'Delete account' control: type the handle, confirm, expect the signed-out landing page.
+  test("E2E-ERASE-2 account erasure through the UI: typed handle + password, then signed out on the landing page", async ({ browser, baseURL }) => {
+    const { context, page, user } = await newVerifiedUser(browser, baseURL);
+    await page.goto("/account/profile");
+    await page.getByRole("link", { name: "Delete my account" }).click();
+    await expect(page).toHaveURL(/\/account\/delete/);
+    await page.getByRole("button", { name: "Delete my account" }).click();
+    const dialog = page.getByRole("dialog", { name: "Delete your account?" });
+    await expect(dialog).toBeVisible();
+    const submit = dialog.getByRole("button", { name: "Permanently delete account" });
+    await expect(submit).toBeDisabled(); // no typed confirmation yet
+    await dialog.getByLabel(/Type your handle/).fill(user.handle);
+    await dialog.getByLabel("Current password").fill(user.password);
+    await submit.click();
+    await expect(page).toHaveURL(/\/$/, { timeout: 30_000 });
+    const session = (await (await context.request.get("/api/auth/session")).json()) as { user?: unknown };
+    expect(session.user, "signed out").toBeFalsy();
+    expect((await prisma.erasureRequest.count({ where: { user: { email: user.email } } })) + (await prisma.user.count({ where: { email: user.email, status: "DELETED" } }))).toBeGreaterThan(0);
+    await context.close();
   });
 });
