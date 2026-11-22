@@ -5,7 +5,7 @@ import { publicRepliesFor } from "./seller-replies";
 import { myVotes } from "./votes";
 import { INCENTIVE_VALUES, type ReviewInput, type reviewEditInput } from "./validation";
 import type { z } from "zod";
-import { MEDIA_MAX_PER_REVIEW } from "@rp/core";
+import { MEDIA_MAX_PER_REVIEW, systemClock } from "@rp/core";
 import type { Actor } from "./session";
 
 const publicSelect = {
@@ -95,7 +95,7 @@ export async function editOwnReview(db: Db, userId: string, reviewId: string, in
     // Guarded on status + version so a concurrent moderation decision or edit cannot be overwritten.
     const res = await tx.review.updateMany({
       where: { id: reviewId, authorId: userId, status: cur.status, currentVersion: cur.currentVersion },
-      data: live ? { currentVersion: version } : { ...next, currentVersion: version, editedAt: new Date(), status: "PENDING" },
+      data: live ? { currentVersion: version } : { ...next, currentVersion: version, editedAt: systemClock.now(), status: "PENDING" },
     });
     if (res.count !== 1) throw new HttpError(409, "version_conflict", "Review changed, reload and retry");
     await tx.reviewRevision.updateMany({ where: { reviewId, status: { in: ["PENDING", "HELD"] } }, data: { status: "SUPERSEDED" } });
@@ -153,12 +153,12 @@ export async function deleteOwnReview(db: Db, userId: string, reviewId: string) 
   if (!r) throw new HttpError(404, "not_found", "Review not found");
   await db.$transaction(async (t) => {
     const tx = t as unknown as Tx;
-    const res = await tx.review.updateMany({ where: { id: reviewId, authorId: userId, status: r.status }, data: { status: "DELETED", deletedAt: new Date() } });
+    const res = await tx.review.updateMany({ where: { id: reviewId, authorId: userId, status: r.status }, data: { status: "DELETED", deletedAt: systemClock.now() } });
     if (res.count !== 1) throw new HttpError(409, "not_editable", "Review changed, reload and retry");
     await tx.moderationCase.updateMany({ where: { reviewId, state: { in: ["PENDING", "AI_REVIEW", "NEEDS_HUMAN"] } }, data: { state: "SUPERSEDED", openReportKey: null } });
     await tx.reviewRevision.updateMany({ where: { reviewId, status: { in: ["PENDING", "HELD"] } }, data: { status: "SUPERSEDED" } });
     // Proof files are purged by the retention job once the proof is closed (m4-m5-spec 5.8).
-    await tx.purchaseProof.updateMany({ where: { reviewId, status: { in: ["DRAFT", "PENDING"] } }, data: { status: "WITHDRAWN", closeReason: "USER_WITHDRAWN", closedAt: new Date(), openKey: null, filesDeleteRequestedAt: new Date() } });
+    await tx.purchaseProof.updateMany({ where: { reviewId, status: { in: ["DRAFT", "PENDING"] } }, data: { status: "WITHDRAWN", closeReason: "USER_WITHDRAWN", closedAt: systemClock.now(), openKey: null, filesDeleteRequestedAt: systemClock.now() } });
     await tx.auditLog.create({ data: { actorType: "USER", actorId: userId, action: "review.delete", entityType: "Review", entityId: reviewId, metadata: { fromStatus: r.status } } });
   });
 }

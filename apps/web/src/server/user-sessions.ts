@@ -1,3 +1,4 @@
+import { systemClock } from "@rp/core";
 /** Server-side session rows behind the Auth.js JWT carrier (m3b-spec 2.1, 2.4, ADR-0019). */
 import type { PrismaClient } from "@rp/db";
 import { HttpError } from "./http";
@@ -88,7 +89,7 @@ export async function rotateToVerified(tx: SessionDb, old: SessionRow, method: "
 }
 
 /** Throws 401 STEP_UP_REQUIRED unless the session re-authenticated within the last 10 minutes. */
-export function assertFreshStepUp(stepUpAt: number | Date | null | undefined, now = new Date()): void {
+export function assertFreshStepUp(stepUpAt: number | Date | null | undefined, now = systemClock.now()): void {
   const t = stepUpAt instanceof Date ? stepUpAt.getTime() : stepUpAt;
   if (t == null || now.getTime() - t > STEP_UP_TTL_MS || t > now.getTime() + 1000) {
     throw new HttpError(401, "STEP_UP_REQUIRED", "Re-authentication required");

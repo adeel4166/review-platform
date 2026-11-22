@@ -1,3 +1,4 @@
+import { systemClock } from "./clock";
 import { IllegalTransitionError, REVIEW_STATUS_FOR, assertTransition, type ModerationState } from "./moderation-state";
 import { assertAuditMetadataClean } from "./audit-metadata";
 
@@ -130,7 +131,7 @@ export async function transitionCase(db: ModerationDb, input: TransitionInput): 
     const liveReview = !isReply && c.trigger === "EDIT" ? await tx.review.findUnique({ where: { id: c.reviewId }, select: { id: true, status: true, authorId: true, currentVersion: true, rating: true, title: true, body: true } }) : null;
     const isRevision = liveReview?.status === "PUBLISHED";
 
-    const now = new Date();
+    const now = systemClock.now();
     const terminal = input.to === "APPROVED" || input.to === "REJECTED" || input.to === "SUPERSEDED";
     const res = await tx.moderationCase.updateMany({
       where: { id: c.id, state: c.state },

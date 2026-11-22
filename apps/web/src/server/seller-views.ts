@@ -1,3 +1,4 @@
+import { systemClock } from "@rp/core";
 import type { SellerMemberRole } from "@rp/core";
 import type { Db } from "./db";
 import { requireSellerPermission } from "./sellers";
@@ -56,7 +57,7 @@ export async function getSellerDashboard(db: Db, actor: Actor, sellerId: string)
   const canManage = role === "OWNER" || role === "MANAGER";
   const [members, invitations, claims] = await Promise.all([
     db.sellerMember.findMany({ where: { sellerId }, select: { userId: true, role: true, user: { select: { handle: true, displayName: true } } }, orderBy: { createdAt: "asc" }, take: 200 }),
-    canManage ? db.sellerInvitation.findMany({ where: { sellerId, acceptedAt: null, revokedAt: null, expiresAt: { gt: new Date() } }, select: { id: true, email: true, role: true, expiresAt: true }, orderBy: { createdAt: "desc" }, take: 100 }) : Promise.resolve([]),
+    canManage ? db.sellerInvitation.findMany({ where: { sellerId, acceptedAt: null, revokedAt: null, expiresAt: { gt: systemClock.now() } }, select: { id: true, email: true, role: true, expiresAt: true }, orderBy: { createdAt: "desc" }, take: 100 }) : Promise.resolve([]),
     canManage ? db.sellerOwnershipClaim.findMany({ where: { sellerId }, select: CLAIM_VIEW, orderBy: { createdAt: "desc" }, take: 20 }) : Promise.resolve([]),
   ]);
   return {

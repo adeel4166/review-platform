@@ -12,8 +12,7 @@ import {
   sellerNameSkeleton,
   slugify,
   type SellerMemberRole,
-  type SellerPermission,
-} from "@rp/core";
+  type SellerPermission,systemClock } from "@rp/core";
 import type { Prisma } from "@rp/db";
 import type { Db } from "./db";
 import { HttpError } from "./http";
@@ -58,7 +57,7 @@ const activeReplyRestrictionWhere = (subject: { subjectSellerId: string } | { su
  * every call. Non-members get 404 (no seller enumeration); everyone else gets 403 with a stable code.
  */
 export async function requireSellerPermission(
-  db: Reader, actor: Actor, perm: SellerPermission, sellerId: string, now = new Date(),
+  db: Reader, actor: Actor, perm: SellerPermission, sellerId: string, now = systemClock.now(),
   /** Reply permissions only: delete waives the VERIFIED and restriction gates (m3b-spec 5.7: delete stays allowed). */
   opts: { waiveReplyGates?: boolean } = {},
 ) {
@@ -93,7 +92,7 @@ export async function requireSellerPermission(
  * Derives and persists Seller.status (+ verifiedClaimId/verifiedAt/verifiedDomain) inside the caller's transaction (spec §4.2).
  * SEL-011 service invariant: VERIFIED only when a VERIFIED SELLER-scope claim of THIS seller exists.
  */
-export async function recomputeSeller(tx: Tx, sellerId: string, actor: { id: string; type?: "USER" | "STAFF" | "SYSTEM" }, now = new Date()) {
+export async function recomputeSeller(tx: Tx, sellerId: string, actor: { id: string; type?: "USER" | "STAFF" | "SYSTEM" }, now = systemClock.now()) {
   const seller = await tx.seller.findUnique({ where: { id: sellerId }, select: { id: true, status: true, closedAt: true } });
   if (!seller) throw notFound();
   const [suspension, verified, open] = await Promise.all([
@@ -111,7 +110,7 @@ export async function recomputeSeller(tx: Tx, sellerId: string, actor: { id: str
 }
 
 /** Creates the seller and its first OWNER atomically (spec §4.1). Caller must have passed requireVerifiedUser(). */
-export async function createSeller(db: Db, actor: Actor, input: z.infer<typeof sellerCreateInput>, now = new Date()) {
+export async function createSeller(db: Db, actor: Actor, input: z.infer<typeof sellerCreateInput>, now = systemClock.now()) {
   const skeleton = sellerNameSkeleton(input.name);
   const slug = input.slug ?? slugify(input.name);
   if (slug.length < 2 || skeleton.length === 0) throw new HttpError(400, "validation_error", "Seller name is not usable");
@@ -148,7 +147,7 @@ export async function createSeller(db: Db, actor: Actor, input: z.infer<typeof s
 const lockSeller = (tx: Tx, sellerId: string) => tx.$queryRaw`SELECT id FROM sellers WHERE id = ${sellerId} FOR UPDATE`;
 
 /** Invite: OWNER may invite MANAGER/RESPONDER, MANAGER only RESPONDER; OWNER is never grantable (SEL-007, ADR-0017). */
-export async function inviteMember(db: Db, actor: Actor, sellerId: string, input: z.infer<typeof invitationInput>, now = new Date()) {
+export async function inviteMember(db: Db, actor: Actor, sellerId: string, input: z.infer<typeof invitationInput>, now = systemClock.now()) {
   const { role: inviterRole } = await requireSellerPermission(db, actor, "seller.member.invite", sellerId, now);
   if (!inviterRole || !canInviteRole(inviterRole, input.role)) throw new HttpError(403, "FORBIDDEN_ROLE", "You cannot grant that role");
   return db.$transaction(async (tx) => {
@@ -182,7 +181,7 @@ export async function inviteMember(db: Db, actor: Actor, sellerId: string, input
  * Accept (SEL-007). The token is bound to the signed-in user's VERIFIED email and consumed by one atomic conditional update.
  * Every failure (unknown, expired, revoked, replayed, wrong account, unverified) is the same 400.
  */
-export async function acceptInvitation(db: Db, actor: Actor, rawToken: string, now = new Date()) {
+export async function acceptInvitation(db: Db, actor: Actor, rawToken: string, now = systemClock.now()) {
   return db.$transaction(async (tx) => {
     const user = await tx.user.findUnique({ where: { id: actor.id }, select: { email: true, emailVerifiedAt: true, status: true } });
     if (!user || user.status !== "ACTIVE" || !user.emailVerifiedAt) throw invalidInvitation();
@@ -207,7 +206,7 @@ export async function acceptInvitation(db: Db, actor: Actor, rawToken: string, n
 }
 
 /** Revoke an open invitation. The seller scope is derived from the invitation row, not from the request. */
-export async function revokeInvitation(db: Db, actor: Actor, invitationId: string, now = new Date()) {
+export async function revokeInvitation(db: Db, actor: Actor, invitationId: string, now = systemClock.now()) {
   const inv = await db.sellerInvitation.findUnique({ where: { id: invitationId }, select: { id: true, sellerId: true, role: true, invitedById: true } });
   if (!inv) throw notFound();
   const { role } = await requireSellerPermission(db, actor, "seller.member.invite", inv.sellerId, now);
@@ -238,7 +237,7 @@ export async function cancelOpenTransfersFor(tx: Tx, sellerId: string, userId: s
   }
 }
 
-export async function removeMember(db: Db, actor: Actor, sellerId: string, targetUserId: string, now = new Date()) {
+export async function removeMember(db: Db, actor: Actor, sellerId: string, targetUserId: string, now = systemClock.now()) {
   const leaving = targetUserId === actor.id;
   if (leaving) {
     const m = await db.sellerMember.findUnique({ where: { sellerId_userId: { sellerId, userId: actor.id } }, select: { role: true } });
@@ -269,7 +268,7 @@ async function assertNoConflictOfInterest(tx: Tx, sellerId: string, actorId: str
 }
 
 /** AZ-007: staff suspension removes every seller permission for every member (enforced in requireSellerPermission). T-04: COI guard. */
-export async function suspendSeller(db: Db, actor: Actor, sellerId: string, input: z.infer<typeof sellerSuspendInput>, now = new Date()) {
+export async function suspendSeller(db: Db, actor: Actor, sellerId: string, input: z.infer<typeof sellerSuspendInput>, now = systemClock.now()) {
   if (actor.role !== "admin" && actor.role !== "super_admin") throw new HttpError(403, "forbidden", "Admin access required");
   if (input.endsAt && input.endsAt <= now) throw new HttpError(400, "validation_error", "endsAt must be in the future");
   return db.$transaction(async (tx) => {
@@ -287,7 +286,7 @@ export async function suspendSeller(db: Db, actor: Actor, sellerId: string, inpu
 }
 
 /** T-04: COI guard plus a second staff actor: whoever issued an active suspension cannot lift it (403 second_actor_required). */
-export async function unsuspendSeller(db: Db, actor: Actor, sellerId: string, now = new Date()) {
+export async function unsuspendSeller(db: Db, actor: Actor, sellerId: string, now = systemClock.now()) {
   if (actor.role !== "admin" && actor.role !== "super_admin") throw new HttpError(403, "forbidden", "Admin access required");
   return db.$transaction(async (tx) => {
     await lockSeller(tx, sellerId);

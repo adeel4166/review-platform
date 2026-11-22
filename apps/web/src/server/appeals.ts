@@ -10,6 +10,12 @@ export interface AppealDeps { db: AppealDb; clock: Clock; config: ModerationConf
   /** Runs T12 / T21 / R8 for the case inside the caller's transaction (transition engine). Throws HttpError 409 version_superseded when stale (AP-2). */
   applyOverturn: (tx: AppealTx, a: { id: string; caseId: string | null; contentVersion: number | null }, reviewerId: string) => Promise<void> }
 
+/** SEC-M6-07: the appellant's trust band always comes from the database, never from the request (AP-3, AP-7). */
+export async function loadAppellant(db: AppealDb, userId: string): Promise<{ id: string; trustBand: string }> {
+  const u: { trustBand?: string } | null = await db.$transaction((tx) => (tx as any).user.findUnique({ where: { id: userId }, select: { trustBand: true } }));
+  return { id: userId, trustBand: u?.trustBand ?? "NEW" };
+}
+
 export async function fileAppeal(d: AppealDeps, user: { id: string; trustBand?: string }, i: { caseId: string; statement: string; asReporter?: boolean }) {
   if (i.statement.length < 10 || i.statement.length > 2000) throw new HttpError(400, "validation_error", "statement must be 10-2000 characters");
   if (!(await d.limit(`appeal.create:${user.id}`, 3, 86400))) throw new HttpError(429, "rate_limited", "Too many appeals"); // AP-3

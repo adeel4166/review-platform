@@ -1,5 +1,5 @@
 import net from "node:net";
-import { CLAMAV_HARD_SIGNATURE_AGE_HOURS, CLAMAV_MAX_SIGNATURE_AGE_HOURS } from "@rp/core";
+import { CLAMAV_HARD_SIGNATURE_AGE_HOURS, CLAMAV_MAX_SIGNATURE_AGE_HOURS, systemClock } from "@rp/core";
 
 /** Port the pipeline scans through. The clamd TCP client below is the production implementation; tests pass a fake. */
 export interface Scanner {
@@ -26,10 +26,10 @@ export function parseClamVersion(line: string): ClamVersion {
   return { engine: m[1]!, signatureVersion: m[2]!, signatureDate: Number.isNaN(d.getTime()) ? null : d };
 }
 
-export const signatureAgeHours = (v: ClamVersion, now = new Date()) => (v.signatureDate ? (now.getTime() - v.signatureDate.getTime()) / 3_600_000 : Infinity);
+export const signatureAgeHours = (v: ClamVersion, now = systemClock.now()) => (v.signatureDate ? (now.getTime() - v.signatureDate.getTime()) / 3_600_000 : Infinity);
 
 /** INF-003 / M45-Q14: above 24 h alert + degraded, scans continue; above 72 h scans fail closed. */
-export function evaluateFreshness(v: ClamVersion, now = new Date(), limits = { max: CLAMAV_MAX_SIGNATURE_AGE_HOURS, hard: CLAMAV_HARD_SIGNATURE_AGE_HOURS }) {
+export function evaluateFreshness(v: ClamVersion, now = systemClock.now(), limits = { max: CLAMAV_MAX_SIGNATURE_AGE_HOURS, hard: CLAMAV_HARD_SIGNATURE_AGE_HOURS }) {
   const ageHours = signatureAgeHours(v, now);
   return { ageHours, state: ageHours > limits.hard ? ("too_old" as const) : ageHours > limits.max ? ("stale" as const) : ("ok" as const) };
 }
@@ -76,7 +76,7 @@ export function createClamd(opts: { host: string; port: number; timeoutMs?: numb
 }
 
 /** Health used by `/healthz` and the 10-minute freshness timer. `alertDue` limits CLAMAV_STALE to one per 6 h. */
-export async function clamHealth(s: Scanner, now = new Date()) {
+export async function clamHealth(s: Scanner, now = systemClock.now()) {
   try {
     const v = await s.version();
     const f = evaluateFreshness(v, now);
@@ -91,7 +91,7 @@ export async function clamHealth(s: Scanner, now = new Date()) {
 export class StaleAlertLimiter {
   private last = 0;
   constructor(private everyMs = 6 * 3_600_000) {}
-  due(now = Date.now()) {
+  due(now = systemClock.now().getTime()) {
     if (now - this.last < this.everyMs) return false;
     this.last = now;
     return true;

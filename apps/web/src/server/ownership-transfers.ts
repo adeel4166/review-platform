@@ -3,7 +3,7 @@
  * acceptance (2FA + step-up); REMOVE_OWNER needs none but can be cancelled. Nothing changes before createdAt + 72 h, at least
  * one OWNER always remains, and every transition is audited. The seller id always comes from the path or the loaded row.
  */
-import { assertAuditMetadataClean, hashEmailToken, type SellerMemberRole } from "@rp/core";
+import { assertAuditMetadataClean, hashEmailToken, type SellerMemberRole, systemClock } from "@rp/core";
 import type { Prisma } from "@rp/db";
 import type { Db } from "./db";
 import { HttpError } from "./http";
@@ -83,7 +83,7 @@ async function sellerBlocked(tx: Tx, sellerId: string, now: Date) {
 export interface CreateTransferInput { kind: TransferKind; targetUserId: string; initiatorOutcome?: Outcome; targetOutcome?: Outcome }
 
 /** T1. Needs the OWNER role, a 2FA-verified session (gate in authorizeSeller) and a fresh step-up. */
-export async function createTransfer(db: Db, actor: Actor, sellerId: string, input: CreateTransferInput, now = new Date()) {
+export async function createTransfer(db: Db, actor: Actor, sellerId: string, input: CreateTransferInput, now = systemClock.now()) {
   await requireSellerPermission(db, actor, "seller.member.manage", sellerId, now);
   assertFreshStepUp(actor.stepUpAt, now);
   if (input.targetUserId === actor.id) throw new HttpError(400, "validation_error", "Choose another member");
@@ -168,7 +168,7 @@ async function executeLocked(tx: Tx, t: TransferRow, now: Date): Promise<{ ok: t
 }
 
 /** T2/T3/T3': the target accepts. Needs a 2FA-verified session and a fresh step-up. Before executeAfter this only records acceptance. */
-export async function acceptTransfer(db: Db, actor: Actor, transferId: string, now = new Date()) {
+export async function acceptTransfer(db: Db, actor: Actor, transferId: string, now = systemClock.now()) {
   if (!actor.twoFactor?.enrolled || !actor.twoFactor.verified) throw new HttpError(403, "TWO_FACTOR_REQUIRED", "Two-factor authentication required");
   assertFreshStepUp(actor.stepUpAt, now);
   const pre = await db.sellerOwnershipTransfer.findUnique({ where: { id: transferId }, select: { sellerId: true, targetUserId: true } });
@@ -192,7 +192,7 @@ export async function acceptTransfer(db: Db, actor: Actor, transferId: string, n
 }
 
 /** Job/sweeper T4/T5 (`maintenance.ownership-transfer-execute`): idempotent, a non-ACCEPTED or not-yet-due transfer is a no-op. */
-export async function executeTransfer(db: Db, transferId: string, now = new Date()) {
+export async function executeTransfer(db: Db, transferId: string, now = systemClock.now()) {
   const pre = await db.sellerOwnershipTransfer.findUnique({ where: { id: transferId }, select: { sellerId: true } });
   if (!pre) return { status: "MISSING" as const };
   return db.$transaction(async (tx) => {
@@ -205,7 +205,7 @@ export async function executeTransfer(db: Db, transferId: string, now = new Date
 }
 
 /** T7 sweeper: PENDING transfers whose acceptBy passed become EXPIRED. */
-export async function expireTransfers(db: Db, now = new Date()) {
+export async function expireTransfers(db: Db, now = systemClock.now()) {
   const due = await db.sellerOwnershipTransfer.findMany({ where: { status: "PENDING", acceptBy: { lte: now } }, select: { id: true, sellerId: true }, take: 100 });
   let n = 0;
   for (const d of due) {
@@ -221,7 +221,7 @@ export async function expireTransfers(db: Db, now = new Date()) {
 }
 
 /** T6 (in app): the initiator, any OWNER of the seller or the target. Protective: no 2FA gate and no step-up (ADR-0020). */
-export async function cancelTransfer(db: Db, actor: Actor, transferId: string, now = new Date()) {
+export async function cancelTransfer(db: Db, actor: Actor, transferId: string, now = systemClock.now()) {
   const pre = await db.sellerOwnershipTransfer.findUnique({ where: { id: transferId }, select: { sellerId: true } });
   if (!pre) throw notFound();
   return db.$transaction(async (tx) => {
@@ -241,7 +241,7 @@ export async function cancelTransfer(db: Db, actor: Actor, transferId: string, n
 }
 
 /** T6 (staff): an ADMIN who is not a member of the seller; reason code required. */
-export async function staffCancelTransfer(db: Db, actor: Actor, transferId: string, reasonCode: string, now = new Date()) {
+export async function staffCancelTransfer(db: Db, actor: Actor, transferId: string, reasonCode: string, now = systemClock.now()) {
   if (actor.role !== "admin" && actor.role !== "super_admin") throw new HttpError(403, "forbidden", "Admin access required");
   if (!/^[A-Z0-9_]{2,40}$/.test(reasonCode)) throw new HttpError(400, "validation_error", "reasonCode is required");
   const pre = await db.sellerOwnershipTransfer.findUnique({ where: { id: transferId }, select: { sellerId: true } });
@@ -260,7 +260,7 @@ export async function staffCancelTransfer(db: Db, actor: Actor, transferId: stri
 }
 
 /** T6 (link): no sign-in. One conditional update burns the token; every failure is the same 400. */
-export async function cancelByLink(db: Db, rawToken: string, now = new Date()) {
+export async function cancelByLink(db: Db, rawToken: string, now = systemClock.now()) {
   if (typeof rawToken !== "string" || rawToken.length < 20 || rawToken.length > 128) throw OWNERSHIP_CHANGE.linkFailure();
   const tok = await db.sellerTransferCancelToken.findUnique({ where: { tokenHash: hashEmailToken(rawToken) }, select: { id: true, transferId: true, usedAt: true } });
   if (!tok) throw OWNERSHIP_CHANGE.linkFailure();
@@ -278,7 +278,7 @@ export async function cancelByLink(db: Db, rawToken: string, now = new Date()) {
 }
 
 /** GET list for the seller's OWNERs (open + the last 20 ended) or the target. */
-export async function listTransfers(db: Db, actor: Actor, sellerId: string, now = new Date()) {
+export async function listTransfers(db: Db, actor: Actor, sellerId: string, now = systemClock.now()) {
   await requireSellerPermission(db, actor, "seller.member.manage", sellerId, now);
   const [open, ended] = await Promise.all([
     db.sellerOwnershipTransfer.findMany({ where: { sellerId, status: { in: [...OPEN] } }, orderBy: { createdAt: "desc" }, select: { ...TRANSFER_SELECT, acceptedAt: true, createdAt: true } }),

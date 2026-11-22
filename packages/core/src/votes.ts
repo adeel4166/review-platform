@@ -1,3 +1,4 @@
+import { systemClock } from "./clock";
 /** Helpful / not-helpful votes (m4-m5-spec 2). Pure rules, no I/O. */
 export type VoteValue = "HELPFUL" | "NOT_HELPFUL";
 export type VoteDeny = "SELF_VOTE" | "CONFLICT_OF_INTEREST" | "VOTING_RESTRICTED" | "EMAIL_NOT_VERIFIED" | "NOT_FOUND";
@@ -31,5 +32,5 @@ export function voteDelta(prev: VoteValue | null, next: VoteValue | null): { h: 
 }
 
 /** NEW account = created less than VOTE_NEW_ACCOUNT_DAYS days ago (D-A3). */
-export const isNewAccount = (createdAt: Date, now = new Date()): boolean =>
+export const isNewAccount = (createdAt: Date, now = systemClock.now()): boolean =>
   now.getTime() - createdAt.getTime() < VOTE_NEW_ACCOUNT_DAYS * 86_400_000;

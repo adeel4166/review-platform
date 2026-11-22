@@ -1,8 +1,7 @@
 import {
   CLAIM_CONFIG, EMAIL_TOKEN_TTL_MS, ClaimConflictError, ClaimConflictOfInterestError, ClaimInputError, ClaimNotFoundError, ContestWindowOpenError, DAY_MS, DomainNotAllowedError,
   DuplicateApprovalError, InvalidClaimTransitionError, SelfDecisionError, applyClaimTransition, assertAuditMetadataClean, assertHasMx, assertOwnableDomain,
-  EmailNotAllowedError, assertClaimableBusinessEmail, generateChallenge, reviewRequirements, sellerNameSkeleton, type ClaimInput,
-} from "@rp/core";
+  EmailNotAllowedError, assertClaimableBusinessEmail, generateChallenge, reviewRequirements, sellerNameSkeleton, type ClaimInput,systemClock } from "@rp/core";
 import type { z } from "zod";
 import type { Db } from "./db";
 import { HttpError } from "./http";
@@ -30,7 +29,7 @@ export function mapClaimError(e: unknown): never {
 
 /** POST /api/sellers/:sellerId/claims (spec §5.1). */
 export async function submitClaim(db: Db, actor: Actor, sellerId: string, input: z.infer<typeof claimSubmitInput>, deps: SubmitDeps = {}) {
-  const now = deps.now ?? new Date();
+  const now = deps.now ?? systemClock.now();
   await requireSellerPermission(db, actor, "seller.claim.submit", sellerId, now);
   const user = await db.user.findUnique({ where: { id: actor.id }, select: { emailVerifiedAt: true } });
   if (!user?.emailVerifiedAt) throw new HttpError(403, "email_unverified", "Verify your email address first");
@@ -152,7 +151,7 @@ export async function submitClaim(db: Db, actor: Actor, sellerId: string, input:
 }
 
 /** C10: only an OWNER/MANAGER of the claiming seller (derived from the claim row, not the request) can withdraw. */
-export async function withdrawClaim(db: Db, actor: Actor, claimId: string, now = new Date()) {
+export async function withdrawClaim(db: Db, actor: Actor, claimId: string, now = systemClock.now()) {
   const c = await db.sellerOwnershipClaim.findUnique({ where: { id: claimId }, select: { sellerId: true } });
   if (!c) throw new HttpError(404, "not_found", "Claim not found");
   await requireSellerPermission(db, actor, "seller.claim.submit", c.sellerId, now);
@@ -189,7 +188,7 @@ export async function getClaimForStaff(db: Db, claimId: string) {
 }
 
 /** POST /api/admin/claims/:id/decision. Self-decision is forbidden (SelfDecisionError); members of either seller get CONFLICT_OF_INTEREST. */
-export async function decideClaim(db: Db, actor: Actor, claimId: string, body: z.infer<typeof claimDecisionInput>, now = new Date()) {
+export async function decideClaim(db: Db, actor: Actor, claimId: string, body: z.infer<typeof claimDecisionInput>, now = systemClock.now()) {
   if (actor.role !== "admin" && actor.role !== "super_admin") throw new HttpError(403, "forbidden", "Admin access required");
   const staff = { id: actor.id, type: "STAFF" as const };
   let input: ClaimInput;

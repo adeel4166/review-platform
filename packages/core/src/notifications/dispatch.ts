@@ -8,7 +8,14 @@ export interface NotificationPorts {
   insertInApp(row: { recipientId: string; type: NotificationType; actorId: string | null; entityType: string | null; entityId: string | null; data: Record<string, unknown> | null; groupKey: string; createdAt: Date }): Promise<boolean>;
   /** Enqueue with the job id as the idempotency key. */
   enqueueEmail(jobId: string, e: NotificationEvent): Promise<void>;
+  /** SEC-M7-02: e-mails already sent or queued for the recipient since `since` (optional: ports without it skip the cap). */
+  recentEmails?(recipientId: string, since: Date): Promise<number>;
 }
+/** SEC-M7-02: non-mandatory types are capped per recipient; above the cap the in-app row is kept and the e-mail is dropped (digest). */
+export const EMAIL_CAP = { perHour: 5 } as const;
+/** Grouping key for e-mail only: NEW_FOLLOWER collapses per recipient and day, so N sock-puppet follows cost one e-mail, not N. */
+export const emailJobKey = (e: NotificationEvent): string =>
+  e.type === "NEW_FOLLOWER" ? `notif__NEW_FOLLOWER__${e.recipientId}__${e.at.toISOString().slice(0, 10)}` : `notif__${e.eventId}__${e.recipientId}`;
 export const groupKeyOf = (e: NotificationEvent): string =>
   DAILY_GROUPED.has(e.type) ? `${e.type}:${e.entityId ?? "-"}:${e.at.toISOString().slice(0, 10)}` : `${e.type}:${e.eventId}`;
 export interface DispatchResult { inApp: boolean; email: boolean; duplicate: boolean }
@@ -22,8 +29,8 @@ export async function dispatch(p: NotificationPorts, e: NotificationEvent): Prom
     duplicate = !inApp;
   }
   if (!off.has("EMAIL") && !duplicate) {
-    await p.enqueueEmail(`notif__${e.eventId}__${e.recipientId}`, e);
-    email = true;
+    const capped = !isMandatory(e.type) && !!p.recentEmails && (await p.recentEmails(e.recipientId, new Date(e.at.getTime() - 3_600_000))) >= EMAIL_CAP.perHour;
+    if (!capped) { await p.enqueueEmail(emailJobKey(e), e); email = true; }
   }
   return { inApp, email, duplicate };
 }

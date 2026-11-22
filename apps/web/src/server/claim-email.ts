@@ -1,5 +1,5 @@
 /** BUSINESS_EMAIL_DOMAIN token consumption and denial (m3b-spec 4.4, C21). */
-import { applyClaimTransition, assertAuditMetadataClean, hashEmailToken } from "@rp/core";
+import { applyClaimTransition, assertAuditMetadataClean, hashEmailToken, systemClock } from "@rp/core";
 import type { Db } from "./db";
 import { HttpError } from "./http";
 import { mapClaimError } from "./claims";
@@ -15,7 +15,7 @@ const looksLikeToken = (t: unknown): t is string => typeof t === "string" && t.l
  * consumed, so a colleague at the brand's mailbox (or a replaying other user) can neither complete nor burn the claim. The consume
  * is one conditional update inside the same transaction as the CHECK_PASSED transition.
  */
-export async function verifyBusinessEmail(db: Db, actor: Actor, rawToken: string, now = new Date()) {
+export async function verifyBusinessEmail(db: Db, actor: Actor, rawToken: string, now = systemClock.now()) {
   if (!looksLikeToken(rawToken)) throw invalid();
   const user = await db.user.findUnique({ where: { id: actor.id }, select: { status: true, emailVerifiedAt: true } });
   if (!user || user.status !== "ACTIVE" || !user.emailVerifiedAt) throw invalid();
@@ -44,7 +44,7 @@ export async function verifyBusinessEmail(db: Db, actor: Actor, rawToken: string
  * POST /api/claims/email-verify/deny ("this wasn't me", C21). No sign-in: the mailbox controls the domain, so a valid unconsumed
  * token is a legitimate veto. The claim is rejected (RULE, mailbox_owner_denied), the seller is flagged for name review.
  */
-export async function denyBusinessEmail(db: Db, rawToken: string, now = new Date()) {
+export async function denyBusinessEmail(db: Db, rawToken: string, now = systemClock.now()) {
   if (!looksLikeToken(rawToken)) throw invalid();
   const tok = await db.emailVerificationToken.findUnique({
     where: { tokenHash: hashEmailToken(rawToken) },

@@ -1,4 +1,4 @@
-import { appUrl, generateEmailToken, hashEmailToken, renderMail, type MailProvider } from "@rp/core";
+import { appUrl, generateEmailToken, hashEmailToken, renderMail, type MailProvider, systemClock } from "@rp/core";
 
 const HOUR_MS = 3_600_000;
 export const REMINDER_LEAD_MS = 24 * HOUR_MS;
@@ -20,7 +20,7 @@ export interface TransferNotifyResult { outcome: "SENT" | "SKIPPED"; executeAfte
  * hash is what invalidates the earlier link. Nothing is sent once the transfer is no longer PENDING/ACCEPTED.
  */
 export async function sendTransferCancelLinks(d: { db: TransferNotifyDb; mail: MailProvider; baseUrl?: string; now?: () => Date }, transferId: string, stage: TransferStage, jobKey: string): Promise<TransferNotifyResult> {
-  const now = (d.now ?? (() => new Date()))();
+  const now = (d.now ?? (() => systemClock.now()))();
   const t = await d.db.sellerOwnershipTransfer.findUnique({ where: { id: transferId }, select: { id: true, kind: true, status: true, initiatorId: true, targetUserId: true, executeAfter: true, seller: { select: { slug: true } } } });
   if (!t || (t.status !== "PENDING" && t.status !== "ACCEPTED")) return { outcome: "SKIPPED" };
   const rows = (await d.db.sellerTransferCancelToken.findMany({ where: { transferId, usedAt: null } })).filter((r) => stage === "REMINDER" || !r.sentAt);

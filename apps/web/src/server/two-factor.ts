@@ -1,8 +1,7 @@
 /** TOTP 2FA service (m3b-spec 2.2-2.8, ADR-0019). All state lives in the database; Redis only throttles. */
 import {
   assertAuditMetadataClean, generateRecoveryCode, generateTotpSecret, hashRecoveryCode, isRecoveryCodeShape, matchTotp, openSecret,
-  otpauthUri, parseKeyRing, RECOVERY_CODE_COUNT, sealSecret, base32Encode, totpAad, type KeyRing,
-} from "@rp/core";
+  otpauthUri, parseKeyRing, RECOVERY_CODE_COUNT, sealSecret, base32Encode, totpAad, type KeyRing,systemClock } from "@rp/core";
 import type { Prisma, PrismaClient } from "@rp/db";
 import { randomUUID } from "node:crypto";
 import { HttpError } from "./http";
@@ -24,7 +23,7 @@ export const ENROL_TTL_MS = 15 * 60_000;
 
 export function envDeps(limit: TfDeps["limit"]): TfDeps {
   return {
-    now: () => new Date(),
+    now: () => systemClock.now(),
     totpKeys: () => parseKeyRing(process.env.TOTP_ENC_KEYS, process.env.TOTP_ENC_ACTIVE_KEY_ID),
     peppers: () => parseKeyRing(process.env.RECOVERY_CODE_PEPPERS, process.env.RECOVERY_CODE_ACTIVE_KEY_ID),
     limit,
@@ -82,7 +81,7 @@ export async function twoFactorStatus(db: TfDb, userId: string) {
   const row = await db.twoFactorTotp.findUnique({ where: { userId }, select: { confirmedAt: true, pendingExpiresAt: true } });
   return {
     enabled: !!row?.confirmedAt,
-    enrolling: !!row?.pendingExpiresAt && row.pendingExpiresAt > new Date(),
+    enrolling: !!row?.pendingExpiresAt && row.pendingExpiresAt > systemClock.now(),
     recoveryCodesRemaining: await db.recoveryCode.count({ where: { userId, usedAt: null } }),
   };
 }

@@ -46,3 +46,5 @@ export * from "./catalog/aggregate";
 export * from "./notifications";
 export * from "./social";
 export * from "./compare";
+export * from "./retention";
+export * from "./log-scrub";

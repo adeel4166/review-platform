@@ -1,5 +1,5 @@
 import type { z } from "zod";
-import { isNewAccount, openReportKey, reportWeightFor } from "@rp/core";
+import { isNewAccount, openReportKey, reportWeightFor, systemClock } from "@rp/core";
 import type { Db } from "./db";
 import { HttpError } from "./http";
 import type { Actor } from "./session";
@@ -12,7 +12,7 @@ export interface ReportCtx { ipHash?: string | null; now?: Date; charge?: () => 
 
 /** 202 for new and repeated reports alike; content always stays live (F-9). `details` is never logged, queued or audited. */
 export async function createReport(db: Db, reporterId: string, target: Target, input: z.infer<typeof reportInput>, ctx: ReportCtx = {}) {
-  const now = ctx.now ?? new Date();
+  const now = ctx.now ?? systemClock.now();
   const isReview = "reviewId" in target;
   const content = isReview
     ? await db.review.findUnique({ where: { id: target.reviewId }, select: { id: true, authorId: true, status: true } })
@@ -92,7 +92,7 @@ async function loadReportCase(tx: Db, actor: Actor, caseId: string): Promise<Cas
 }
 
 /** T18: dismiss all reports; the content stays live. */
-export async function dismissReports(db: Db, actor: Actor, caseId: string, input: z.infer<typeof dismissReportsInput>, now = new Date()) {
+export async function dismissReports(db: Db, actor: Actor, caseId: string, input: z.infer<typeof dismissReportsInput>, now = systemClock.now()) {
   requireStaff(actor);
   return db.$transaction(async (t) => {
     const tx = t as unknown as Db;
@@ -106,7 +106,7 @@ export async function dismissReports(db: Db, actor: Actor, caseId: string, input
 }
 
 /** T17: remove the reported content, resolve reports, supersede other open cases, emit the statement-of-reasons notice. */
-export async function removeReportedContent(db: Db, actor: Actor, caseId: string, input: z.infer<typeof removeContentInput>, now = new Date()) {
+export async function removeReportedContent(db: Db, actor: Actor, caseId: string, input: z.infer<typeof removeContentInput>, now = systemClock.now()) {
   requireStaff(actor);
   return db.$transaction(async (t) => {
     const tx = t as unknown as Db;
@@ -128,7 +128,7 @@ export async function removeReportedContent(db: Db, actor: Actor, caseId: string
 }
 
 /** An abusive report no longer counts toward the case. */
-export async function rejectReport(db: Db, actor: Actor, reportId: string, now = new Date()) {
+export async function rejectReport(db: Db, actor: Actor, reportId: string, now = systemClock.now()) {
   requireStaff(actor);
   return db.$transaction(async (t) => {
     const tx = t as unknown as Db;

@@ -1,8 +1,9 @@
+import { systemClock } from "@rp/core";
 import http from "node:http";
 import { StaleAlertLimiter, clamHealth, type Scanner } from "./clamd";
 
 /** Pure handler so INF-007 is testable without a socket: 200 when signatures are fresh, 503 + reason otherwise. */
-export async function healthResponse(scanner: Scanner, limiter: StaleAlertLimiter, alert: (kind: string, d: Record<string, unknown>) => void, now = new Date()) {
+export async function healthResponse(scanner: Scanner, limiter: StaleAlertLimiter, alert: (kind: string, d: Record<string, unknown>) => void, now = systemClock.now()) {
   const h = await clamHealth(scanner, now);
   if (h.ok) return { status: 200, body: { status: "ok", clamav: h.clamav } };
   if (h.reason === "clamav_stale" && limiter.due(now.getTime())) alert("CLAMAV_STALE", { ageHours: Math.round(h.ageHours) }); // at most one per 6 h

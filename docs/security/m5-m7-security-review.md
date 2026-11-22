@@ -242,3 +242,10 @@ needs SUPER_ADMIN (SEC-M6-05); a burst of 11 reviews/hour on one product produce
 
 Not covered: runtime behaviour of S3/R2 policies, ClamAV and CDN purge, real SMTP, a real AI provider's behaviour under injection, the
 future PDF rasteriser and OCR, messaging (Phase 2).
+
+## Resolution log (M8-01, task #85)
+
+SEC-M6-07 (`loadAppellant` reads `trustBand`; limiter honours max/window), SEC-M6-08 (alerts enqueue `security.alert` to the worker, which pages `SECURITY_ALERT_EMAIL`; staff sessions without `sid` rejected in `staffOf` and break-glass),
+SEC-M6-09 (`roleFrom`/`staffOf`/`requireModerator` know MODERATOR and SENIOR_MODERATOR; moderation routes still use `requireAdmin` until the gate matrices are re-run),
+SEC-M7-02 (`EMAIL_CAP`, per-recipient-per-day `NEW_FOLLOWER` e-mail key), SEC-M7-03 (24 h burst window, homoglyph folding, NEW/LOW threshold 0.4, `review_lsh_buckets`-backed index),
+SEC-M7-04 (`sharedIpWeight`; stored weight is authoritative so `RET-IPHASH` never changes counted votes). Tests: `apps/web/src/server/m8-p2.test.ts`, `packages/core/src/m8-p2.test.ts`, `apps/worker/src/trust/shared-index.test.ts`.

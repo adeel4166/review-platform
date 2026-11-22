@@ -1,6 +1,6 @@
 import type { TrustBand } from "./weights";
 
-export const BURST = { perProductPerHour: 10, lowTrustPerProductPerHour: 5, windowMinutes: 60 } as const;
+export const BURST = { perProductPerHour: 10, lowTrustPerProductPerHour: 5, windowMinutes: 60, /** SEC-M7-03: slow drip stays under the hourly limit, so a 24 h window is checked too. */ perProductPerDay: 40, lowTrustPerProductPerDay: 15, dayWindowMinutes: 1440 } as const;
 export interface BurstReview { id: string; createdAt: Date; authorBand: TrustBand }
 export interface BurstState { startedAt: Date; lastReviewAt: Date; endsAt: Date; reviewCount: number; lowTrustCount: number }
 export interface BurstVerdict { burst: boolean; reviewCount: number; lowTrustCount: number; state?: BurstState; forceUnsure?: "PRODUCT_BURST" }
@@ -10,7 +10,10 @@ export function detectProductBurst(reviews: readonly BurstReview[], now: Date, o
   const from = now.getTime() - cfg.windowMinutes * 60_000;
   const win = reviews.filter((r) => r.createdAt.getTime() > from && r.createdAt.getTime() <= now.getTime());
   const low = win.filter((r) => r.authorBand === "NEW" || r.authorBand === "LOW").length;
-  const tripped = win.length > cfg.perProductPerHour || low > cfg.lowTrustPerProductPerHour;
+  const dayFrom = now.getTime() - cfg.dayWindowMinutes * 60_000;
+  const day = reviews.filter((r) => r.createdAt.getTime() > dayFrom && r.createdAt.getTime() <= now.getTime());
+  const dayLow = day.filter((r) => r.authorBand === "NEW" || r.authorBand === "LOW").length;
+  const tripped = win.length > cfg.perProductPerHour || low > cfg.lowTrustPerProductPerHour || day.length > cfg.perProductPerDay || dayLow > cfg.lowTrustPerProductPerDay;
   const continuing = !!open && open.endsAt.getTime() > now.getTime();
   if (!tripped && !continuing) return { burst: false, reviewCount: win.length, lowTrustCount: low };
   const last = win.reduce((m, r) => (r.createdAt > m ? r.createdAt : m), now);

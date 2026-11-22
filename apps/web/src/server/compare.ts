@@ -1,4 +1,4 @@
-import { CompareError, buildComparison, parseCompareIds, type CompareProductRow } from "@rp/core";
+import { CompareError, buildComparison, parseCompareIds, type CompareProductRow, systemClock } from "@rp/core";
 import type { Db } from "./db";
 import { HttpError } from "./http";
 
@@ -7,7 +7,7 @@ const cache = new Map<string, { at: number; body: unknown }>();
 export const clearCompareCache = () => cache.clear();
 
 /** Cached aggregate columns only: one product query + one seller query, no review scans (TRS-006). */
-export async function compare(db: Db, rawIds: string | null, now = Date.now()) {
+export async function compare(db: Db, rawIds: string | null, now = systemClock.now().getTime()) {
   let ids: string[];
   try { ids = parseCompareIds(rawIds); }
   catch (e) { if (e instanceof CompareError) throw new HttpError(422, e.code, e.code === "compare_size" ? "Compare 2 to 4 products" : "Products must be distinct"); throw e; }

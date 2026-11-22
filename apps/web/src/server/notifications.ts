@@ -1,4 +1,4 @@
-import { CHANNELS, NOTIFICATION_TYPES, assertPreferenceAllowed, MandatoryNotificationError, preferenceView, type Channel, type NotificationType } from "@rp/core";
+import { CHANNELS, NOTIFICATION_TYPES, assertPreferenceAllowed, MandatoryNotificationError, preferenceView, type Channel, type NotificationType, systemClock } from "@rp/core";
 import { z } from "zod";
 import type { Db } from "./db";
 import { HttpError } from "./http";
@@ -18,7 +18,7 @@ export async function listNotifications(db: Db, userId: string, q: z.infer<typeo
   const unread = await db.notification.count({ where: { recipientId: userId, readAt: null } });
   return { items: rows.slice(0, PAGE), nextCursor: rows.length > PAGE ? rows[PAGE - 1]!.id : null, unread };
 }
-export async function markRead(db: Db, userId: string, input: z.infer<typeof readInput>, now = new Date()) {
+export async function markRead(db: Db, userId: string, input: z.infer<typeof readInput>, now = systemClock.now()) {
   const where = "all" in input ? { recipientId: userId, readAt: null } : { recipientId: userId, id: { in: input.ids }, readAt: null };
   return { updated: (await db.notification.updateMany({ where, data: { readAt: now } })).count };
 }

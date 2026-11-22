@@ -112,7 +112,9 @@ export const limitProofCreate = (userId: string) => enforce([{ key: `proof:u:d:$
 export { hashIp } from "@rp/core";
 
 /** AP-3: `appeal.create` 3 per day per user. Fails closed (appeals are rare and abuse-prone). */
-export const limitAppeal = (userId: string) => enforce([closed({ key: `appeal:${userId}`, rule: rule(3, DAY) })]);
+export const limitAppeal = (userId: string, max = 3, windowMs = DAY) => enforce([closed({ key: `appeal:${userId}`, rule: rule(max, windowMs) })]);
+/** Account export: 1 per day per user (spec 25.1). */
+export const limitAccountExport = (userId: string) => enforce([closed({ key: `account.export:${userId}`, rule: rule(1, DAY) })]);
 /** SEC-M4-06 / MOD-015: author edits and resubmits share `content.edit`, 5 per rolling 24 h. */
 export const limitContentEdit = (userId: string) => enforce([{ key: `content.edit:${userId}`, rule: rule(5, DAY) }]);
 

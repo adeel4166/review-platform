@@ -14,8 +14,9 @@ import { sendClaimNotice, type NotifyDb } from "./verification/notify";
 import type { WorkerDb } from "./moderation";
 import { liveProviderCall, processAssessJob } from "./moderation/live";
 import { handleNotificationRequested, prismaNotificationPorts } from "./notifications";
-import { nearDuplicateIndex, prismaBurstPort, runNightlyDecay, runProductBursts, runTrustRecompute, subjectKeyForTarget, sweepVoteAnomalies } from "./trust/jobs";
+import { prismaNearDuplicateIndex, prismaBurstPort, runNightlyDecay, runProductBursts, runTrustRecompute, subjectKeyForTarget, sweepVoteAnomalies } from "./trust/jobs";
 import { prismaSignalStore } from "./trust/prisma-ports";
+import { runM8Job } from "./m8-jobs";
 
 export type Processor = (job: Job, token?: string) => Promise<void>;
 
@@ -68,9 +69,9 @@ export const processors: Partial<Record<QueueName, Processor>> = {
   [QUEUES.moderation]: async (job, token) => {
     const p = moderationJobSchema.parse(job.data);
     // M6 pipeline (runAssess): ensure case -> M7 routing -> media wait -> rules -> provider -> classify -> transition. Never the legacy path.
-    const outcome = await processAssessJob({ db: prisma, call: getProviderCall(), burst: prismaBurstPort(prisma), dup: { index: nearDuplicateIndex } }, p);
+    const outcome = await processAssessJob({ db: prisma, call: getProviderCall(), burst: prismaBurstPort(prisma), dup: { index: prismaNearDuplicateIndex(prisma) } }, p);
     if (outcome.status === "delay") {
-      await job.moveToDelayed(Date.now() + outcome.delayMs, token); // media still processing: poll again, no attempt consumed
+      await job.moveToDelayed(systemClock.now().getTime() + outcome.delayMs, token); // media still processing: poll again, no attempt consumed
       throw new DelayedError();
     }
     console.log(JSON.stringify({ msg: "moderation.done", jobId: job.id, subject: p.subjectType, id: p.subjectId, outcome }));
@@ -81,7 +82,7 @@ export const processors: Partial<Record<QueueName, Processor>> = {
       const data = (job.data ?? {}) as { fileId?: string; proofId?: string; rule?: string };
       let outcome = "SKIPPED";
       if (job.name === "proof.file_uploaded" && data.fileId) outcome = await processProofFile(d, data.fileId);
-      else if (job.name === "proof.submitted" && data.proofId) outcome = await finalizeProof(d.db, data.proofId, new Date());
+      else if (job.name === "proof.submitted" && data.proofId) outcome = await finalizeProof(d.db, data.proofId, systemClock.now());
       else if (job.name === "proof.purge_requested" && data.proofId) outcome = await purgeProofFiles(d, data.proofId, "PROOF_ORIGINAL");
       console.log(JSON.stringify({ msg: "proof.media.done", jobId: job.id, type: job.name, outcome })); // ids and outcome only
       return;
@@ -108,6 +109,13 @@ export const processors: Partial<Record<QueueName, Processor>> = {
       console.log(JSON.stringify({ msg: "notification.done", jobId: job.id, type: job.name, outcome }));
       return;
     }
+    if (job.name === "security.alert") { // SEC-M6-08: real sink for break-glass and other security alerts (kind + ids only)
+      const kind = String(((job.data ?? {}) as { kind?: string }).kind ?? "unknown").slice(0, 64);
+      securityAlert(kind, { jobId: job.id });
+      const to = process.env.SECURITY_ALERT_EMAIL;
+      if (to) await getMail().send({ to, subject: `[security] ${kind}`, text: `Security alert ${kind}. Open the staff console audit log for details.` } as never, { idempotencyKey: key });
+      return;
+    }
     if (job.name === "notification.requested") {
       const ports = prismaNotificationPorts(prisma, (n, d, o) => getNotificationsQueue().add(n, d, o));
       outcome = await handleNotificationRequested(prisma, ports, systemClock, key, (job.data ?? {}) as Record<string, string>);
@@ -125,7 +133,7 @@ export const processors: Partial<Record<QueueName, Processor>> = {
         const r = await sendTransferCancelLinks({ db: prisma as unknown as TransferNotifyDb, mail: getMail() }, transferId, requested ? "REQUESTED" : "REMINDER", key);
         outcome = r.outcome;
         // T - 24 h reminder (SEL-024). The deterministic job id makes a retried or duplicate request schedule it once.
-        const delay = requested && r.executeAfter ? reminderDelayMs(r.executeAfter, new Date()) : null;
+        const delay = requested && r.executeAfter ? reminderDelayMs(r.executeAfter, systemClock.now()) : null;
         if (delay !== null) await getNotificationsQueue().add("seller.ownership_transfer_reminder", { transferId }, { jobId: `otx__${transferId}__REMINDER`, delay });
       }
     } else if (job.name.startsWith("claim.") || job.name === "seller.downgraded") {
@@ -133,6 +141,11 @@ export const processors: Partial<Record<QueueName, Processor>> = {
       if (id) outcome = await sendClaimNotice({ db: prisma as unknown as NotifyDb, mail: getMail() }, job.name, id, key);
     }
     console.log(JSON.stringify({ msg: "notification.done", jobId: job.id, type: job.name, outcome })); // never the address, token or URL
+  },
+  // M8 (spec 25.2): retention, erasure, ledger replay, key rotation, audit export. Payloads are ids/dates only.
+  [QUEUES.maintenance]: async (job) => {
+    const r = await runM8Job(job.name, (job.data ?? {}) as Record<string, unknown>);
+    console.log(JSON.stringify({ msg: "m8.job.done", jobId: job.id, type: job.name, result: r === null || typeof r !== "object" ? r : "ok" }));
   },
   // M7 trust (SEC-M7-01): recompute on signal, nightly decay, burst exclusion, vote-ring freeze.
   [QUEUES.trust]: async (job) => {

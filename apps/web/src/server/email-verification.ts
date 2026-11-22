@@ -1,4 +1,4 @@
-import { EMAIL_RESEND_PER_DAY, EMAIL_RESEND_PER_HOUR, EMAIL_TOKEN_TTL_MS, hashEmailToken } from "@rp/core";
+import { EMAIL_RESEND_PER_DAY, EMAIL_RESEND_PER_HOUR, EMAIL_TOKEN_TTL_MS, hashEmailToken, systemClock } from "@rp/core";
 import { HttpError } from "./http";
 
 /** The subset of Prisma used here (lets unit tests pass a fake). */
@@ -21,7 +21,7 @@ const invalid = () => new HttpError(400, "invalid_or_expired", "This link is inv
  * Consumes an ACCOUNT_EMAIL token (ADR-0016 §3.3). Every failure (unknown, replayed, expired, invalidated, email changed)
  * yields the same 400, so the endpoint is not an oracle. Single use is enforced by an atomic conditional update.
  */
-export async function verifyEmailToken(db: VerifyDb, raw: string, now = new Date(), newPasswordHash?: string): Promise<void> {
+export async function verifyEmailToken(db: VerifyDb, raw: string, now = systemClock.now(), newPasswordHash?: string): Promise<void> {
   const row = await db.emailVerificationToken.findUnique({ where: { tokenHash: hashEmailToken(raw) } });
   if (!row || row.purpose !== "ACCOUNT_EMAIL" || !row.sentAt || row.consumedAt || row.invalidatedAt || row.expiresAt <= now) throw invalid();
   await db.$transaction(async (tx) => {
@@ -47,7 +47,7 @@ export async function verifyEmailToken(db: VerifyDb, raw: string, now = new Date
 }
 
 /** Resend: invalidates open tokens, issues a fresh one and queues the mail. Always "accepted" for an unverified user. */
-export async function resendVerification(db: VerifyDb, userId: string, now = new Date()): Promise<"queued" | "already_verified" | "limited"> {
+export async function resendVerification(db: VerifyDb, userId: string, now = systemClock.now()): Promise<"queued" | "already_verified" | "limited"> {
   const user = await db.user.findUnique({ where: { id: userId }, select: { id: true, email: true, emailVerifiedAt: true } });
   if (!user) throw new HttpError(401, "unauthenticated", "Sign in required");
   if (user.emailVerifiedAt) return "already_verified";

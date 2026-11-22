@@ -19,6 +19,8 @@ export const routes: Record<string, QueueName> = {
   "moderation.strike_requested": QUEUES.trust,
   "enforcement.zero_tolerance_hold": QUEUES.moderation,
   "notification.requested": QUEUES.notifications,
+  "account.erase": QUEUES.maintenance, // M8 (ADR-0033)
+  "security.alert": QUEUES.notifications, // SEC-M6-08
   "trust.signal": QUEUES.trust,
   "appeal.submitted": QUEUES.notifications,
   "appeal.decided": QUEUES.notifications,

@@ -1,4 +1,4 @@
-import { authorizeVote, isNewAccount, voteDelta, voteWeight, type TrustBand, type VoteValue } from "@rp/core";
+import { sharedIpWeight, authorizeVote, isNewAccount, voteDelta, voteWeight, type TrustBand, type VoteValue, systemClock } from "@rp/core";
 import type { Db } from "./db";
 import { HttpError } from "./http";
 
@@ -55,8 +55,12 @@ function isUniqueViolation(e: unknown): boolean {
  * identical PUTs apply the counter delta once (the loser is a no-op) and a concurrent first vote is not a 500.
  */
 export async function putVote(db: Db, userId: string, reviewId: string, value: VoteValue, ctx: VoteCtx = {}): Promise<VoteResult> {
-  const now = ctx.now ?? new Date();
-  const { review, newAccount, weight, frozen } = await authorise(db, userId, reviewId, now);
+  const now = ctx.now ?? systemClock.now();
+  const authorised = await authorise(db, userId, reviewId, now);
+  const { review, newAccount, frozen } = authorised;
+  // SEC-M7-04: the voter's band is read at write time; same-IP pile-ons on one review are weighted 0 using the 24 h ipHash window.
+  const sameIp = ctx.ipHash ? await db.reviewVote.count({ where: { reviewId, ipHash: ctx.ipHash, userId: { not: userId }, createdAt: { gte: new Date(now.getTime() - 86_400_000) } } }) : 0;
+  const weight = sharedIpWeight(authorised.weight, sameIp);
   const counted = weight > 0 && !frozen; // TRS-001/002: only counted votes move the public counters
   const pre = await db.reviewVote.findUnique({ where: { reviewId_userId: { reviewId, userId } }, select: { value: true, weight: true, frozen: true } });
   if (pre?.value === value) return { value, helpfulCount: review.helpfulCount, notHelpfulCount: review.notHelpfulCount };
@@ -83,7 +87,7 @@ export async function putVote(db: Db, userId: string, reviewId: string, value: V
 
 /** DELETE: retract (also when there was no vote). */
 export async function deleteVote(db: Db, userId: string, reviewId: string, ctx: VoteCtx = {}): Promise<VoteResult> {
-  const now = ctx.now ?? new Date();
+  const now = ctx.now ?? systemClock.now();
   const { review, newAccount } = await authorise(db, userId, reviewId, now);
   const prev = await db.reviewVote.findUnique({ where: { reviewId_userId: { reviewId, userId } }, select: { value: true, weight: true, frozen: true } });
   if (!prev) return { value: null, helpfulCount: review.helpfulCount, notHelpfulCount: review.notHelpfulCount };

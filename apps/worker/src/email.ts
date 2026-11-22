@@ -1,4 +1,4 @@
-import { EMAIL_TOKEN_TTL_MS, appUrl, generateEmailToken, hashEmailToken, renderMail, type MailProvider } from "@rp/core";
+import { EMAIL_TOKEN_TTL_MS, appUrl, generateEmailToken, hashEmailToken, renderMail, type MailProvider, systemClock } from "@rp/core";
 
 const NOTICE_INTERVAL_MS = 60 * 60 * 1000;
 
@@ -28,7 +28,7 @@ export type EmailOutcome = "SENT" | "SKIPPED";
  * it is never logged, queued or stored (only its SHA-256). A retry after a crash rotates the hash, so the last mailed link wins.
  */
 export async function sendVerificationEmail(d: EmailDeps, tokenId: string, jobKey: string): Promise<EmailOutcome> {
-  const now = (d.now ?? (() => new Date()))();
+  const now = (d.now ?? (() => systemClock.now()))();
   const row = await d.db.emailVerificationToken.findUnique({ where: { id: tokenId } });
   if (!row || row.purpose !== "ACCOUNT_EMAIL" || row.consumedAt || row.invalidatedAt || row.expiresAt <= now) return "SKIPPED";
   const raw = generateEmailToken();
@@ -44,7 +44,7 @@ export async function sendVerificationEmail(d: EmailDeps, tokenId: string, jobKe
 
 /** notifications `user.registration_conflict` {userId}: "someone tried to register", at most one per hour. No token inside. */
 export async function sendAccountExistsEmail(d: EmailDeps, userId: string, jobKey: string): Promise<EmailOutcome> {
-  const now = (d.now ?? (() => new Date()))();
+  const now = (d.now ?? (() => systemClock.now()))();
   const user = await d.db.user.findUnique({ where: { id: userId }, select: { id: true, email: true, emailVerifiedAt: true } });
   if (!user) return "SKIPPED";
   const claimed = await d.db.user.updateMany({
@@ -62,7 +62,7 @@ export async function sendAccountExistsEmail(d: EmailDeps, userId: string, jobKe
  * never extended by a retry, and a retry rotates the hash so the last mailed link wins.
  */
 export async function sendSellerInvitationEmail(d: EmailDeps, invitationId: string, jobKey: string): Promise<EmailOutcome> {
-  const now = (d.now ?? (() => new Date()))();
+  const now = (d.now ?? (() => systemClock.now()))();
   const inv = d.db.sellerInvitation;
   if (!inv) throw new Error("sellerInvitation delegate missing");
   const row = await inv.findUnique({ where: { id: invitationId } });
@@ -90,7 +90,7 @@ export interface ClaimEmailDeps {
  * raw token only in the mail, SHA-256 at rest, a retry rotates the hash. The mail is `Auto-Submitted: auto-generated` (SEL-036).
  */
 export async function sendClaimBusinessEmail(d: ClaimEmailDeps, tokenId: string, jobKey: string): Promise<EmailOutcome> {
-  const now = (d.now ?? (() => new Date()))();
+  const now = (d.now ?? (() => systemClock.now()))();
   const row = await d.db.emailVerificationToken.findUnique({ where: { id: tokenId }, select: { id: true, email: true, purpose: true, claimId: true, sentAt: true, consumedAt: true, invalidatedAt: true, expiresAt: true } });
   if (!row || row.purpose !== "CLAIM_BUSINESS_EMAIL" || row.consumedAt || row.invalidatedAt || row.expiresAt <= now) return "SKIPPED";
   const claimId = row.claimId;

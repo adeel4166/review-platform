@@ -1,4 +1,4 @@
-import { BIO_MAX, authorizeFollow, handleChangeAllowed, profileVisible, publicProfile, type FollowTarget } from "@rp/core";
+import { BIO_MAX, authorizeFollow, handleChangeAllowed, profileVisible, publicProfile, type FollowTarget, systemClock } from "@rp/core";
 import { z } from "zod";
 import type { Db } from "./db";
 import { HttpError } from "./http";
@@ -96,7 +96,7 @@ export async function getOwnProfile(db: Db, userId: string) {
   const u = await db.user.findUniqueOrThrow({ where: { id: userId }, select: { handle: true, displayName: true, bio: true, trustBand: true, handleChangedAt: true } });
   return { handle: u.handle, displayName: u.displayName, bio: u.bio, band: u.trustBand, handleChangedAt: u.handleChangedAt };
 }
-export async function patchOwnProfile(db: Db, userId: string, p: z.infer<typeof profilePatch>, now = new Date()) {
+export async function patchOwnProfile(db: Db, userId: string, p: z.infer<typeof profilePatch>, now = systemClock.now()) {
   const cur = await db.user.findUniqueOrThrow({ where: { id: userId }, select: { handle: true, handleChangedAt: true } });
   const data: Record<string, unknown> = {};
   if (p.displayName !== undefined) data.displayName = p.displayName;

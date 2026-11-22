@@ -1,3 +1,4 @@
+import { systemClock } from "@rp/core";
 import { db } from "@/server/db";
 import { HttpError, handle, json, readJson } from "@/server/http";
 import { requireUser } from "@/server/session";
@@ -11,7 +12,7 @@ export function POST(req: Request) {
     await readJson(req).catch(() => undefined);
     const a = await requireUser();
     if (!a.sid) throw new HttpError(401, "unauthenticated", "Sign in required");
-    const count = await revokeOtherSessions(db, a.id, a.sid, "revoke_others", new Date());
+    const count = await revokeOtherSessions(db, a.id, a.sid, "revoke_others", systemClock.now());
     return json({ revoked: count });
   });
 }
