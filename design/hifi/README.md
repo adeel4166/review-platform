@@ -1,5 +1,7 @@
 # Hi-fi UI design v2 (LIVE-02)
 
+> **v3 (V3-02, 2026-11-22):** new brand identity, tokens (light + dark, glass, gradients, motion) and specs for landing, product/review cards, product page, compare and header live in [`v3/`](./v3/README.md). v3 supersedes v2 for those screens; the palette values quoted in this v2 folder (e.g. "indigo `primary` is the only accent", "no decorative gradients") are replaced by [`v3/00-brand-and-tokens.md`](./v3/00-brand-and-tokens.md).
+
 > **Superseded in part (2026-11-22):** the "No new dependencies" rule below is replaced by [ADR-0034](../../docs/adr/0034-ui-stack-v3-and-product-image-model.md) (UI stack v3: allow-listed, version-pinned packages and a bundle budget). The layouts, states and a11y rules in these specs stay valid until V3 tasks update them.
 
 Production-grade specs that supersede the low-fi layouts in [`../wireframes/`](../wireframes/00-conventions.md) (those remain the source for data rules and states logic). Everything here uses only existing tokens in [`../tokens.json`](../tokens.json) (v2 additions: `shadow-lg/xl`, `radius-xl/2xl`, `space-20/24`, `elevation-*`, `placeholder-*`) and Tailwind utilities from `tailwind-preset.cjs`. **No new dependencies.** Icons: inline SVG (24px grid, 1.5px stroke = `placeholder-stroke`).
