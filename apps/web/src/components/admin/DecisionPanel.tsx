@@ -40,8 +40,8 @@ export function DecisionPanel({ caseId, onDecided, onConflict, decideFn = decide
         className="mt-1 block w-full rounded-md border border-border-strong bg-surface px-3 py-2" />
       <p id={`reason-hint-${caseId}`} className="mt-1 text-sm text-text-muted">{t("mod.decision.reasonHint")}</p>
       <div className="mt-3 flex flex-wrap gap-2">
-        <button type="button" onClick={() => run("approve")} className={`${btn} bg-primary text-on-primary hover:bg-primary-hover`}>{t("mod.decision.approve")}</button>
-        <button type="button" onClick={() => run("reject")} className={`${btn} border border-border-strong bg-surface`}>{t("mod.decision.reject")}</button>
+        <button type="button" id="decision-approve" onClick={() => run("approve")} className={`${btn} bg-primary text-on-primary hover:bg-primary-hover`}>{t("mod.decision.approve")}</button>
+        <button type="button" id="decision-reject" onClick={() => run("reject")} className={`${btn} border border-border-strong bg-surface`}>{t("mod.decision.reject")}</button>
       </div>
       <p role="alert" className="mt-2 text-sm">{error}</p>
       <p role="status" className="sr-only">{busy ? t("mod.decision.working") : ""}</p>

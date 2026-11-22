@@ -28,3 +28,15 @@ Implements `m6-m8-spec.md` Part A. Where the code deliberately differs from the 
   `processModeration` is still the registered moderation processor.
 - Not yet built: queue read-model/lease/bulk HTTP routes, enforcement issue/revoke routes, legal holds, appeal evidence
   slots and staff appeal routes (`decide`/`claim`), decision-notice route, `notifications.dispatch` templates.
+
+## M6/M7 UI (task #80)
+- Pages: `/admin/{moderation,appeals,approvals,enforcement}` (staff rail in `app/admin/layout.tsx`), `/decisions/[id]`, `/appeals/new`, `/appeals/[id]`,
+  `/account/{submissions,profile,notifications}`, `/u/[handle]`, `/compare` (+ "Compare" checkboxes on `/products`).
+- Small server additions the UI needed: `server/m6-ui.ts` (decision notice, "my submissions", appeal queue, pending approvals, `restoreContent` for
+  an overturned appeal), `GET/DELETE /api/appeals/[id]`, `GET /api/admin/appeals`, `POST /api/admin/appeals/[id]/{claim,decide}`, `GET /api/admin/approvals`.
+- `decideCase` now answers `403 CONFLICT_OF_INTEREST` (was `self_moderation_forbidden`) for a moderator's own review (E2E-008). The queue list also returns
+  `status`, `lane`, `holdExpiresAt`, `leaseExpiresAt` and `review.authorId`.
+- Break-glass: the "open original" prompt (`OriginalAccess.tsx`) posts reason code + 20..500 char reason to `original-access`, handles step-up/cap/COI/202 and
+  opens the single-use content URL. The earlier redacted-copy prompt still uses the `X-Access-Reason` header.
+- Not built (backend missing): case leases and bulk actions in the queue UI, Escalate, appeal evidence uploads, ban/user-restrict issue and lift routes,
+  appeal overdue text ("Taking longer than expected"), staff config editor/diff, seller analytics (08), follow lists and block UI.

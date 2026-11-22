@@ -31,7 +31,8 @@ export default async function ProductsPage({ searchParams }: { searchParams: SP 
       {items.length === 0 ? (
         <p className="mt-6">{t("products.empty")}</p>
       ) : (
-        <ul className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <form action="/compare" method="get" className="mt-4">
+        <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {items.map((p) => (
             <li key={p.id} className="rounded-lg border border-border bg-surface p-4">
               <h2 className="text-lg font-semibold">
@@ -41,9 +42,13 @@ export default async function ProductsPage({ searchParams }: { searchParams: SP 
               <p className="mt-2 flex items-center gap-2 text-sm">
                 {p.ratingCount > 0 ? (<><Stars value={Number(p.ratingAverage)} /><span aria-hidden="true">{Number(p.ratingAverage).toFixed(1)}</span> <span className="text-text-muted">{t("products.reviews", { count: p.reviewCount })}</span></>) : <span className="text-text-muted">{t("products.noRatings")}</span>}
               </p>
+              <label className="mt-2 inline-flex min-h-target items-center gap-2 text-sm"><input type="checkbox" name="ids" value={p.id} className="h-5 w-5" />{t("compare.add")}<span className="sr-only">: {p.name}</span></label>
             </li>
           ))}
         </ul>
+        <button type="submit" className="mt-4 min-h-target rounded-md border border-border-strong bg-surface px-4 font-medium">{t("compare.go")}</button>
+        <p className="text-sm text-text-muted">{t("compare.hint")}</p>
+        </form>
       )}
       <Pagination page={page} pages={pages} href={href} />
     </main>

@@ -12,7 +12,7 @@ export default async function AdminModerationPage() {
   if (session.user.role !== "admin" && session.user.role !== "super_admin") redirect("/"); // non-admins never see the dashboard; APIs also enforce requireAdmin
   return (
     <main className="mx-auto max-w-content px-4 py-6">
-      <ModerationDashboard />
+      <ModerationDashboard viewerId={session.user.id} />
     </main>
   );
 }

@@ -69,3 +69,10 @@ touched. The admin approval test uses the seeded admin.
 public display). They need `TOTP_ENC_KEYS`, `TOTP_ENC_ACTIVE_KEY_ID`, `RECOVERY_CODE_PEPPERS` and
 `RECOVERY_CODE_ACTIVE_KEY_ID` in the web environment (throwaway values are set in the CI `e2e` job). The reply spec claims the
 seeded product for a new seller, so run it against a fresh database.
+
+## M6/M7 UI journeys (task #80)
+
+`m6-hold-appeal.spec.ts` (E2E-002..005), `m6-coi.spec.ts` (E2E-008) and `m6-queue-keyboard.spec.ts` (A11Y-004) seed their own
+cases and deadlines through `@rp/db` (`m6-helpers.ts`, ADR-0024: no runtime test clock), so the Playwright environment also needs
+`DATABASE_URL`. E2E-003 and E2E-004 need the worker running (the sweeper resolves the expired hold). Staff accounts are made by
+registering a user and granting `ADMIN` in the database.

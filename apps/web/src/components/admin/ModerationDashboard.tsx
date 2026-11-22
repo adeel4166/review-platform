@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { t } from "@/i18n/en";
 import {
-  CASE_STATES, defaultFilters, queueQueryString, removeCase,
+  CASE_STATES, defaultFilters, queueQueryString, removeCase, shortcutFor,
   type CaseState, type DecisionResult, type Filters, type QueuePage,
 } from "@/lib/moderation-admin";
 import { api } from "@/lib/upload";
@@ -13,7 +13,7 @@ import { QueueList } from "./QueueList";
 
 const input = "mt-1 block min-h-target w-full rounded-md border border-border-strong bg-surface px-3";
 
-export function ModerationDashboard() {
+export function ModerationDashboard({ viewerId }: { viewerId?: string } = {}) {
   const [tab, setTab] = useState<"queue" | "audit">("queue");
   const [filters, setFilters] = useState<Filters>(defaultFilters);
   const [data, setData] = useState<QueuePage | null>(null);
@@ -21,6 +21,10 @@ export function ModerationDashboard() {
   const [openId, setOpenId] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
   const [auditKey, setAuditKey] = useState(0);
+  const [shortcuts, setShortcuts] = useState(true);
+  const [focusIdx, setFocusIdx] = useState(-1);
+  const listRef = useRef<HTMLDivElement>(null);
+  const [now] = useState(() => Date.now());
 
   const load = useCallback(() => {
     setFailed(false);
@@ -38,6 +42,32 @@ export function ModerationDashboard() {
     setAuditKey((k) => k + 1);
   };
 
+  // Keyboard path (A11Y-004, WCAG 2.1.4): J/K move, A approves, R rejects (focuses the reason first); off-switch below.
+  useEffect(() => {
+    if (tab !== "queue") return;
+    function onKey(e: KeyboardEvent) {
+      const act = shortcutFor({ key: e.key, ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey, target: e.target as HTMLElement | null }, shortcuts);
+      if (!act) return;
+      const items = data?.items ?? [];
+      if (act === "next" || act === "prev") {
+        if (!items.length) return;
+        e.preventDefault();
+        const i = Math.min(items.length - 1, Math.max(0, act === "next" ? focusIdx + 1 : focusIdx - 1));
+        setFocusIdx(i);
+        listRef.current?.querySelector<HTMLElement>(`[data-case-id="${items[i]!.id}"] button`)?.focus();
+        setNotice(t("mod.queue.focused", { n: i + 1, total: items.length }));
+      } else if (act === "approve") {
+        e.preventDefault(); document.getElementById("decision-approve")?.click();
+      } else if (act === "reject") {
+        e.preventDefault();
+        const box = document.querySelector<HTMLTextAreaElement>("textarea[id^='reason-']");
+        if (box && box.value.trim().length < 3) box.focus(); else document.getElementById("decision-reject")?.click();
+      }
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [tab, shortcuts, data, focusIdx]);
+
   const pages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
   const tabBtn = (id: "queue" | "audit", label: string) => (
     <button type="button" aria-pressed={tab === id} onClick={() => setTab(id)}
@@ -51,6 +81,10 @@ export function ModerationDashboard() {
         {tabBtn("queue", t("mod.tab.queue"))}{tabBtn("audit", t("mod.tab.audit"))}
       </div>
       <p role="status" className="mt-2 min-h-[1.5rem] text-sm">{notice}</p>
+      <div className="mt-1 text-sm">
+        <label className="inline-flex min-h-target items-center gap-2"><input type="checkbox" checked={shortcuts} onChange={(e) => setShortcuts(e.target.checked)} />{t("mod.shortcuts.toggle")}</label>
+        <p id="shortcut-help" className="text-text-muted">{t("mod.shortcuts.help")}</p>
+      </div>
 
       {tab === "audit" ? <AuditLog refreshKey={auditKey} /> : (
         <>
@@ -88,8 +122,8 @@ export function ModerationDashboard() {
               <>
                 <p className="mt-3 text-text-muted">{t("mod.count", { total: data.total })}</p>
                 <div className="mt-2 grid gap-6 lg:grid-cols-2">
-                  <QueueList items={data.items} selectedId={openId} onOpen={(id) => { setNotice(""); setOpenId(id); }} />
-                  {openId && <CaseDetailLoader id={openId} onDecided={onDecided} onConflict={() => { setOpenId(null); load(); }} onClose={() => setOpenId(null)} />}
+                  <div ref={listRef}><QueueList now={now} items={data.items} selectedId={openId} onOpen={(id) => { setNotice(""); setOpenId(id); }} /></div>
+                  {openId && <CaseDetailLoader viewerId={viewerId} id={openId} onDecided={onDecided} onConflict={() => { setOpenId(null); load(); }} onClose={() => setOpenId(null)} />}
                 </div>
                 {pages > 1 && (
                   <div className="mt-4 flex items-center gap-3">
