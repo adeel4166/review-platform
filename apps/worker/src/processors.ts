@@ -48,7 +48,7 @@ assertNoAutoVerify();
 const orderRefKeys = () => parseOrderRefKeys(process.env.ORDER_REF_HMAC_KEYS);
 export const getProofDeps = (): ProofDeps => {
   const m = getMediaDeps();
-  return { db: prisma, store: m.store, buckets: m.buckets, redactor: failClosedRedactor, keys: orderRefKeys() };
+  return { db: prisma, store: m.store, buckets: m.buckets, redactor: failClosedRedactor, scanner: getScanner(), keys: orderRefKeys() };
 };
 // No ProofExtractor provider is configured yet: proofs reach the queue without hints (aiAssessment.skipped), never auto-decided.
 export const getAssessDeps = (): AssessDeps => {
@@ -68,7 +68,7 @@ export const processors: Partial<Record<QueueName, Processor>> = {
   [QUEUES.moderation]: async (job, token) => {
     const p = moderationJobSchema.parse(job.data);
     // M6 pipeline (runAssess): ensure case -> M7 routing -> media wait -> rules -> provider -> classify -> transition. Never the legacy path.
-    const outcome = await processAssessJob({ db: prisma, call: getProviderCall(), burst: prismaBurstPort(prisma), dup: nearDuplicateIndex }, p);
+    const outcome = await processAssessJob({ db: prisma, call: getProviderCall(), burst: prismaBurstPort(prisma), dup: { index: nearDuplicateIndex } }, p);
     if (outcome.status === "delay") {
       await job.moveToDelayed(Date.now() + outcome.delayMs, token); // media still processing: poll again, no attempt consumed
       throw new DelayedError();
@@ -93,7 +93,7 @@ export const processors: Partial<Record<QueueName, Processor>> = {
       return;
     }
     const p = mediaJobSchema.parse(job.data);
-    const outcome = await processMedia(getMediaDeps(), p.assetId);
+    const outcome = await processMedia(getMediaDeps(), p.assetId, { expectedSha256: p.sha256 });
     console.log(JSON.stringify({ msg: "media.done", jobId: job.id, assetId: p.assetId, outcome }));
   },
   [QUEUES.notifications]: async (job) => {

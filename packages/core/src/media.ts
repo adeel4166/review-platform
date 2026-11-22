@@ -2,6 +2,7 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
@@ -48,6 +49,10 @@ export const variantKey = (assetId: string, v: keyof typeof MEDIA_VARIANTS) => `
 export const publicKey = (assetId: string, name: string) => `m/${assetId}/${name}`;
 export const stagingKey = (assetId: string) => `staging/${assetId}/original`;
 export const quarantineKey = (assetId: string) => `quarantine/${assetId}`;
+/** Originals held for legal reasons (hash-list match, MED-036); the quarantine retention sweep never touches this prefix. */
+export const legalHoldKey = (assetId: string) => `legal-hold/${assetId}`;
+export const QUARANTINE_PREFIX = "quarantine/";
+export const QUARANTINE_RETENTION_DAYS = 30;
 
 /** Detects the real image type from magic bytes (never trusts the declared type or extension). */
 export function sniffImageMime(b: Uint8Array): MediaMime | null {
@@ -69,6 +74,8 @@ export interface ObjectStore {
   get(bucket: string, key: string, maxBytes: number): Promise<Buffer | null>;
   put(bucket: string, key: string, body: Buffer, contentType: string, headers?: ObjectHeaders): Promise<void>;
   delete(bucket: string, key: string): Promise<void>;
+  /** Lists objects under a prefix with their last-modified time (retention sweeps, SEC-M5-03). */
+  list(bucket: string, prefix: string, limit?: number): Promise<{ key: string; lastModified: Date }[]>;
 }
 
 /** Public-object headers (MED-034). */
@@ -103,7 +110,7 @@ export function createS3Store(env: Pick<Env, "S3_ENDPOINT" | "S3_REGION" | "S3_F
   };
   return {
     presignPut: (Bucket, Key, o) =>
-      getSignedUrl(s3, new PutObjectCommand({ Bucket, Key, ContentType: o.contentType, ContentLength: o.contentLength }), { expiresIn: o.expiresIn }),
+      getSignedUrl(s3, new PutObjectCommand({ Bucket, Key, ContentType: o.contentType, ContentLength: o.contentLength }), { expiresIn: o.expiresIn, signableHeaders: new Set(["content-type", "content-length"]) }), // MED-025: storage refuses a different type or size
     presignGet: (Bucket, Key, expiresIn) => getSignedUrl(s3, new GetObjectCommand({ Bucket, Key }), { expiresIn }),
     async head(Bucket, Key) {
       try {
@@ -136,6 +143,16 @@ export function createS3Store(env: Pick<Env, "S3_ENDPOINT" | "S3_REGION" | "S3_F
     },
     async delete(Bucket, Key) {
       await s3.send(new DeleteObjectCommand({ Bucket, Key }));
+    },
+    async list(Bucket, Prefix, limit = 1000) {
+      const out: { key: string; lastModified: Date }[] = [];
+      let token: string | undefined;
+      do {
+        const r = await s3.send(new ListObjectsV2Command({ Bucket, Prefix, ContinuationToken: token }));
+        for (const o of r.Contents ?? []) if (o.Key && o.LastModified) out.push({ key: o.Key, lastModified: o.LastModified });
+        token = r.IsTruncated && out.length < limit ? r.NextContinuationToken : undefined;
+      } while (token);
+      return out.slice(0, limit);
     },
   };
 }

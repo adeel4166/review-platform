@@ -34,6 +34,8 @@ export type ModerationJob = z.input<typeof moderationJobSchema>;
 export const mediaJobSchema = z.object({
   assetId: z.string().min(1),
   step: z.enum(["VALIDATE", "VIRUS_SCAN", "SANITISE", "VARIANTS"]).default("VALIDATE"),
+  /** sha256 of the staged original, when known at enqueue time (MED-043). */
+  sha256: z.string().regex(/^[0-9a-f]{64}$/).optional(),
   // MVP processes all steps in one job; the `media.uploaded` outbox payload is just {assetId}.
 });
 export type MediaJob = z.infer<typeof mediaJobSchema>;

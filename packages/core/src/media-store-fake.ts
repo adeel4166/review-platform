@@ -27,6 +27,12 @@ export class FakeObjectStore implements ObjectStore {
     this.objects.set(this.k(b, key), body);
     this.meta.set(this.k(b, key), { contentType, ...(headers ? { headers } : {}) });
   }
+  /** Test hook: when set, `list` reports this as the last-modified time of every object (default: now). */
+  modifiedAt = new Map<string, Date>();
+  async list(b: string, prefix: string, limit = 1000) {
+    const p = this.k(b, prefix);
+    return [...this.objects.keys()].filter((k) => k.startsWith(p)).slice(0, limit).map((k) => ({ key: k.slice(b.length + 1), lastModified: this.modifiedAt.get(k) ?? new Date() }));
+  }
   async delete(b: string, key: string) {
     this.objects.delete(this.k(b, key));
     this.meta.delete(this.k(b, key));

@@ -123,3 +123,4 @@ pnpm --filter @rp/worker exec vitest run src/m5-gate.test.ts src/media-pipeline.
 ## History
 
 - **task #76 (this report):** FAIL. 7 P0 defects open, 7 gate tests added.
+- **task #84 (CLOSE-02):** QA-M5-01..07 and SEC-M5-01/02/03 closed by code and named tests in `apps/worker/src/close02.test.ts` (MED-035/036/043/047/024/046, INF-008, SEC-M5-02/03), `packages/core/src/media-presign.test.ts` (MED-025), and `apps/worker/src/moderation/assess.int.test.ts` (MED-030, MED-012 parent UNSURE; BANNED_HASH now counts like MALWARE). Real bwrap isolation is **NOT RUN** here (bwrap is not installed in this sandbox); the wrapper argv, self-test and fail-closed paths are asserted with injected runners. Re-run the gate to flip the verdict.
