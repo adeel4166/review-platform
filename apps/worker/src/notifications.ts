@@ -19,13 +19,15 @@ export const prismaNotificationPorts = (db: any, enqueue: (name: string, data: u
   async enqueueEmail(jobId, e) { await enqueue("notification.email", { userId: e.recipientId, type: e.type }, { jobId }); },
 });
 
-/** Resolves the recipient from server-side state only (the payload carries ids, never an address). Only REVIEW targets resolve a recipient (the author); seller-reply recipients are not derivable here, so they are skipped, not guessed. */
-export async function handleNotificationRequested(db: any, ports: NotificationPorts, clock: Clock, eventId: string, p: { targetType?: string; targetId?: string; caseId?: string; type?: string }): Promise<"DELIVERED" | "DUPLICATE" | "SKIPPED"> {
+/** Resolves the recipient from server-side state only (the payload carries ids, never an address). REVIEW targets resolve the author and USER targets (NEW_FOLLOWER) the followed user; seller-reply recipients are not derivable here, so they are skipped, not guessed. */
+export async function handleNotificationRequested(db: any, ports: NotificationPorts, clock: Clock, eventId: string, p: { targetType?: string; targetId?: string; caseId?: string; type?: string; actorId?: string }): Promise<"DELIVERED" | "DUPLICATE" | "SKIPPED"> {
   const type = TYPE_MAP[p.type ?? ""] ?? (p.type as NotificationType);
   if (!p.type || !known.has(type) || p.type === "REPORT_RESOLVED") return "SKIPPED"; // reporter recipients are not in this payload: never guess a recipient
   let recipientId: string | null = null;
   if (p.targetType === "REVIEW" && p.targetId) recipientId = (await db.review.findUnique({ where: { id: p.targetId }, select: { authorId: true } }))?.authorId ?? null;
+  else if (p.targetType === "USER" && type === "NEW_FOLLOWER" && p.targetId) recipientId = (await db.user.findFirst({ where: { id: p.targetId, status: "ACTIVE" }, select: { id: true } }))?.id ?? null;
   if (!recipientId) return "SKIPPED";
-  const r = await dispatch(ports, { eventId, type, recipientId, entityType: p.targetType === "REVIEW" ? "Review" : "SellerReply", entityId: p.targetId ?? undefined, at: clock.now() });
+  const isUser = p.targetType === "USER";
+  const r = await dispatch(ports, { eventId, type, recipientId, actorId: isUser ? p.actorId ?? null : undefined, entityType: isUser ? "User" : p.targetType === "REVIEW" ? "Review" : "SellerReply", entityId: p.targetId ?? undefined, at: clock.now() });
   return r.duplicate ? "DUPLICATE" : "DELIVERED";
 }

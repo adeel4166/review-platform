@@ -26,8 +26,6 @@ test.describe("follow and notifications (DEF-LIVE-03)", () => {
   });
 
   test("E2E-FOL-2 the followed user gets a NEW_FOLLOWER notification in /account/notifications", async ({ browser, baseURL }) => {
-    // DEF-LIVE-06/07 (docs/qa/live-gate-report.md): no producer emits NEW_FOLLOWER, and en.ts has no notif.type.* labels.
-    test.fail(true, "DEF-LIVE-06/07: following does not notify; remove this annotation when fixed");
     const target = await newSignedInUser(browser, baseURL);
     const t = await verifyEmailInDb(target.user.email);
     const fan = await newSignedInUser(browser, baseURL);
@@ -53,7 +51,7 @@ test.describe("follow and notifications (DEF-LIVE-03)", () => {
     await p.goto("/account/notifications");
     await expect(p.getByRole("heading", { level: 1, name: "Notifications" })).toBeVisible();
     await expect(p.getByText("No notifications.")).toBeVisible();
-    expect(errors, "no client-side exception (DEF-LIVE-07: missing notif.type.* labels crash the preferences table)").toEqual([]);
+    expect(errors, "no client-side exception (DEF-LIVE-07 regression guard)").toEqual([]);
     await context.close();
   });
 });

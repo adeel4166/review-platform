@@ -65,7 +65,12 @@ export async function putFollow(db: Db, actorId: string, input: z.infer<typeof f
   if (existing) return { id: existing.id, following: true, created: false }; // idempotent
   await charge?.();
   try {
-    const f = await db.follow.create({ data: { followerId: actorId, targetType, [col]: targetId }, select: { id: true } });
+    // NEW_FOLLOWER: outbox event in the same transaction as the follow row; the worker applies the followed user's preferences (DEF-LIVE-06).
+    const f = await db.$transaction(async (tx) => {
+      const row = await tx.follow.create({ data: { followerId: actorId, targetType, [col]: targetId }, select: { id: true } });
+      if (targetType === "USER") await tx.outboxEvent.create({ data: { type: "notification.requested", aggregateId: row.id, payload: { type: "NEW_FOLLOWER", targetType: "USER", targetId, actorId, followId: row.id } } });
+      return row;
+    });
     return { id: f.id, following: true, created: true };
   } catch (e) {
     if ((e as { code?: string }).code === "P2002") { const f = await db.follow.findFirst({ where, select: { id: true } }); return { id: f!.id, following: true, created: false }; }
