@@ -56,6 +56,8 @@ See [adr/README.md](./adr/README.md).
 | Doc | Content |
 |---|---|
 | [security/threat-model.md](./security/threat-model.md) | STRIDE threat model of the M1 designs, design gaps, rate-limit baseline, mitigations mapped to M2-M8, appeals and moderation-tooling threats, secrets/GitHub-token/storage least privilege (§9), M2 security checklist (§10) |
+| [security/final-security-review.md](./security/final-security-review.md) | Final security review (CLOSE-01/02, M8): closure table, P-3..P-9/D-4/D-5/R-7/R-9 verdicts, SEC-FIN findings, CEO risk text for open P1s |
+| [security/pentest-scope-pack.md](./security/pentest-scope-pack.md) | External pen-test scope pack (OPS-005): environment, accounts, focus, rules of engagement, deliverables |
 
 ## QA
 
