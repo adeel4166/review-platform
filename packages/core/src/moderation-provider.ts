@@ -80,6 +80,37 @@ export const GEMINI_URL_BASE = "https://generativelanguage.googleapis.com/v1beta
 export const DEFAULT_GEMINI_MODEL = "gemini-flash-lite-latest";
 const GEMINI_SAFETY_OFF = ["HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH", "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT"]
   .map((category) => ({ category, threshold: "BLOCK_NONE" }));
+/**
+ * Gemini structured output: forces the exact category keys of `providerResponseSchema`. Without it Gemini invents its own category
+ * names (harassment, hate_speech, ...) and every answer fails the strict parser (`schema` -> UNSURE -> human queue).
+ */
+export const GEMINI_RESPONSE_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    scores: {
+      type: "OBJECT",
+      properties: Object.fromEntries(CATEGORIES.map((c) => [c, { type: "NUMBER", description: "Probability 0..1 that the content violates this policy category" }])),
+      required: [...CATEGORIES],
+      propertyOrdering: [...CATEGORIES],
+    },
+    language: { type: "STRING", description: "ISO 639-1 code of the content language, e.g. en" },
+    supportedLanguage: { type: "BOOLEAN" },
+    rationale: { type: "STRING", description: "One short sentence, at most 200 characters" },
+  },
+  required: ["scores"],
+  propertyOrdering: ["scores", "language", "supportedLanguage", "rationale"],
+} as const;
+
+/** Clamps the two free-text fields to the parser's length limits; everything else is left for the strict parser to judge. */
+function clampGeminiText(text: string): string {
+  try {
+    const v = JSON.parse(text) as Record<string, unknown>;
+    if (!v || typeof v !== "object" || Array.isArray(v)) return text;
+    if (typeof v.rationale === "string" && v.rationale.length > 280) v.rationale = v.rationale.slice(0, 280);
+    if (typeof v.language === "string" && v.language.length > 16) delete v.language;
+    return JSON.stringify(v);
+  } catch { return text; }
+}
 
 /**
  * Google Gemini (AI Studio) adapter, same contract as the Anthropic one. The key goes only into the `x-goog-api-key` header, never the URL.
@@ -94,7 +125,7 @@ export function geminiProviderCall(apiKey: string, model: string, transport: Htt
       body: JSON.stringify({
         ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
         contents: [{ role: "user", parts: [{ text: user }] }],
-        generationConfig: { temperature: 0, maxOutputTokens: 2048, responseMimeType: "application/json" },
+        generationConfig: { temperature: 0, maxOutputTokens: 2048, responseMimeType: "application/json", responseSchema: GEMINI_RESPONSE_SCHEMA },
         safetySettings: GEMINI_SAFETY_OFF,
       }),
       timeoutMs,
@@ -108,7 +139,7 @@ export function geminiProviderCall(apiKey: string, model: string, transport: Htt
       text = (body.candidates?.[0]?.content?.parts ?? []).filter((p) => typeof p?.text === "string" && !p.thought).map((p) => p.text).join("");
     } catch { return ""; }
     const fenced = /^\s*```(?:json)?\s*([\s\S]*?)\s*```\s*$/.exec(text);
-    return fenced ? fenced[1] : text;
+    return clampGeminiText(fenced ? (fenced[1] ?? "") : text);
   };
 }
 
