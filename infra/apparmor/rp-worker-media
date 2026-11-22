@@ -1,0 +1,17 @@
+# AppArmor profile for the worker-media container (docker-compose.*.yml: security_opt apparmor=rp-worker-media).
+#
+# Why: worker-media runs every untrusted upload through bubblewrap (`bwrap --unshare-all`, apps/worker/src/media/sandbox.ts),
+# which needs unprivileged user namespaces. Ubuntu 23.10+ sets kernel.apparmor_restrict_unprivileged_userns=1, and Docker's
+# docker-default profile has no `userns` rule, so bwrap fails ("Failed to make / slave" / "loopback: Failed RTM_NEWADDR")
+# and the worker refuses to start (MED-047). This profile grants `userns` to this one container only, instead of turning the
+# restriction off host-wide. Same shape as the profiles Ubuntu ships in /etc/apparmor.d for userns-using apps.
+#
+# Install on the Docker host (idempotent; scripts/staging-up.sh does this when the sysctl is 1):
+#   sudo install -m 644 infra/apparmor/rp-worker-media /etc/apparmor.d/rp-worker-media
+#   sudo apparmor_parser -r /etc/apparmor.d/rp-worker-media
+abi <abi/4.0>,
+include <tunables/global>
+
+profile rp-worker-media flags=(unconfined) {
+  userns,
+}
