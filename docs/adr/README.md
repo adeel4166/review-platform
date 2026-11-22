@@ -47,6 +47,7 @@ We record significant architecture decisions as ADRs (lightweight Michael Nygard
 | [0031](./0031-notification-inbox-and-mandatory-types.md) | In-app notification inbox; mandatory types enforced on the server | Proposed | 2026-11-22 |
 | [0032](./0032-m7-social-and-comparison-scope.md) | M7 social and comparison scope; comments/posts/likes deferred; no messaging | Proposed | 2026-11-22 |
 | [0033](./0033-erasure-retention-and-deletion-ledger.md) | Account erasure, retention-job framework, tombstone expiry, deletion ledger | Proposed | 2026-11-22 |
+| [0034](./0034-ui-stack-v3-and-product-image-model.md) | UI stack v3 (Tailwind v4, shadcn/ui, Motion, themes), product image and AI review summary models (supersedes the LIVE-02 "no new dependencies" rule) | Proposed | 2026-11-22 |
 
 ### Task #24 coverage map (stack, storage, worker, verified buyer, i18n)
 
@@ -116,3 +117,16 @@ We record significant architecture decisions as ADRs (lightweight Michael Nygard
 | Comparison (05), profile/social (06), no messaging (SCOPE-001) | [0032](./0032-m7-social-and-comparison-scope.md), [spec §18–§20](../architecture/m6-m8-spec.md#18-social-profile-follows-blocks-adr-0032) |
 | Retention, erasure (SEC-M4-09), OPS list, pen-test scope | [0033](./0033-erasure-retention-and-deletion-ledger.md), [spec §22–§24](../architecture/m6-m8-spec.md#22-retention-and-privacy-jobs) |
 | Routes, Prisma deltas, jobs, test mapping per milestone | [spec §11–§14, §21, §25](../architecture/m6-m8-spec.md) |
+
+### Task #100 coverage map (V3-01: UI stack v3, product images, AI review summary)
+
+| Required topic | Where |
+|---|---|
+| Supersede LIVE-02 "no new dependencies" | [0034 D1](./0034-ui-stack-v3-and-product-image-model.md#d1-the-no-new-dependencies-rule-is-replaced-by-an-allow-list) |
+| Pinned versions: Tailwind v4, shadcn/ui (Radix), Motion, lucide-react, next/font, next/image, View Transitions, next-themes | [0034 D2](./0034-ui-stack-v3-and-product-image-model.md#d2-approved-packages-and-pinned-versions), D4–D9 |
+| Tailwind v3 → v4 migration (incl. `design/tailwind-preset.cjs`) | [0034 D3](./0034-ui-stack-v3-and-product-image-model.md#d3-tailwind-v3--v4-migration-path-keeps-design-as-the-source-of-truth) |
+| Reduced-motion policy | [0034 D6](./0034-ui-stack-v3-and-product-image-model.md#d6-motion-view-transitions-and-the-reduced-motion-policy) |
+| Bundle-size budget (first-load JS per route) | [0034 D10](./0034-ui-stack-v3-and-product-image-model.md#d10-performance-and-bundle-budget) |
+| `ProductImage` model on the Cloudinary public store (`MEDIA_PUBLIC_STORE`) | [0034 D9, D11](./0034-ui-stack-v3-and-product-image-model.md#d11-product-image-data-model) |
+| `ProductReviewSummary` model | [0034 D12](./0034-ui-stack-v3-and-product-image-model.md#d12-ai-review-summary-data-model) |
+| Rejected alternatives, migration plan V3-02…V3-08 | [0034 Alternatives](./0034-ui-stack-v3-and-product-image-model.md#alternatives-considered), [Migration plan](./0034-ui-stack-v3-and-product-image-model.md#migration-plan-for-the-v3-tasks) |
