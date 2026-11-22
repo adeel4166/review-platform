@@ -59,9 +59,13 @@ Screenshots: none captured (see `live-walkthrough/README.md`). The new spec `app
 | moderator decision, appeal, hold | `m6-*.spec.ts` | UNOBSERVED live |
 | admin authz | `admin-authz.spec.ts` | UNOBSERVED live |
 | ownership transfer (four-eyes) | `ownership-transfer.spec.ts` | UNOBSERVED live |
-| **search, vote, report, compare, follow, notifications** | **no dedicated Playwright spec found** (pages exist: `/products`, `/compare`, `/account/notifications`; API routes `follows`, `compare`, `reports`) | **COVERAGE GAP (DEF-LIVE-03)** |
-| **four-eyes role grant (`/admin/approvals`)** | only the ownership-transfer spec; no role-grant e2e | **COVERAGE GAP (DEF-LIVE-03)** |
-| **account erasure through the UI** | worker-level `erase.int.test.ts` only; no e2e | **COVERAGE GAP (DEF-LIVE-03)** |
+| search, compare | `apps/web/e2e/search-compare.spec.ts` (E2E-SRCH-1, E2E-CMP-1, E2E-CMP-2) | authored (#97); **UNOBSERVED** until CI `e2e` runs |
+| helpful vote + own-review refusal | `apps/web/e2e/vote-report.spec.ts` (E2E-VOTE-1, E2E-VOTE-2) | authored (#97); **UNOBSERVED** |
+| report -> moderation queue | `apps/web/e2e/vote-report.spec.ts` (E2E-RPT-1; staff enrols 2FA in-test) | authored (#97); **UNOBSERVED** |
+| follow, notifications page | `apps/web/e2e/follow-notifications.spec.ts` (E2E-FOL-1, E2E-NOT-1) | authored (#97); **UNOBSERVED** |
+| follow -> NEW_FOLLOWER notification | `follow-notifications.spec.ts` E2E-FOL-2 (`test.fail`, expected to fail) | **OPEN: DEF-LIVE-06/07**; UNOBSERVED |
+| four-eyes role grant (`/admin/approvals`) | `apps/web/e2e/role-grant-erasure.spec.ts` (E2E-4EYE-1: self-approve refused, second SUPER_ADMIN approves; both enrol TOTP in-test) | authored (#97); **UNOBSERVED** |
+| account erasure | API-driven `role-grant-erasure.spec.ts` E2E-ERASE-1; UI journey `E2E-ERASE-2` is `test.fixme` | partial: **DEF-LIVE-08** (no UI) |
 
 ## Defect log
 
@@ -69,9 +73,12 @@ Screenshots: none captured (see `live-walkthrough/README.md`). The new spec `app
 |---|---|---|---|---|
 | DEF-LIVE-01 | **P1 (gate blocker, environment)** | Run LIVE-07 on a host with Docker: none available to the agent; staging not reachable | `scripts/staging-up.sh:1`, `docs/qa/m8-02-staging-smoke-evidence.md` (all CI rows `pending`) | OPEN: needs a CEO-approved `DEPLOY_STAGING` and the first green CI run on `main` |
 | DEF-LIVE-02 | P2 | Run `pnpm qa` with `DATABASE_URL` unset: `@rp/db test` fails P1012 | `packages/db/package.json` (`test: prisma validate`) | OPEN: use a placeholder URL locally; CI sets it |
-| DEF-LIVE-03 | P2 | Search the e2e suite for vote, report, compare, follow, notifications, role grant, erasure UI: no specs | `apps/web/e2e/` (absent); related routes `apps/web/src/app/api/{follows,compare,reports}` | OPEN: author specs when a stack is available (cannot be validated without one) |
+| DEF-LIVE-03 | P2 | Search the e2e suite for vote, report, compare, follow, notifications, role grant, erasure UI: no specs | `apps/web/e2e/` (absent); related routes `apps/web/src/app/api/{follows,compare,reports}` | SPECS AUTHORED in #97 (typecheck + eslint clean); no CI run observed yet, so verification is UNOBSERVED. Remaining gaps: DEF-LIVE-06/07/08 |
+| DEF-LIVE-06 | P2 | Follow a user; the followed user's `/account/notifications` stays empty. `NEW_FOLLOWER` exists in the schema and core types but nothing creates it | `apps/web/src/server/social.ts:55-75` (`putFollow` emits no notification/outbox event); consumer `apps/worker/src/notifications.ts:23-30` only resolves REVIEW recipients | OPEN (not fixed, production source untouched); spec E2E-FOL-2 is `test.fail` |
+| DEF-LIVE-07 | **P1** | Open `/account/notifications` once any notification or preference row exists: `t("notif.type.<TYPE>")` has no key in `en.ts`, so `en[key].replace` throws TypeError and the page crashes client-side (static analysis; not yet run) | `apps/web/src/components/m6/NotificationCenter.tsx:42,60,65`; `apps/web/src/i18n/en.ts` (zero `notif.type.*` keys); `en.ts:1075` | OPEN: add 21 labels (one per `NotificationType`); E2E-NOT-1 asserts no page error |
+| DEF-LIVE-08 | P2 | Look for account erasure in the UI: no page or component calls `DELETE /api/account` | `apps/web/src/app/api/account/route.ts:10` (API only); `apps/web/src/app/account/` | OPEN: build the control; enable `E2E-ERASE-2` |
 | DEF-LIVE-04 | P3 | Observed: 51 `unhandled route error` lines in `pnpm qa` output with a placeholder DB. Most likely tests that hit the DB layer with no DB; confirm they are intended error-path tests and silence expected logs | `apps/web/src/server/http.ts:43` | OPEN: triage |
-| DEF-LIVE-05 | P2 | Staff accounts enrolled in 2FA land on `/login/2fa` after the credentials post; the walkthrough does not bypass 2FA, so staff pages may be refused until the demo accounts are provisioned without a 2FA gate | `apps/web/e2e/live-walkthrough.spec.ts` (`ctxFor`) | OPEN: verify on first live run |
+| DEF-LIVE-05 | P2 | Staff accounts enrolled in 2FA land on `/login/2fa` after the credentials post; the walkthrough does not bypass 2FA, so staff pages may be refused until the demo accounts are provisioned without a 2FA gate | `apps/web/e2e/live-walkthrough.spec.ts` (`ctxFor`) | In #97 new staff specs enrol TOTP in-test via `social-helpers.ts` (`makeStaffWith2fa`); the older `m6-helpers.ts` `makeStaff` still creates staff without 2FA: verify on first CI run |
 
 No P0 defect was found. No production source was modified.
 

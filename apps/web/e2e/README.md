@@ -76,3 +76,7 @@ seeded product for a new seller, so run it against a fresh database.
 cases and deadlines through `@rp/db` (`m6-helpers.ts`, ADR-0024: no runtime test clock), so the Playwright environment also needs
 `DATABASE_URL`. E2E-003 and E2E-004 need the worker running (the sweeper resolves the expired hold). Staff accounts are made by
 registering a user and granting `ADMIN` in the database.
+
+## Social, four-eyes and erasure specs (DEF-LIVE-03)
+
+`search-compare`, `vote-report`, `follow-notifications` and `role-grant-erasure` (helpers in `social-helpers.ts`). Staff actors enrol TOTP through the real wizard. They need `DATABASE_URL` in the Playwright env (as `m6-helpers.ts`). `E2E-FOL-2` is `test.fail` (DEF-LIVE-06/07) and `E2E-ERASE-2` is `test.fixme` (DEF-LIVE-08); see `docs/qa/live-gate-report.md`.
