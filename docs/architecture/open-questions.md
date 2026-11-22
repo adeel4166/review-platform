@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Living document, opened by task #18 (M1.1), updated by #19, #24 (M1-T1), #44 (M3-01, §4), #54 (M3b-03, §5) and #67 (M4-01, §6) |
+| **Status** | Living document, opened by task #18 (M1.1), updated by #19, #24 (M1-T1), #44 (M3-01, §4), #54 (M3b-03, §5), #67 (M4-01, §6) and #77 (M6–M8 spec, §7) |
 | **Owner** | Software Architect, who routes each question to the decision owner listed |
 | **Rule** | A question moves to *Resolved* only with a named decision owner and a date. Resolutions that change the data model need a schema PR and an ADR update. |
 
@@ -178,6 +178,44 @@ stays in force unless the owner changes it.
 | M45-Q20 | Notifications before the M7 inbox | Email only, for mandatory types (`CONTENT_REMOVED`, `MEDIA_REJECTED`, `PROOF_*`, `VERIFIED_LABEL_REVOKED`). Reporters see status in "My reports" | Product | None |
 | M45-Q21 | The relay marks unrouted events as published (contradicts ADR-0007 §3) | Not changed in M4/M5. New OUT-008 test: every emitted type has a route. Fail-loud relay behaviour with the M6 DLQ work | Backend | None |
 | M45-Q22 | Label wording and the public methodology page (L-2) | "Verified purchase · receipt / order confirmation / marketplace order" with a methodology link. Legal reviews the copy before launch | Legal + Product | Launch |
+
+---
+
+## 7. M6–M8: moderation, trust, social, hardening (task #77)
+
+Opened by [m6-m8-spec.md](./m6-m8-spec.md). Every item has a **default decision**. Engineering builds to it, and it
+stays in force unless the owner changes it.
+
+| ID | Question | Default decision | Owner | Blocks |
+|---|---|---|---|---|
+| M68-Q1 | `AIF-001` says back-off 5 s / 20 s / 60 s with "up to 3 attempts"; job-catalogue §3.2 says 3 attempts use only two back-offs | Job-catalogue wins (5 s, 20 s). QA rewords `AIF-001` ([ADR-0028](../adr/0028-ai-verdict-contract-and-injection-canaries.md) §4) | QA | M6 gate |
+| M68-Q2 | `CLS-010` ("> 20 reviews per hour from one **account**") conflicts with pipeline §5.3 (extreme rating and the **product** received > 20 reviews in the last hour); accounts are capped at 5 reviews/day | Pipeline wins. QA rewords `CLS-010` | QA | M6 gate |
+| M68-Q3 | `AZ-017` (system principal never SUSPENSION) vs `CLS-012` (zero tolerance → account SUSPENDED) and the strike ladder | One narrow exception: protective `SUSPENSION (ZERO_TOLERANCE_HOLD)` only for zero-tolerance verdicts; ladder restrictions by the system; BAN never ([ADR-0025](../adr/0025-moderation-engine-baseline-for-m6.md) §3). QA rewords `AZ-017` | CEO + QA | M6 gate |
+| M68-Q4 | QA §9.11 (report threshold vs F-9) and `MOD-012` text | Resolved by ADR-0011 (count never hides; T15 needs AI violation or staff). QA rewrites `MOD-012` and marks §9.11 resolved | QA | M6 gate |
+| M68-Q5 | Server-side test clock for E2E (test-strategy §3, §10 item 4) | **No runtime hook in any build.** E2E seeds past deadlines and uses a short sweep interval ([ADR-0024](../adr/0024-clock-interface-and-no-runtime-test-clock.md)) | Architect + QA | M6 E2E |
+| M68-Q6 | Second approval for large bulk rejects/removals (threat MT-3) | Not in M6. Bulk capped at 100, reject/remove SMOD-only, per-staff anomaly alert (`SEC-012`). Revisit after launch data | T&S + Security | None |
+| M68-Q7 | Are vote-freeze (`INTEGRITY`) decisions appealable or notified? | No: they do not act on content or accounts. A `Discard` that adds `VELOCITY_ANOMALY` affects trust only. Legal to confirm no statement of reasons is needed | Legal | None |
+| M68-Q8 | Break-glass under the default `AT_DECISION` proof retention only works before a decision | Accepted (minimisation, C-4). Appeals use the redacted copy ([ADR-0027](../adr/0027-break-glass-original-proof-access.md)) | Security + Legal | None |
+| M68-Q9 | Trust weights and band thresholds (C-8, T-9) | [ADR-0029](../adr/0029-trust-score-v1.md) v1. Bands public (users and sellers), numbers internal. Calibrate after 3 months | Data + T&S, Legal (L-15) | None |
+| M68-Q10 | Retroactive re-weighting window when a voter matures | 30 days ([ADR-0030](../adr/0030-fake-review-and-vote-defences.md) §1) | Data | None |
+| M68-Q11 | Comparison rows "price range" and "pros/cons themes" (wireframe 05) | Not shown in Phase 1: no price data, no theme extraction job | Product | None |
+| M68-Q12 | Comments, posts, likes, wishlist, saved comparisons | Deferred to Phase 1.x ([ADR-0032](../adr/0032-m7-social-and-comparison-scope.md)). Permissions and moderation types stay | Product | None |
+| M68-Q13 | Mandatory notification list (includes `PROOF_*`, `VERIFIED_LABEL_REVOKED`, `ENFORCEMENT_ISSUED`) | As [ADR-0031](../adr/0031-notification-inbox-and-mandatory-types.md) §2 | Legal (L-2) | Launch |
+| M68-Q14 | Erasure semantics and tombstone hash retention | Anonymise reviews (L-4), purge proofs and media, null tombstone hashes 12 months after purge ([ADR-0033](../adr/0033-erasure-retention-and-deletion-ledger.md)) | Legal (L-4, L-5) | Launch |
+| M68-Q15 | Object-lock bucket for the deletion ledger and the audit archive | `rp-ledger` and `rp-audit-archive` with object lock (R2/S3; MinIO in dev) | DevOps | M8 |
+| M68-Q16 | Pen-test vendor, window, staging environment with the production build | Vendor chosen by the CEO; staging per m6-m8-spec §24 | CEO + Security | Launch |
+| M68-Q17 | M5 gate gaps that M6 depends on (`MED-030` media wait, `MED-012` parent effects) | Built inside M6-B (m6-m8-spec §0.4). Other M5 gaps stay with the M5 fix task | PM | M6 |
+| M68-Q18 | About 85 `new Date()`/`Date.now()` call sites | M6 migrates moderation, appeal and timer paths (lint error there); M8 migrates the rest (`OPS-008`) | Backend | M8 |
+| M68-Q19 | Appeal reviewer pool: A2 excludes human deciders, and major-enforcement overturns need two SMODs | Ops staffs at least three SENIOR_MODERATORs before launch (extends strategy §9.8) | T&S | Launch |
+| M68-Q20 | New staff screens without wireframes: Approvals, Integrity lane, break-glass dialog, config diff | Follow wireframe 07 patterns; Design adds them to 07 during M6-C | Design | None |
+
+Items from earlier sections that this spec closes or schedules: **LC-1** (no `APPEAL` trigger is added; ADR-0025
+§5), **LC-2** (`timers.reportedSlaHours` = 48, config), **LC-3** (T20 allowed, force-UNSURE after a human decision),
+**M3-Q5** (appeal of a claim rejection via `Appeal.ownershipClaimId`, spec §10.1), **M3-Q14** (claims stay a filtered
+list; leases only on cases and appeals), **M3b-Q4** (four-eyes 2FA reset endpoint, ADR-0026), **M3b-Q9**
+(`SELLER_REPLIED` in-app, spec §17), **M45-Q3** (T20 ships in M6), **M45-Q11** (appeal path for label revocations),
+**M45-Q12** (break-glass, ADR-0027), **M45-Q21** (relay fail-loud, spec §13.1), **C-8** (trust algorithm owner and
+design: ADR-0029, pending CEO approval). They move to *Resolved* when the CEO approves this spec.
 
 ---
 

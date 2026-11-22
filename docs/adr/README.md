@@ -37,6 +37,16 @@ We record significant architecture decisions as ADRs (lightweight Michael Nygard
 | [0021](./0021-seller-reply-content-policy.md) | Seller replies: plain text, no links, server-state visibility, shared moderation | Proposed | 2026-11-21 |
 | [0022](./0022-in-house-proof-redaction.md) | Proof redaction runs in-house in the `media` group; only redacted pages reach an AI provider | Proposed | 2026-11-22 |
 | [0023](./0023-ingest-least-privilege-and-publication-gate.md) | Confirm without `HEAD`, and a database-enforced publication gate (amends ADR-0006 / ADR-0012) | Proposed | 2026-11-22 |
+| [0024](./0024-clock-interface-and-no-runtime-test-clock.md) | Injected `Clock` for all deadline logic, and no runtime test-clock hook in any build | Proposed | 2026-11-22 |
+| [0025](./0025-moderation-engine-baseline-for-m6.md) | M6 moderation engine: one table-driven `transition()`, case status + lanes, a decision table, a fixed system-principal allow-list | Proposed | 2026-11-22 |
+| [0026](./0026-four-eyes-approval-requests.md) | Four-eyes approvals as one `StaffApprovalRequest` flow | Proposed | 2026-11-22 |
+| [0027](./0027-break-glass-original-proof-access.md) | Break-glass `proof.view_original`: single-use streamed access, caps, digest, second approver for repeats | Proposed | 2026-11-22 |
+| [0028](./0028-ai-verdict-contract-and-injection-canaries.md) | AI verdict contract: scores only, platform-derived verdict, every failure UNSURE, injection canaries | Proposed | 2026-11-22 |
+| [0029](./0029-trust-score-v1.md) | Trust score v1: capped, decaying, explainable points model with gated bands | Proposed | 2026-11-22 |
+| [0030](./0030-fake-review-and-vote-defences.md) | Fake-review and vote defences: vote maturity, velocity freeze, MinHash near-duplicates, product-burst routing | Proposed | 2026-11-22 |
+| [0031](./0031-notification-inbox-and-mandatory-types.md) | In-app notification inbox; mandatory types enforced on the server | Proposed | 2026-11-22 |
+| [0032](./0032-m7-social-and-comparison-scope.md) | M7 social and comparison scope; comments/posts/likes deferred; no messaging | Proposed | 2026-11-22 |
+| [0033](./0033-erasure-retention-and-deletion-ledger.md) | Account erasure, retention-job framework, tombstone expiry, deletion ledger | Proposed | 2026-11-22 |
 
 ### Task #24 coverage map (stack, storage, worker, verified buyer, i18n)
 
@@ -90,3 +100,19 @@ We record significant architecture decisions as ADRs (lightweight Michael Nygard
 | Verified Buyer proof: upload, redaction, retention, decision states, label rules | [0008](./0008-verified-buyer-approach.md), [0022](./0022-in-house-proof-redaction.md), [m4-m5-spec §5](../architecture/m4-m5-spec.md#5-verified-buyer-proof-adr-0008-prv-) |
 | Upload slots, ClamAV, sanitise/exiftool, transcode, promotion, MED-037, INF-002/003 | [0023](./0023-ingest-least-privilege-and-publication-gate.md), [m4-m5-spec §6–§11](../architecture/m4-m5-spec.md#6-media-limits-slots-and-confirm-m5) |
 | Prisma deltas, job catalogue entries, error codes, limits, test ids | [m4-m5-spec §12–§16](../architecture/m4-m5-spec.md#12-schema-changes-prisma-deltas) |
+
+### Task #77 coverage map (M6–M8: moderation and staff, trust/social/comparison, hardening)
+
+| Required topic | Where |
+|---|---|
+| Content state machine, transition engine, system principal | [0025](./0025-moderation-engine-baseline-for-m6.md), [m6-m8-spec §3, §7.4](../architecture/m6-m8-spec.md#3-content-state-machine-and-transition-engine) |
+| AI verdicts, failure-to-CLEAN property (AIF-008), prompt-injection canaries (SEC-008) | [0028](./0028-ai-verdict-contract-and-injection-canaries.md), [spec §5](../architecture/m6-m8-spec.md#5-ai-verdicts-failure-handling-and-prompt-injection-adr-0028) |
+| Clock / FakeClock, test-clock hook decision (OPS-003) | [0024](./0024-clock-interface-and-no-runtime-test-clock.md), [spec §2](../architecture/m6-m8-spec.md#2-clock-fakeclock-and-the-test-clock-decision-adr-0024) |
+| Timers, staff queues, enforcement, appeals (wireframe 11) | [spec §4, §6, §7, §10](../architecture/m6-m8-spec.md) |
+| Four-eyes on config and role grants (CFG-004, AZ-015, AZ-024) | [0026](./0026-four-eyes-approval-requests.md), [spec §8](../architecture/m6-m8-spec.md#8-four-eyes-approvals-adr-0026) |
+| Break-glass `proof.view_original` (PRV-003) | [0027](./0027-break-glass-original-proof-access.md), [spec §9](../architecture/m6-m8-spec.md#9-break-glass-proofview_original-adr-0027) |
+| Trust score formula, vote maturity, burst routing (TRS-001…004, TRS-008) | [0029](./0029-trust-score-v1.md), [0030](./0030-fake-review-and-vote-defences.md), [spec §15–§16](../architecture/m6-m8-spec.md#15-trust-score-v1-adr-0029) |
+| Notifications, mandatory types (TRS-009) | [0031](./0031-notification-inbox-and-mandatory-types.md), [spec §17](../architecture/m6-m8-spec.md#17-notifications-adr-0031) |
+| Comparison (05), profile/social (06), no messaging (SCOPE-001) | [0032](./0032-m7-social-and-comparison-scope.md), [spec §18–§20](../architecture/m6-m8-spec.md#18-social-profile-follows-blocks-adr-0032) |
+| Retention, erasure (SEC-M4-09), OPS list, pen-test scope | [0033](./0033-erasure-retention-and-deletion-ledger.md), [spec §22–§24](../architecture/m6-m8-spec.md#22-retention-and-privacy-jobs) |
+| Routes, Prisma deltas, jobs, test mapping per milestone | [spec §11–§14, §21, §25](../architecture/m6-m8-spec.md) |
