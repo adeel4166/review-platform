@@ -1,17 +1,68 @@
-# v3 quality gate report (task #107, V3-08)
+# v3 quality gate report (V3-08, re-gated in task #112 / V3-13)
 
 | | |
 |---|---|
 | **Owner** | QA Engineer (QA_SECURITY) |
-| **Branch / base** | `task/107`, main at `b311502` (V3-07 merged) |
+| **Branch / base** | `task/112` on main `f97d5fc` (V3-09..V3-12 merged) |
 | **Budget source** | ADR-0034 D10 (`docs/qa/bundle-budget.json`) |
 | **Rule** | PASS = zero open critical/high defects, or each one filed with an owner |
 
-## Verdict: FAIL (conditional), 3 high defects open with owners, browser-based evidence UNVERIFIED
+## Verdict (V3-13 re-gate): PASS on defects; browser/CI evidence UNVERIFIED
 
-The sandbox that ran this gate has **no browser, no MySQL, no Redis and no docker** (`~/.cache/ms-playwright` absent, `mysqladmin ping` refused, docker socket denied). Everything that can run without them was run and is recorded below as observed. Everything that needs them (Playwright e2e regression, visual snapshots, Lighthouse, live axe/reduced-motion/keyboard passes, image-fallback and AI-summary live states) is **authored and committed but UNVERIFIED**; I do not record an unobserved result as PASS. First action for the reviewer: run the CI `e2e` job plus the commands in "Reproduce".
+**Defect rule: PASS.** There are zero open critical/high defects. DEF-V3-01..-04, -06 and -07 are closed on main. DEF-V3-08 (INP gap) is closed by a new test that is authored but has not been run. The V3-11 security findings are fixed or owned as Low.
 
-## Evidence run in this sandbox
+**Not yet observed.** This sandbox has no browser, MySQL, Redis or docker, and no CI run was available to me. I am recording no CI run ID because I have none to cite. The following are therefore **UNVERIFIED** until the CEO triggers CI and the artifacts are attached below:
+- Playwright e2e, including the new INP spec.
+- Axe, keyboard and reduced-motion passes.
+- Visual baselines (none committed).
+- Lighthouse LCP/CLS/TBT and the 120 KB image check.
+- Live `IMG-1` (image fallback).
+
+Until that run is green, treat the release gate as PASS-pending-CI, not PASS-verified.
+
+## Re-gate evidence (observed in this sandbox, main `f97d5fc`)
+
+| Check | Result |
+|---|---|
+| `pnpm lint` | PASS (0 errors; was 3) |
+| `pnpm typecheck` | PASS (db, core, web, worker) |
+| `pnpm test` | PASS: core 680, web 921 + 1 todo, worker 394 + 6 skipped (`mysql-schema.int`, needs MySQL) |
+| `pnpm design:check` | PASS: tokens in sync, 212 contrast pairs pass in light and dark (lowest 3.05) |
+| `pnpm --filter @rp/web build` | PASS |
+| `node scripts/ops003-no-test-hooks.mjs apps/web/.next` | PASS, 682 files |
+| `node scripts/bundle-budget.mjs` | PASS, every route, CSS and fonts within budget (table below) |
+| Playwright e2e / visual / a11y / INP / Lighthouse | **UNVERIFIED** (no browser or stack here; CI jobs wired, see "CEO actions") |
+
+### Budgets, before (V3-08) and after (V3-13 re-run)
+
+| Item | V3-08 | Now | Budget | Result |
+|---|---|---|---|---|
+| `/` | 176 KB | 145.4 KB | 165 | ok |
+| `/products/[slug]` | 210 KB | 155.7 KB | 165 | ok |
+| `/products`, `/compare` | 157 | 126.6 | 165 | ok |
+| `/sellers/[slug]`, `/u/[handle]`, `/trust/**` | 156, 125, 101 | 125.3, 125.1, 101.4 | 165 | ok |
+| auth, contribute, account, staff (max) | 125, 149, 146, 149 | 124.7, 149.2, 146.7, 149.5 | 150, 190, 180, 250 | ok |
+| global CSS | 11.4 KB | 11.5 KB | 35 | ok |
+| preloaded fonts | 130.6 KB | 47.3 KB | 100 | ok |
+
+The `/products/[slug]` first-load JS now has only 9.3 KB of headroom, so watch it on the next change.
+
+## INP (DEF-V3-08)
+
+New spec `apps/web/e2e/v3-13-inp.spec.ts`, budget **200 ms**, three scenarios:
+
+| ID | Scenario |
+|---|---|
+| INP-1 | Product page: AI summary expand, button clicks, End key |
+| INP-2 | Command palette: Ctrl+K open, typing, ArrowDown, Escape |
+| INP-3 | Review form: rating, then typing in title and body |
+
+- **Method:** a `PerformanceObserver` on the Event Timing API (`type: "event"`, `durationThreshold: 16`, `buffered: true`), which is the same source `web-vitals` reads. The spec adds no dependency, because `web-vitals` is not installed and I could not install packages here.
+- **Assertion:** the worst interaction latency per scenario must be at most 200 ms. Each measured value is attached to the test annotations as `inp`.
+- **CI:** the `e2e` job in `.github/workflows/ci.yml` has a new step "INP gate, 200 ms budget".
+- **Status:** authored, typechecked and linted. **Not run, so no INP number is recorded.** Lab INP on shared CI runners is noisy. If INP-n flakes without a real regression, the owner should decide between retries and a looser lab budget. Do not silently quarantine it.
+
+## Historical: V3-08 evidence (superseded by the re-gate above)
 
 | Check | Result |
 |---|---|
@@ -60,14 +111,28 @@ Note: `docs/qa/bundle-budget.json` and `scripts/bundle-budget.mjs`, promised by 
 | DEF-V3-01 | **Critical** | **Fixed in this task** (test file only) | QA / Frontend | `next build` of main failed: `apps/web/src/lib/cn.test.ts:8` `false && "x"` violates `no-constant-binary-expression`, and Next lints `src/`. Production build and deploy blocked | `git checkout b311502 && pnpm --filter @rp/web build` -> "Failed to compile ... cn.test.ts 8:28". Fix: non-constant operand. Rebuild passes |
 | DEF-V3-02 | High | Fixed (task #108) | Backend (core) | `packages/core/src/cloudinary.ts:68` uses `Date.now()` in `signed()`, breaking ADR-0024 (inject Clock); also makes signing untestable deterministically. `pnpm lint` / `pnpm qa` red | `pnpm lint` -> `68:41 Use the injected Clock (ADR-0024)` |
 | DEF-V3-03 | Low | Fixed (task #108) | Backend (core) | `cloudinary.ts:91` unused param `_h` (`@typescript-eslint/no-unused-vars`). Lint red together with DEF-V3-02 | `pnpm lint` -> `91:48` |
-| DEF-V3-04 | High (UX) | Open | Frontend | `ProductThumb` (`apps/web/src/components/ui/ProductCard.tsx:24`) shows the letter fallback only when there is no image row. If the CDN image 404s/blocks, `<Image>` renders a broken-image icon in a `bg-bg-subtle` box; no `onError`. ADR D9/D11 require graceful fallback | DevTools: block `res.cloudinary.com` or `/_next/image*`, open `/products`: broken icons. Test `IMG-1` |
-| DEF-V3-05 | Medium | Fixed in this task (tooling) | QA | `scripts/bundle-budget.mjs` and `docs/qa/bundle-budget.json` required by ADR D10 were never delivered, so budgets were unenforced; CI has no budget step | `ls scripts docs/qa/bundle-budget.json` on main. **Follow-up**: wire into CI after `pnpm build` (CI workflow edit is outside QA scope) |
-| DEF-V3-06 | High | Open | Frontend | Budget overruns: `/` 176 KB (+11), `/products/[slug]` 210 KB (+45) vs D10 165 KB. Likely charts / gallery / palette (`cmdk`) / `motion` not lazy on first load (ADR says gallery + `domMax` load on interaction) | `pnpm --filter @rp/web build && node scripts/bundle-budget.mjs`. Either lazy-load or ship an ADR-0034 amendment raising the number |
-| DEF-V3-07 | High | Open | Frontend / Platform | Preloaded fonts 130.6 KB vs 100 KB budget (two preloaded woff2: 85.3 + 48.4 KB). Hurts LCP on mobile | `node scripts/bundle-budget.mjs` -> `FAIL preloaded fonts`. Reduce preloaded weights/subsets or amend the ADR |
-| DEF-V3-08 | Medium | Open (gap) | QA / Platform | No INP measurement exists anywhere (Lighthouse lab cannot produce it). Budget INP <= 200 ms is unenforced | Add `web-vitals` interaction trace in e2e or RUM. Not a code defect |
-| DEF-V3-09 | Info | Open | CEO / Platform | Gate environment has no browser/DB: e2e, visual, Lighthouse, live axe not executed (see verdict) | Need CI run of the `e2e` job + the new specs, then baselines committed |
+| DEF-V3-04 | High (UX) | **Closed** (task #109, `SafeImage`; live `IMG-1` UNVERIFIED, needs CI) | Frontend | `ProductThumb` (`apps/web/src/components/ui/ProductCard.tsx:24`) shows the letter fallback only when there is no image row. If the CDN image 404s/blocks, `<Image>` renders a broken-image icon in a `bg-bg-subtle` box; no `onError`. ADR D9/D11 require graceful fallback | DevTools: block `res.cloudinary.com` or `/_next/image*`, open `/products`: broken icons. Test `IMG-1` |
+| DEF-V3-05 | Medium | **Closed** (budget gate wired into CI, task #111) | QA | `scripts/bundle-budget.mjs` and `docs/qa/bundle-budget.json` required by ADR D10 were never delivered, so budgets were unenforced; CI has no budget step | `ls scripts docs/qa/bundle-budget.json` on main. **Follow-up**: wire into CI after `pnpm build` (CI workflow edit is outside QA scope) |
+| DEF-V3-06 | High | **Closed** (task #109; `/` 145.4 KB, `/products/[slug]` 155.7 KB, observed) | Frontend | Budget overruns: `/` 176 KB (+11), `/products/[slug]` 210 KB (+45) vs D10 165 KB. Likely charts / gallery / palette (`cmdk`) / `motion` not lazy on first load (ADR says gallery + `domMax` load on interaction) | `pnpm --filter @rp/web build && node scripts/bundle-budget.mjs`. Either lazy-load or ship an ADR-0034 amendment raising the number |
+| DEF-V3-07 | High | **Closed** (task #109; preloaded fonts 47.3 KB, observed) | Frontend / Platform | Preloaded fonts 130.6 KB vs 100 KB budget (two preloaded woff2: 85.3 + 48.4 KB). Hurts LCP on mobile | `node scripts/bundle-budget.mjs` -> `FAIL preloaded fonts`. Reduce preloaded weights/subsets or amend the ADR |
+| DEF-V3-08 | Medium | **Closed** (task #112, `v3-13-inp.spec.ts`; first CI run UNVERIFIED) | QA / Platform | No INP measurement exists anywhere (Lighthouse lab cannot produce it). Budget INP <= 200 ms is unenforced | Add `web-vitals` interaction trace in e2e or RUM. Not a code defect |
+| DEF-V3-09 | Info | **Wired** (task #111) / **Open until CI run** | CEO / Platform | Gate environment has no browser/DB: e2e, visual, Lighthouse, live axe not executed (see verdict) | Need CI run of the `e2e` job + the new specs, then baselines committed |
 
-Critical/high summary: DEF-V3-01 fixed; DEF-V3-02, -04, -06, -07 are **open high, each with an owner above**. Per the acceptance rule the gate is satisfied only conditionally; closing it requires owners to fix or amend ADR-0034, and the browser-based runs to be executed.
+Critical/high summary (V3-13): **zero open.** DEF-V3-01, -02, -04, -06 and -07 are closed. DEF-V3-03 (Low) is closed. DEF-V3-08 is closed. DEF-V3-09 stays open only until the first CI run is attached.
+
+## V3-11 security findings (`docs/security/v3-security-review.md`)
+
+| ID | Sev | Status |
+|---|---|---|
+| SEC-V3-01 (`/api/products` rate limit) | Medium | Fixed, test in `v3-security.test.ts` (in the passing web suite) |
+| SEC-V3-02 (Cloudinary `remotePatterns` pinned to our cloud) | Medium | Fixed, same test |
+| SEC-V3-03 (DailyCap per process) | Low | Open, owner Backend/Worker (ops note) |
+| SEC-V3-04 (summary payload exposes `model`/`generatedAt`) | Low | Open, accepted unless product objects |
+| SEC-V3-05 (third-party names not stripped in summary input/output) | Low | Open, owner Backend/Worker |
+| SEC-V3-06 (search LIKE-wildcard test) | Low | Open, owner Backend |
+| SEC-V3-07 (Cloudinary strict transformations, SHA-1) | Low | Open, owner DevOps |
+
+No medium or higher security finding is open. The remaining Low items are owned and do not block the gate.
 
 ## Not found (checked statically)
 
@@ -85,4 +150,17 @@ pnpm --filter @rp/web exec playwright install chromium
 E2E_ADMIN_PASSWORD=... DATABASE_URL=... pnpm --filter @rp/web test:e2e                     # full regression + new axe gate
 pnpm --filter @rp/web test:e2e -- v3-08-visual --update-snapshots                            # once, then review PNGs
 BASE_URL=http://localhost:3000 node scripts/lighthouse-gate.mjs
+pnpm --filter @rp/web exec playwright test --project=chromium v3-13-inp                     # INP 200 ms budget
 ```
+
+## CEO actions (what only you can click)
+
+1. **Push `task/112` and the merged `main` to GitHub.** CI does not run until the code is on GitHub.
+2. **Run the CI workflow** and open the run. Record its URL and attach artifacts here:
+   - the `e2e` job (regression, a11y gate, **INP gate**), with artifact `e2e-report`;
+   - the `lighthouse` job, with artifact `lighthouse-report`;
+   - the `ci` job (this re-gate already passes locally, so it should be green).
+3. **Generate visual baselines.** Run the manual `visual-baselines` job (`workflow_dispatch`) and download the PNG artifact.
+4. **Approve the baselines.** Eyeball the PNGs for landing, products, product page, compare, review form, profile and the 7 admin queues, in light and dark at 375 and 1280 px. Commit them to `apps/web/e2e/v3-08-visual.spec.ts-snapshots/`. Until they are committed the visual step only warns.
+5. **Fill in the observed values** for INP, Lighthouse, e2e and axe from those artifacts, or send the results back to QA to record. Until then those rows stay UNVERIFIED.
+6. **Ops items.** Optionally assign SEC-V3-03..07 owners to tickets, and enable Cloudinary strict transformations (SEC-V3-07).
