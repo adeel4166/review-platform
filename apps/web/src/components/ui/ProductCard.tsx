@@ -1,9 +1,9 @@
 import Link from "next/link";
-import Image from "next/image";
 import type { ReactNode } from "react";
 import { t } from "@/i18n/en";
 import { Stars } from "../Stars";
 import { HoverLift } from "./Reveal";
+import { SafeImage } from "./SafeImage";
 
 export interface ProductImageData { url: string; width: number; height: number; alt: string }
 export interface ProductCardData {
@@ -19,18 +19,19 @@ export function ProductThumb({ name, image, priority = false, sizes = "(min-widt
   name: string; image?: ProductImageData | null; priority?: boolean; sizes?: string; className?: string; transitionName?: string;
 }) {
   const style = transitionName ? { viewTransitionName: transitionName } : undefined;
-  if (image) {
-    return (
-      <div className={`relative aspect-square w-full overflow-hidden rounded-md bg-bg-subtle ring-1 ring-inset ring-border ${className}`} style={style}>
-        <Image src={image.url} alt={image.alt || name} fill sizes={sizes} priority={priority} unoptimized={image.url.endsWith(".svg")} className="object-contain" />
-      </div>
-    );
-  }
-  return (
-    <div aria-hidden="true" style={style} className={`flex aspect-square w-full items-center justify-center rounded-md border border-dashed border-border bg-bg-subtle text-3xl font-semibold text-text-muted ${className}`}>
+  const letter = (
+    <div aria-hidden="true" style={image ? undefined : style} className={image ? "absolute inset-0 flex items-center justify-center border border-dashed border-border bg-bg-subtle text-3xl font-semibold text-text-muted" : `flex aspect-square w-full items-center justify-center rounded-md border border-dashed border-border bg-bg-subtle text-3xl font-semibold text-text-muted ${className}`}>
       {name.trim().slice(0, 1).toUpperCase() || "?"}
     </div>
   );
+  if (image) {
+    return (
+      <div className={`relative aspect-square w-full overflow-hidden rounded-md bg-bg-subtle ring-1 ring-inset ring-border ${className}`} style={style}>
+        <SafeImage src={image.url} alt={image.alt || name} fill sizes={sizes} priority={priority} unoptimized={image.url.endsWith(".svg")} className="object-contain" fallback={letter} />
+      </div>
+    );
+  }
+  return letter;
 }
 
 /** Whole card is one link target (stretched link on the name); `extra` (e.g. compare checkbox) sits above it. */

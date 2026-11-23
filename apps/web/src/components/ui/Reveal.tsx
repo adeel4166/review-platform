@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { m } from "motion/react";
+import * as m from "motion/react-m";
 
 /**
  * Entrance animation (fade + small rise). Providers sets MotionConfig reducedMotion="user", so transforms are dropped under
