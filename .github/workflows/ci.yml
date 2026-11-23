@@ -132,6 +132,8 @@ jobs:
         run: pnpm --filter @rp/web test:e2e
       - name: Accessibility gate (v3-08-a11y-gate.spec.ts)
         run: pnpm --filter @rp/web exec playwright test --project=chromium v3-08-a11y-gate
+      - name: INP gate, 200 ms budget (v3-13-inp.spec.ts)
+        run: pnpm --filter @rp/web exec playwright test --project=chromium v3-13-inp
       - name: Visual regression gate (v3-08-visual.spec.ts)
         # Blocking once reviewed baselines are committed (e2e/v3-08-visual.spec.ts-snapshots). Until then there is nothing
         # to compare against: the step reports the missing baselines and passes, and the visual-baselines job produces them.
