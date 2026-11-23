@@ -7,7 +7,7 @@ import { sweepQuarantine } from "./media/quarantine";
 import { assertMediaSandbox } from "./media/sandbox";
 import { reconcilePublication } from "./media/publish";
 import { startMediaHealth } from "./media/health";
-import { getMediaDeps, getPublishDeps, getScanner, securityAlert, markMediaFailed, processors, setEgressQueue, setNotificationsQueue, setSummaryQueue } from "./processors";
+import { getMediaDeps, getPublishDeps, getScanner, securityAlert, markMediaFailed, processors, setEgressQueue, setNotificationsQueue, setSummaryCapRedis, setSummaryQueue } from "./processors";
 import { MODERATION_JOB_OPTIONS, escalateDeadLetter, isFinalFailure, type WorkerDb } from "./moderation";
 import { sweepDueChecks, sweepExpiry, sweepGrace, type SweepStore } from "./verification/checks";
 import { nullOldIpHashes, reconcileVoteCounts, sweepProofs } from "./proofs";
@@ -51,6 +51,7 @@ const getQueue = (n: QueueName) => {
 };
 
 setNotificationsQueue({ add: (n, d, o) => getQueue(QUEUES.notifications).add(n, d, o) });
+setSummaryCapRedis(connection);
 setSummaryQueue({ add: (n, d, o) => getQueue(QUEUES.aiSummary).add(n, d, o) });
 setEgressQueue({ add: (n, d, o) => getQueue(QUEUES.verificationEgress).add(n, d, o) });
 

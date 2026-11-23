@@ -126,10 +126,10 @@ Critical/high summary (V3-13): **zero open.** DEF-V3-01, -02, -04, -06 and -07 a
 |---|---|---|
 | SEC-V3-01 (`/api/products` rate limit) | Medium | Fixed, test in `v3-security.test.ts` (in the passing web suite) |
 | SEC-V3-02 (Cloudinary `remotePatterns` pinned to our cloud) | Medium | Fixed, same test |
-| SEC-V3-03 (DailyCap per process) | Low | Open, owner Backend/Worker (ops note) |
+| SEC-V3-03 (DailyCap per process) | Low | Fixed (V3-14) |
 | SEC-V3-04 (summary payload exposes `model`/`generatedAt`) | Low | Open, accepted unless product objects |
-| SEC-V3-05 (third-party names not stripped in summary input/output) | Low | Open, owner Backend/Worker |
-| SEC-V3-06 (search LIKE-wildcard test) | Low | Open, owner Backend |
+| SEC-V3-05 (third-party names not stripped in summary input/output) | Low | Fixed (V3-14) |
+| SEC-V3-06 (search LIKE-wildcard test) | Low | Fixed (V3-14) |
 | SEC-V3-07 (Cloudinary strict transformations, SHA-1) | Low | Open, owner DevOps |
 
 No medium or higher security finding is open. The remaining Low items are owned and do not block the gate.
