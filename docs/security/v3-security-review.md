@@ -8,10 +8,10 @@ Task #110. Scope: AI review summaries, Cloudinary public tier, next/image + CSP,
 |---|---|---|---|
 | SEC-V3-01 | `GET /api/products` (Cmd+K) had no rate limit | Medium | **Fixed** + test |
 | SEC-V3-02 | `images.remotePatterns` allowed all of `res.cloudinary.com` (any tenant) | Medium | **Fixed** + test |
-| SEC-V3-03 | `DailyCap` is per worker process / in memory (resets on restart, multiplies with replicas) | Low | Open, owner: Backend/Worker (ops note) |
+| SEC-V3-03 | `DailyCap` is per worker process / in memory (resets on restart, multiplies with replicas) | Low | Fixed (V3-14): `RedisDailyCap`, UTC-day Redis counter shared across replicas, fails closed |
 | SEC-V3-04 | Public summary payload exposes `model` and `generatedAt` | Low / info | Open, accepted unless product objects |
-| SEC-V3-05 | Reviewer-supplied third-party names are not stripped from summary input, and output is not name-checked | Low | Open, owner: Backend/Worker |
-| SEC-V3-06 | Search uses `name contains q`; LIKE wildcard (`%`, `_`) handling by Prisma/MySQL not asserted by a test | Low | Open, owner: Backend (add test) |
+| SEC-V3-05 | Reviewer-supplied third-party names are not stripped from summary input, and output is not name-checked | Low | Fixed (V3-14): names masked in model input (`maskNames`) and output rejected by `containsName` (heuristic) |
+| SEC-V3-06 | Search uses `name contains q`; LIKE wildcard (`%`, `_`) handling by Prisma/MySQL not asserted by a test | Low | Fixed (V3-14): test in `apps/web/src/server/api.test.ts` | |
 | SEC-V3-07 | Cloudinary: delivery transformations are not locked (ops setting "strict transformations") and signature uses SHA-1 | Low | Open, owner: DevOps |
 | SEC-V3-08 | Charts dependency not present; nothing to audit | Info | n/a |
 

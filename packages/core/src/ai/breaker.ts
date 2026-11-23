@@ -34,3 +34,28 @@ export class DailyCap {
     return true;
   }
 }
+
+/** Minimal Redis surface for the shared cap (ioredis satisfies it). */
+export interface CapRedis {
+  incr(key: string): Promise<number>;
+  expire(key: string, seconds: number): Promise<unknown>;
+}
+
+/** Anything that can gate a provider call; `take` may be async (shared store). */
+export interface CallCap { take(): boolean | Promise<boolean> }
+
+/**
+ * SEC-V3-03: daily call cap shared across worker replicas and surviving restarts. One Redis counter per UTC day
+ * (`<prefix>:<YYYY-MM-DD>`, expires after 48 h) using the injected Clock (ADR-0024). Fails closed: a Redis error denies the call.
+ */
+export class RedisDailyCap implements CallCap {
+  constructor(private redis: CapRedis, private clock: Clock, private cap: number, private prefix = "ai:summary:dailycap") {}
+  async take(): Promise<boolean> {
+    try {
+      const key = `${this.prefix}:${this.clock.now().toISOString().slice(0, 10)}`;
+      const n = await this.redis.incr(key);
+      if (n === 1) await this.redis.expire(key, 48 * 3600);
+      return n <= this.cap;
+    } catch { return false; }
+  }
+}

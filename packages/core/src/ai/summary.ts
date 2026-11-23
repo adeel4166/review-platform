@@ -4,7 +4,7 @@ import { ProviderError, mapProviderError, parseProviderResponse, type ProviderCa
 import { SYSTEM_PROMPT, buildUserMessage, looksLikeInjection } from "./prompt";
 import { checkReplyPolicy } from "../reply-policy";
 import { GEMINI_URL_BASE, fetchTransport, type HttpTransport } from "../moderation-provider";
-import type { Breaker, DailyCap } from "./breaker";
+import type { Breaker, CallCap } from "./breaker";
 
 /** V3-06 (ADR-0034 D12): AI pros/cons summary of APPROVED (published) reviews. Review text is untrusted input throughout. */
 
@@ -53,6 +53,24 @@ const PHONE_RE = /(?:\+\s*\d[\d\s().-]{6,}\d)|(?:\(?\d{2,4}\)?[\s.-]\d{2,4}[\s.-
 // eslint-disable-next-line no-control-regex
 const CONTROL_RE = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2060\u2066-\u2069\uFEFF]/g;
 
+// SEC-V3-05: third-party person/company names. Heuristic, not NER: honorific + name, company suffixes, @handles, and
+// capitalised word pairs in mid-sentence (preceded by a lowercase word, so Title Case headings and sentence starts are untouched).
+const HONORIFIC_RE = /\b(?:Mr|Mrs|Ms|Miss|Dr|Prof|Sir)\.?\s+[A-Z][\p{L}'-]+(?:\s+[A-Z][\p{L}'-]+)?/gu;
+const COMPANY_RE = /\b(?:[A-Z][\p{L}&'-]+\s+){1,3}(?:Inc|Ltd|LLC|GmbH|Corp|Co|Company|Pty|PLC|AG|SA)\b\.?/gu;
+const HANDLE_RE = /(?<![\w])@[\w.]{2,}/g;
+const MID_PAIR_RE = /(?<=(?<!\p{L})\p{Ll}\p{L}*\s)[A-Z]\p{Ll}+(?:\s+[A-Z]\p{Ll}+)+/gu;
+const NAME_TOKEN = "[name]";
+
+/** Masks third-party person/company names (model input). */
+export function maskNames(raw: string): string {
+  return raw.replace(HONORIFIC_RE, NAME_TOKEN).replace(COMPANY_RE, NAME_TOKEN).replace(HANDLE_RE, NAME_TOKEN).replace(MID_PAIR_RE, NAME_TOKEN);
+}
+/** True if text still contains a name-like token (model output check). */
+export function containsName(text: string): boolean {
+  return [HONORIFIC_RE, COMPANY_RE, HANDLE_RE, MID_PAIR_RE].some((re) => { re.lastIndex = 0; const hit = re.test(text); re.lastIndex = 0; return hit; })
+    || text.includes(NAME_TOKEN);
+}
+
 /** Strips links, emails, phone numbers, markup and control characters; collapses whitespace. */
 export function stripLinksAndPii(raw: string): string {
   return raw.normalize("NFC").replace(CONTROL_RE, " ").replace(/<[^>]*>/g, " ").replace(LINK_RE, " ").replace(EMAIL_RE, " ").replace(BARE_DOMAIN_RE, " ").replace(PHONE_RE, " ").replace(/\s+/g, " ").trim();
@@ -64,7 +82,7 @@ export function buildSummaryUserMessage(reviews: readonly SummaryReviewInput[]):
     task: "summarize",
     reviews: reviews.slice(0, SUMMARY_MAX_INPUT_REVIEWS).map((r, i) => ({
       n: i + 1, rating: r.rating, verifiedBuyer: r.verified,
-      title: stripLinksAndPii(r.title).slice(0, REVIEW_TITLE_MAX), body: stripLinksAndPii(r.body).slice(0, REVIEW_BODY_MAX),
+      title: maskNames(stripLinksAndPii(r.title)).slice(0, REVIEW_TITLE_MAX), body: maskNames(stripLinksAndPii(r.body)).slice(0, REVIEW_BODY_MAX),
     })),
   });
 }
@@ -91,6 +109,7 @@ export function validateSummary(raw: unknown): { ok: true; summary: ProductSumma
   const pros = p.data.pros.map(clean), cons = p.data.cons.map(clean), overview = clean(p.data.overview);
   if ([...pros, ...cons, overview].some((s) => s.length === 0)) return { ok: false, reason: "unsafe_content" };
   if ([...pros, ...cons].some((s) => [...s].length > SUMMARY_ITEM_MAX) || [...overview].length > SUMMARY_OVERVIEW_MAX) return { ok: false, reason: "too_long" };
+  if ([...pros, ...cons, overview].some((s) => containsName(s))) return { ok: false, reason: "unsafe_content" }; // SEC-V3-05
   if (sentenceCount(overview) > 2) return { ok: false, reason: "schema" };
   for (const s of [...pros, ...cons, overview]) {
     const r = checkReplyPolicy(s);
@@ -130,7 +149,7 @@ export interface GenerateDeps {
   /** Moderation provider call (scores-only contract); the generated text must score clean before it is saved. */
   moderationCall: ProviderCall;
   breaker: Breaker;
-  cap: DailyCap;
+  cap: CallCap;
   sleep: (ms: number) => Promise<void>;
   maxAttempts?: number;
   backoffMs?: readonly number[];
@@ -156,7 +175,7 @@ export async function generateSummary(deps: GenerateDeps, reviews: readonly Summ
   let last: GenerateResult = { ok: false, reason: "provider", retryable: true };
   for (let i = 0; i < max; i++) {
     if (!deps.breaker.allow()) return { ok: false, reason: "breaker", retryable: true };
-    if (!deps.cap.take()) return { ok: false, reason: "cap", retryable: true };
+    if (!(await deps.cap.take())) return { ok: false, reason: "cap", retryable: true };
     const r = await callParsed(deps.call, { system: SUMMARY_SYSTEM_PROMPT, user, timeoutMs }, validateSummary);
     if (r.ok) {
       deps.breaker.record(true);

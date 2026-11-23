@@ -1,5 +1,5 @@
 import { DelayedError, type Job } from "bullmq";
-import { Breaker, DailyCap, DEFAULT_GEMINI_MODEL, geminiSummaryCall, summaryEnabled, summaryJobSchemas, QUEUES, cloudinaryConfigFromEnv, createCloudinaryStore, createMailProvider, createS3Store, routePublicBucket, loadEnv, mediaBuckets, mediaJobSchema, moderationJobSchema, type QueueName } from "@rp/core";
+import { Breaker, DailyCap, RedisDailyCap, DEFAULT_GEMINI_MODEL, geminiSummaryCall, summaryEnabled, summaryJobSchemas, QUEUES, cloudinaryConfigFromEnv, createCloudinaryStore, createMailProvider, createS3Store, routePublicBucket, loadEnv, mediaBuckets, mediaJobSchema, moderationJobSchema, type QueueName } from "@rp/core";
 import { prisma } from "@rp/db";
 import { assertNoAutoVerify, parseOrderRefKeys, systemClock } from "@rp/core";
 import { sendAccountExistsEmail, sendSecurityAlertEmail, sendNotificationEmail, type SecurityAlertDb, sendClaimBusinessEmail, type ClaimEmailDeps, sendSellerInvitationEmail, sendVerificationEmail, type EmailDb, type EmailDbInvitations } from "./email";
@@ -26,12 +26,15 @@ let providerCall: ReturnType<typeof liveProviderCall> | undefined;
 const getProviderCall = () => (providerCall ??= liveProviderCall({ MODERATION_PROVIDER: process.env.MODERATION_PROVIDER, MODERATION_API_KEY: process.env.MODERATION_API_KEY, MODERATION_MODEL: process.env.MODERATION_MODEL, NODE_ENV: process.env.NODE_ENV }));
 /** V3-06: separate breaker and daily cap from moderation (summaries can never use moderation capacity). Key from env only; never logged. */
 let summaryGen: SummaryJobDeps["gen"] | undefined;
+/** SEC-V3-03: shared Redis for the summary daily cap (set at worker startup); without it the per-process cap is used (tests/dev). */
+let summaryCapRedis: ConstructorParameters<typeof RedisDailyCap>[0] | undefined;
+export const setSummaryCapRedis = (r: NonNullable<typeof summaryCapRedis>) => { summaryCapRedis = r; };
 export const getSummaryDeps = (): SummaryJobDeps => {
   const model = process.env.SUMMARY_MODEL || process.env.MODERATION_MODEL || DEFAULT_GEMINI_MODEL;
   const key = process.env.SUMMARY_API_KEY || process.env.MODERATION_API_KEY;
   if (!summaryGen && key && process.env.MODERATION_PROVIDER === "gemini") {
     const cap = Number(process.env.SUMMARY_DAILY_CAP) > 0 ? Number(process.env.SUMMARY_DAILY_CAP) : 500;
-    summaryGen = { call: geminiSummaryCall(key, model), moderationCall: getProviderCall(), breaker: new Breaker(systemClock, { windowSize: 10, failureRatio: 0.5, openSeconds: 300 }), cap: new DailyCap(systemClock, cap) };
+    summaryGen = { call: geminiSummaryCall(key, model), moderationCall: getProviderCall(), breaker: new Breaker(systemClock, { windowSize: 10, failureRatio: 0.5, openSeconds: 300 }), cap: summaryCapRedis ? new RedisDailyCap(summaryCapRedis, systemClock, cap) : new DailyCap(systemClock, cap) };
   }
   return { db: prisma, clock: systemClock, enabled: summaryEnabled(process.env), gen: summaryGen, model, enqueue: (n, d, o) => getSummaryQueue().add(n, d, o) };
 };

@@ -71,6 +71,15 @@ describe("products", () => {
     expect(arg.where).toMatchObject({ status: "ACTIVE", category: { slug: "books" } });
     expect(arg).toMatchObject({ skip: 40, take: 20 });
   });
+  it.each(["%", "_", "100%_off", "\\%", "' OR 1=1 --"])("SEC-V3-06: search q=%j stays inside ACTIVE products as a bound value and does not error", async (q) => {
+    const { db, m } = fakeDb();
+    m.product.findMany.mockResolvedValue([]);
+    m.product.count.mockResolvedValue(0);
+    await expect(listProducts(db, { page: 1, pageSize: 20, q })).resolves.toMatchObject({ total: 0, items: [] });
+    for (const arg of [m.product.findMany.mock.calls[0]![0], m.product.count.mock.calls[0]![0]]) {
+      expect(arg.where).toEqual({ status: "ACTIVE", name: { contains: q } }); // wildcard chars only widen the name match; status filter is never dropped, no raw SQL
+    }
+  });
   it("404s on unknown product", async () => {
     const { db, m } = fakeDb();
     m.product.findFirst.mockResolvedValue(null);

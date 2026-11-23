@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { ProviderError, type ProviderCall } from "./provider";
-import { Breaker, DailyCap } from "./breaker";
+import { Breaker, DailyCap, RedisDailyCap } from "./breaker";
 import { CATEGORIES } from "../moderation/config";
-import { GEMINI_SUMMARY_SCHEMA, SUMMARY_SYSTEM_PROMPT, buildSummaryUserMessage, generateSummary, geminiSummaryCall, stripLinksAndPii, summaryEnabled, validateSummary, type GenerateDeps, type SummaryReviewInput } from "./summary";
+import { GEMINI_SUMMARY_SCHEMA, SUMMARY_SYSTEM_PROMPT, buildSummaryUserMessage, containsName, maskNames, generateSummary, geminiSummaryCall, stripLinksAndPii, summaryEnabled, validateSummary, type GenerateDeps, type SummaryReviewInput } from "./summary";
 
 const clock = { now: () => new Date("2027-05-01T00:00:00Z") };
 const good = { pros: ["Great battery life", "Bright screen", "Fast charging"], cons: ["Heavy", "Pricey", "Weak speakers"], overview: "Reviewers like the battery and screen. Some find it heavy and expensive." };
@@ -143,4 +143,45 @@ describe("geminiSummaryCall (no secrets leak)", () => {
     expect(String((e as Error).message)).not.toContain(KEY);
   });
   it("rejects an unsafe model id", () => expect(() => geminiSummaryCall(KEY, "../x")).toThrow());
+});
+
+describe("SEC-V3-03 shared RedisDailyCap", () => {
+  const fakeRedis = () => { const m = new Map<string, number>(); const expire = vi.fn(async () => 1); return { m, expire, incr: vi.fn(async (k: string) => { m.set(k, (m.get(k) ?? 0) + 1); return m.get(k)!; }) }; };
+  it("is shared across instances (replicas) and keyed by UTC day with a deterministic clock", async () => {
+    const r = fakeRedis(); let t = new Date("2027-05-01T23:59:00Z"); const c = { now: () => t };
+    const a = new RedisDailyCap(r, c, 2), b = new RedisDailyCap(r, c, 2);
+    expect(await a.take()).toBe(true); expect(await b.take()).toBe(true);
+    expect(await a.take()).toBe(false); expect(await b.take()).toBe(false);
+    expect([...r.m.keys()]).toEqual(["ai:summary:dailycap:2027-05-01"]);
+    expect(r.expire).toHaveBeenCalledTimes(1);
+    t = new Date("2027-05-02T00:00:00Z"); // new UTC day resets
+    expect(await a.take()).toBe(true);
+    expect(r.m.get("ai:summary:dailycap:2027-05-02")).toBe(1);
+  });
+  it("survives a restart (state lives in Redis) and fails closed on Redis errors", async () => {
+    const r = fakeRedis(); const c = { now: () => new Date("2027-05-01T00:00:00Z") };
+    await new RedisDailyCap(r, c, 1).take();
+    expect(await new RedisDailyCap(r, c, 1).take()).toBe(false);
+    expect(await new RedisDailyCap({ incr: async () => { throw new Error("down"); }, expire: async () => 1 }, c, 5).take()).toBe(false);
+  });
+  it("generateSummary honours an async cap", async () => {
+    const d = mk({ cap: new RedisDailyCap(fakeRedis(), clock, 0) });
+    expect(await generateSummary(d, reviews(5))).toMatchObject({ ok: false, reason: "cap" });
+  });
+});
+
+describe("SEC-V3-05 third-party names", () => {
+  it("masks persons, companies and handles in model input", () => {
+    const body = "Bought it from Mr. Jones at Acme Widgets Inc and thanks to @sam_k the battery is great. Then ask Maria Lopez for details.";
+    const msg = buildSummaryUserMessage([{ id: "r", rating: 5, title: "Great deal", body, verified: true }]);
+    for (const n of ["Jones", "Acme", "sam_k", "Maria", "Lopez"]) expect(msg).not.toContain(n);
+    expect(maskNames("Title Case Heading stays")).toBe("Title Case Heading stays");
+  });
+  it("rejects summaries that contain names", () => {
+    for (const overview of ["Reviewers praise Mr. Jones for service. Some find it heavy.", "Reviewers like it, says John Smith. Some find it heavy.", "Sold by Acme Corp. Some find it heavy."]) {
+      expect(containsName(overview)).toBe(true);
+      expect(validateSummary({ ...good, overview })).toEqual({ ok: false, reason: "unsafe_content" });
+    }
+    expect(validateSummary(good).ok).toBe(true);
+  });
 });
