@@ -1,6 +1,6 @@
 "use client";
 
-import { m } from "motion/react";
+import * as m from "motion/react-m";
 
 /** Bar fills 0→value once when scrolled into view; MotionConfig reducedMotion="user" makes it instant for reduced-motion users. Fills from the inline-start. */
 export function HistogramBar({ pct }: { pct: number }) {

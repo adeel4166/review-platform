@@ -3,8 +3,11 @@
 import { useState } from "react";
 import { t, type MessageKey } from "@/i18n/en";
 import { ApiError, api } from "@/lib/upload";
-import { Dialog } from "./Dialog";
+import dynamic from "next/dynamic";
 import { field, primaryBtn, secondaryBtn } from "./seller/ui";
+
+/** Radix dialog code is fetched on first open only (ADR-0034 D10 budget). */
+const Dialog = dynamic(() => import("./Dialog").then((m) => m.Dialog), { ssr: false });
 
 /** Mirrors REPORT_REASONS in @rp/core (kept local so the client bundle does not import server packages). */
 export const REPORT_REASON_LIST = ["SPAM", "FAKE_OR_MISLEADING", "CONFLICT_OF_INTEREST", "OFF_TOPIC", "HARASSMENT_OR_HATE", "SEXUAL_CONTENT", "VIOLENCE_OR_THREATS", "PERSONAL_INFORMATION", "INTELLECTUAL_PROPERTY", "ILLEGAL_CONTENT", "IMPERSONATION", "OTHER"] as const;
