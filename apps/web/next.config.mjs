@@ -4,7 +4,10 @@ try {
   const u = new URL(process.env.MEDIA_PUBLIC_BASE_URL ?? "");
   remotePatterns.push({ protocol: u.protocol.replace(":", ""), hostname: u.hostname, ...(u.port ? { port: u.port } : {}) });
 } catch { /* unset in some environments */ }
-remotePatterns.push({ protocol: "https", hostname: "res.cloudinary.com" });
+// SEC-V3-02: pin to our own Cloudinary cloud. An unscoped host would let /_next/image proxy and transform any tenant's images.
+// Delivery URLs are `/<cloud>/<image|video>/upload/...`; with no cloud name configured no Cloudinary host is allowed at all.
+const cloud = (process.env.CLOUDINARY_CLOUD_NAME ?? "").trim();
+if (/^[A-Za-z0-9_-]+$/.test(cloud)) remotePatterns.push({ protocol: "https", hostname: "res.cloudinary.com", pathname: `/${cloud}/**` });
 
 /** @type {import('next').NextConfig} */
 export default {
