@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { MediaTooLargeError, type ObjectHeaders, type ObjectStore } from "./media";
+import type { Clock } from "./clock";
+import { MediaTooLargeError, type ObjectStore } from "./media";
 
 /**
  * Cloudinary as the PUBLIC media tier (CDN delivery with automatic format/quality).
@@ -36,6 +37,11 @@ export function cloudinaryDeliveryUrl(cloudName: string, key: string): string {
   return `${RES}/${cloudName}/${resourceType}/upload/${tx}/${publicId}${ext ? `.${ext}` : ""}`;
 }
 
+/** Unix seconds for the `timestamp` signing param (Cloudinary rejects timestamps older than ~1 h), from the injected Clock (ADR-0024). */
+export function cloudinaryTimestamp(clock: Clock): string {
+  return String(Math.floor(clock.now().getTime() / 1000));
+}
+
 /** Cloudinary request signature: sorted `k=v` pairs joined by `&`, then the secret, SHA-1. */
 export function cloudinarySignature(params: Record<string, string>, apiSecret: string): string {
   const s = Object.keys(params).sort().map((k) => `${k}=${params[k]}`).join("&");
@@ -49,7 +55,7 @@ export function cloudinaryConfigFromEnv(env: Record<string, string | undefined> 
   return { cloudName, apiKey, apiSecret };
 }
 
-export function createCloudinaryStore(cfg: CloudinaryConfig): ObjectStore {
+export function createCloudinaryStore(cfg: CloudinaryConfig, clock: Clock): ObjectStore {
   const f = cfg.fetch ?? fetch;
   const auth = "Basic " + Buffer.from(`${cfg.apiKey}:${cfg.apiSecret}`).toString("base64");
   const fail = async (what: string, r: Response) => {
@@ -65,8 +71,7 @@ export function createCloudinaryStore(cfg: CloudinaryConfig): ObjectStore {
     return (await r.json()) as { bytes: number; secure_url: string };
   };
   const signed = (params: Record<string, string>) => {
-    const timestamp = String(Math.floor(Date.now() / 1000));
-    const p = { ...params, timestamp };
+    const p = { ...params, timestamp: cloudinaryTimestamp(clock) };
     return { ...p, api_key: cfg.apiKey, signature: cloudinarySignature(p, cfg.apiSecret) };
   };
   const unsupported = () => Promise.reject(new Error("cloudinary public store: presigned URLs are not used for the public tier"));
@@ -88,7 +93,7 @@ export function createCloudinaryStore(cfg: CloudinaryConfig): ObjectStore {
       if (buf.length > maxBytes) throw new MediaTooLargeError();
       return buf;
     },
-    async put(_bucket, key, body, contentType, _h?: ObjectHeaders) {
+    async put(_bucket, key, body, contentType) {
       const { publicId, resourceType } = splitCloudinaryKey(key);
       const params: Record<string, string> = { public_id: publicId, overwrite: "false", unique_filename: "false", use_filename: "false" };
       // Pre-build the optimised video rendition so the first viewer does not wait for it.

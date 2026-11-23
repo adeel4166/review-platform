@@ -45,7 +45,7 @@ export const getMediaDeps = () => {
     const env = loadEnv(); // storage credentials come from env only
     const s3 = createS3Store(env);
     const cld = cloudinaryConfigFromEnv(); // MEDIA_PUBLIC_STORE=cloudinary: approved public media lives on Cloudinary's CDN
-    storage = { store: cld ? routePublicBucket(s3, env.S3_BUCKET_PUBLIC, createCloudinaryStore(cld)) : s3, buckets: mediaBuckets(env) };
+    storage = { store: cld ? routePublicBucket(s3, env.S3_BUCKET_PUBLIC, createCloudinaryStore(cld, systemClock)) : s3, buckets: mediaBuckets(env) };
   }
   return { db: prisma as unknown as MediaDb, ...storage, scanner: getScanner(), verifier: defaultVerifier(process.env.MEDIA_EXIFTOOL_REQUIRED === "true"), alert: securityAlert, signals: { store: prismaSignalStore(prisma), recompute: (k: string) => runTrustRecompute(prisma, systemClock, k) } };
 };
