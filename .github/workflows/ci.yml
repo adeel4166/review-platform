@@ -3,6 +3,7 @@ on:
   push:
     branches: [main, "task/**"]
   pull_request:
+  workflow_dispatch: # manual: runs everything plus the visual-baselines job (see e2e/README.md)
 
 permissions:
   contents: read
@@ -55,6 +56,8 @@ jobs:
           if-no-files-found: ignore
       - name: Build
         run: pnpm build
+      - name: Bundle budget gate (first-load JS, CSS, fonts; fails on overrun)
+        run: node scripts/bundle-budget.mjs
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -123,8 +126,21 @@ jobs:
         run: nohup pnpm --filter @rp/worker start > worker.log 2>&1 &
       - name: Install Playwright browser
         run: pnpm --filter @rp/web exec playwright install --with-deps chromium
-      - name: E2E gate (review flow, chromium)
+      - name: E2E gate (review flow, chromium; visual specs run in their own step below)
+        env:
+          E2E_SKIP_VISUAL: "1"
         run: pnpm --filter @rp/web test:e2e
+      - name: Accessibility gate (v3-08-a11y-gate.spec.ts)
+        run: pnpm --filter @rp/web exec playwright test --project=chromium v3-08-a11y-gate
+      - name: Visual regression gate (v3-08-visual.spec.ts)
+        # Blocking once reviewed baselines are committed (e2e/v3-08-visual.spec.ts-snapshots). Until then there is nothing
+        # to compare against: the step reports the missing baselines and passes, and the visual-baselines job produces them.
+        run: |
+          if ls apps/web/e2e/v3-08-visual.spec.ts-snapshots/*.png >/dev/null 2>&1; then
+            pnpm --filter @rp/web exec playwright test --project=chromium v3-08-visual
+          else
+            echo "::warning::No committed visual baselines; run the 'visual-baselines' job (workflow_dispatch) and review the artifact."
+          fi
       - name: E2E quarantine (reported, not gating)
         continue-on-error: true
         run: pnpm --filter @rp/web test:e2e:quarantine
@@ -137,6 +153,187 @@ jobs:
             apps/web/test-results
             worker.log
           if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          # Visual failures: *-expected.png, *-actual.png and *-diff.png live under test-results.
+          name: e2e-visual-diffs
+          path: apps/web/test-results/**/*-{expected,actual,diff}.png
+          if-no-files-found: ignore
+  lighthouse:
+    # ADR-0034 D10 web-vitals gate on the e2e stack: LCP 2.5 s, CLS 0.1, TBT 200 ms, largest image 120 KB on /, /products, /products/[slug].
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci-root-only
+          MYSQL_DATABASE: ci
+          MYSQL_USER: app
+          MYSQL_PASSWORD: app
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pci-root-only --silent"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s --health-timeout=3s --health-retries=20
+    env:
+      # Throwaway values for the CI database, cache and object store only. No real secrets in CI.
+      DATABASE_URL: mysql://app:app@127.0.0.1:3306/ci
+      REDIS_URL: redis://127.0.0.1:6379
+      S3_ENDPOINT: http://127.0.0.1:9000
+      S3_REGION: us-east-1
+      S3_FORCE_PATH_STYLE: "true"
+      S3_ACCESS_KEY_ID: ci-minio
+      S3_SECRET_ACCESS_KEY: ci-minio-secret
+      S3_BUCKET_INGEST: rp-ingest
+      S3_BUCKET_PRIVATE: rp-private
+      S3_BUCKET_PUBLIC: rp-public
+      MODERATION_PROVIDER: mock
+      AUTH_SECRET: ci-only-auth-secret-not-for-production
+      AUTH_TRUST_HOST: "true"
+      TOTP_ENC_KEYS: '{"ci1":"Y2ktdG90cC1lbmMta2V5LTAxMjM0NTY3ODlhYmNkZWYhIQ=="}'
+      TOTP_ENC_ACTIVE_KEY_ID: ci1
+      RECOVERY_CODE_PEPPERS: '{"ci1":"Y2ktcmVjb3ZlcnktcGVwcGVyLTAxMjM0NTY3ODlhYmNkIQ=="}'
+      RECOVERY_CODE_ACTIVE_KEY_ID: ci1
+      SEED_ADMIN_PASSWORD: ci-admin-password
+      SEED_USER_PASSWORD: ci-user-password
+      E2E_ADMIN_PASSWORD: ci-admin-password
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:generate
+      - name: Start MinIO and create buckets
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=ci-minio -e MINIO_ROOT_PASSWORD=ci-minio-secret \
+            minio/minio:latest server /data
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:9000/minio/health/ready && break; sleep 2; done
+          docker run --rm --network host --entrypoint sh minio/mc -c \
+            "mc alias set ci http://127.0.0.1:9000 ci-minio ci-minio-secret && mc mb -p ci/rp-ingest ci/rp-private ci/rp-public && mc anonymous set download ci/rp-public"
+      - name: Migrate and seed the CI database
+        run: pnpm --filter @rp/db migrate:deploy && pnpm --filter @rp/db seed
+      - name: Build web app
+        run: pnpm build
+      - name: Start worker
+        run: nohup pnpm --filter @rp/worker start > worker.log 2>&1 &
+      - name: Start web (production build)
+        run: |
+          nohup pnpm --filter @rp/web start > web.log 2>&1 &
+          for i in $(seq 1 60); do curl -fsS http://127.0.0.1:3000/ >/dev/null && exit 0; sleep 2; done
+          echo "web did not come up"; tail -n 50 web.log; exit 1
+      - name: Lighthouse gate
+        env:
+          BASE_URL: http://127.0.0.1:3000
+          PRODUCT_SLUG: acme-noise-cancelling-headphones
+        run: node scripts/lighthouse-gate.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lighthouse-report
+          path: |
+            lighthouse-report
+            web.log
+          if-no-files-found: ignore
+
+  visual-baselines:
+    # Manual only (workflow_dispatch). Regenerates the visual baselines on the CI image and uploads them as an artifact for
+    # review. Never commits or pushes anything: a human reviews the PNGs and adds them in a normal PR.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci-root-only
+          MYSQL_DATABASE: ci
+          MYSQL_USER: app
+          MYSQL_PASSWORD: app
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pci-root-only --silent"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s --health-timeout=3s --health-retries=20
+    env:
+      # Throwaway values for the CI database, cache and object store only. No real secrets in CI.
+      DATABASE_URL: mysql://app:app@127.0.0.1:3306/ci
+      REDIS_URL: redis://127.0.0.1:6379
+      S3_ENDPOINT: http://127.0.0.1:9000
+      S3_REGION: us-east-1
+      S3_FORCE_PATH_STYLE: "true"
+      S3_ACCESS_KEY_ID: ci-minio
+      S3_SECRET_ACCESS_KEY: ci-minio-secret
+      S3_BUCKET_INGEST: rp-ingest
+      S3_BUCKET_PRIVATE: rp-private
+      S3_BUCKET_PUBLIC: rp-public
+      MODERATION_PROVIDER: mock
+      AUTH_SECRET: ci-only-auth-secret-not-for-production
+      AUTH_TRUST_HOST: "true"
+      TOTP_ENC_KEYS: '{"ci1":"Y2ktdG90cC1lbmMta2V5LTAxMjM0NTY3ODlhYmNkZWYhIQ=="}'
+      TOTP_ENC_ACTIVE_KEY_ID: ci1
+      RECOVERY_CODE_PEPPERS: '{"ci1":"Y2ktcmVjb3ZlcnktcGVwcGVyLTAxMjM0NTY3ODlhYmNkIQ=="}'
+      RECOVERY_CODE_ACTIVE_KEY_ID: ci1
+      SEED_ADMIN_PASSWORD: ci-admin-password
+      SEED_USER_PASSWORD: ci-user-password
+      E2E_ADMIN_PASSWORD: ci-admin-password
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:generate
+      - name: Start MinIO and create buckets
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=ci-minio -e MINIO_ROOT_PASSWORD=ci-minio-secret \
+            minio/minio:latest server /data
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:9000/minio/health/ready && break; sleep 2; done
+          docker run --rm --network host --entrypoint sh minio/mc -c \
+            "mc alias set ci http://127.0.0.1:9000 ci-minio ci-minio-secret && mc mb -p ci/rp-ingest ci/rp-private ci/rp-public && mc anonymous set download ci/rp-public"
+      - name: Migrate and seed the CI database
+        run: pnpm --filter @rp/db migrate:deploy && pnpm --filter @rp/db seed
+      - name: Build web app
+        run: pnpm build
+      - name: Start worker
+        run: nohup pnpm --filter @rp/worker start > worker.log 2>&1 &
+      - name: Install Playwright browser
+        run: pnpm --filter @rp/web exec playwright install --with-deps chromium
+      - name: Generate baselines (--update-snapshots)
+        run: pnpm --filter @rp/web exec playwright test --project=chromium v3-08-visual --update-snapshots
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: visual-baselines
+          path: apps/web/e2e/v3-08-visual.spec.ts-snapshots
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: visual-baselines-report
+          path: |
+            apps/web/playwright-report
+            worker.log
+          if-no-files-found: ignore
+
   compose-config:
     runs-on: ubuntu-latest
     steps:

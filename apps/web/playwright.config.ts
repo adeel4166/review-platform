@@ -7,6 +7,8 @@ const baseURL = `http://localhost:${PORT}`;
 
 export default defineConfig({
   testDir: "./e2e",
+  // CI runs the visual specs in a dedicated step (baselines may not exist yet): E2E_SKIP_VISUAL=1 leaves them out of the main gate.
+  testIgnore: process.env.E2E_SKIP_VISUAL ? /v3-08-visual\.spec\.ts/ : undefined,
   // Tests share one database. Every test creates its own users and reviews, so ordering does not matter.
   fullyParallel: true,
   workers: process.env.CI ? 2 : undefined,

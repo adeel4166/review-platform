@@ -80,3 +80,20 @@ registering a user and granting `ADMIN` in the database.
 ## Social, four-eyes and erasure specs (DEF-LIVE-03)
 
 `search-compare`, `vote-report`, `follow-notifications` and `role-grant-erasure` (helpers in `social-helpers.ts`). Staff actors enrol TOTP through the real wizard. They need `DATABASE_URL` in the Playwright env (as `m6-helpers.ts`). `E2E-FOL-2` is `test.fail` (DEF-LIVE-06/07) and `E2E-ERASE-2` is `test.fixme` (DEF-LIVE-08); see `docs/qa/live-gate-report.md`.
+
+## CI quality gates (V3-12, `.github/workflows/ci.yml`)
+
+| Job / step | What it enforces | Artifacts |
+|---|---|---|
+| `qa` > Bundle budget gate | `node scripts/bundle-budget.mjs` after the web build; fails on any first-load JS, CSS or font overrun (`docs/qa/bundle-budget.json`) | none (log) |
+| `e2e` > E2E gate | All chromium specs except the visual ones (`E2E_SKIP_VISUAL=1`) | `e2e-report` (playwright-report, test-results, worker.log) |
+| `e2e` > Accessibility gate | `v3-08-a11y-gate.spec.ts` as its own blocking step | `e2e-report` |
+| `e2e` > Visual regression gate | `v3-08-visual.spec.ts`; blocking once baselines are committed in `e2e/v3-08-visual.spec.ts-snapshots/`, otherwise a warning | `e2e-report`, `e2e-visual-diffs` (expected/actual/diff PNGs) |
+| `lighthouse` | `scripts/lighthouse-gate.mjs` on `/`, `/products`, `/products/[slug]`: LCP 2.5 s, CLS 0.1, TBT 200 ms, largest image 120 KB | `lighthouse-report` (JSON per route, web.log) |
+| `visual-baselines` (manual) | Run via *Actions > CI > Run workflow* (`workflow_dispatch`). Runs the visual spec with `--update-snapshots` on the CI image | `visual-baselines` (PNGs) |
+
+Updating baselines: run `visual-baselines`, download the `visual-baselines` artifact, review every PNG, then add them under
+`apps/web/e2e/v3-08-visual.spec.ts-snapshots/` in a normal PR. CI never commits or pushes baselines.
+
+Locally: `pnpm --filter @rp/web build && node scripts/bundle-budget.mjs`, and
+`BASE_URL=http://localhost:3000 node scripts/lighthouse-gate.mjs` against a running seeded stack.
